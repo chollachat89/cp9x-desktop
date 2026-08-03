@@ -9,6 +9,11 @@ on:
 permissions:
   contents: write      # จำเป็นสำหรับสร้าง GitHub Release
 
+# กันไม่ให้ workflow รันซ้อนกันบน tag เดียวกัน (ต้นเหตุของ release ซ้ำ)
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -27,6 +32,18 @@ jobs:
         run: |
           if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; \
           else npm install --no-audit --no-fund; fi
+
+      # ลบ release เดิมของ tag นี้ทิ้งก่อน (ถ้ามี) เพื่อให้ re-run ได้เสมอ
+      # ไม่ลบ tag — แค่ลบตัว release ที่ค้างอยู่
+      - name: Clean existing release for this tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "ตรวจ release เดิมของ $TAG"
+          gh release delete "$TAG" --yes --repo "$GITHUB_REPOSITORY" || echo "ไม่มี release เดิม - ข้าม"
 
       - name: Build & publish to GitHub Releases
         env:
