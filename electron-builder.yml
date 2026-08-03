@@ -1,0 +1,45 @@
+appId: com.cp9x.desktop
+productName: CP9X
+copyright: Copyright © 2026 CP9X
+
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - src/**/*
+  - package.json
+  - "!**/*.map"
+
+# ---- ปลายทางไฟล์อัปเดต: GitHub Releases ----
+# แก้ owner/repo ให้ตรงกับ repo ของคุณ
+publish:
+  - provider: github
+    owner: chollachat89
+    repo: cp9x-desktop
+    releaseType: release
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: build/icon.ico
+  artifactName: ${productName}-Setup-${version}.${ext}
+  # ยังไม่ได้เซ็นโค้ด — Windows SmartScreen อาจเตือนตอนติดตั้งครั้งแรก
+  signAndEditExecutable: true
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  allowElevation: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: CP9X
+  deleteAppDataOnUninstall: false
+  # blockmap สำหรับ differential download ถูกสร้างให้อัตโนมัติอยู่แล้ว
+
+# เผื่ออยากทำ portable .exe เพิ่ม (ไม่รองรับ auto-update)
+# portable:
+#   artifactName: ${productName}-Portable-${version}.${ext}

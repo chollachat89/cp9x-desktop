@@ -1,0 +1,44 @@
+name: Build & Release CP9X
+
+on:
+  push:
+    tags:
+      - 'v*'          # push tag เช่น v1.0.1 แล้วจะ build + ปล่อย release อัตโนมัติ
+  workflow_dispatch:   # หรือกดรันเองจากหน้า Actions
+
+permissions:
+  contents: write      # จำเป็นสำหรับสร้าง GitHub Release
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # ใช้ npm ci ถ้ามี package-lock.json  ไม่มีก็ fallback เป็น npm install
+      - name: Install dependencies
+        shell: bash
+        run: |
+          if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; \
+          else npm install --no-audit --no-fund; fi
+
+      - name: Build & publish to GitHub Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win --x64 --publish always
+
+      - name: Upload artifacts (สำรอง)
+        uses: actions/upload-artifact@v4
+        with:
+          name: cp9x-windows
+          path: |
+            dist/*.exe
+            dist/*.yml
+            dist/*.blockmap
+          if-no-files-found: warn
