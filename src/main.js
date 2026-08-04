@@ -151,49 +151,47 @@ function buildMenu() {
 // ---------- Updater events ----------
 let manualCheck = false;
 
-autoUpdater.on('checking-for-update', () => setUpdateState('checking'));
+autoUpdater.on('checking-for-update', () => setUpdateState('checking', { manual: manualCheck }));
 
 autoUpdater.on('update-available', (info) => {
-  setUpdateState('available', { newVersion: info.version });
+  setUpdateState('available', { newVersion: info.version, manual: manualCheck });
 });
 
 autoUpdater.on('update-not-available', () => {
-  setUpdateState('not-available');
-  if (manualCheck) {
-    dialog.showMessageBox(mainWindow, {
-      type: 'info',
-      title: 'ตรวจหาอัปเดต',
-      message: 'คุณใช้เวอร์ชันล่าสุดอยู่แล้ว',
-      detail: `เวอร์ชันปัจจุบัน ${app.getVersion()}`
-    });
-  }
+  setUpdateState('not-available', { manual: manualCheck });
   manualCheck = false;
 });
+
+// แปลง error ดิบ (ที่มักมี header/JSON ยาวเป็นหน้ากระดาษ) ให้เหลือแค่ประโยคเดียวที่อ่านง่าย
+function friendlyUpdateError(err) {
+  const raw = String((err && err.message) || err || '');
+  if (/net::ERR_INTERNET_DISCONNECTED|ENOTFOUND|ECONNREFUSED|ETIMEDOUT/i.test(raw)) {
+    return 'ไม่มีการเชื่อมต่ออินเทอร์เน็ต';
+  }
+  if (/404/.test(raw)) return 'ยังไม่พบไฟล์อัปเดตบนเซิร์ฟเวอร์';
+  if (/403|401/.test(raw)) return 'ไม่มีสิทธิ์เข้าถึงเซิร์ฟเวอร์อัปเดต';
+  return 'เชื่อมต่อเซิร์ฟเวอร์อัปเดตไม่ได้';
+}
 
 autoUpdater.on('download-progress', (p) => {
   setUpdateState('downloading', {
     percent: Math.round(p.percent),
     bytesPerSecond: p.bytesPerSecond,
     transferred: p.transferred,
-    total: p.total
+    total: p.total,
+    manual: manualCheck
   });
 });
 
 autoUpdater.on('update-downloaded', (info) => {
-  setUpdateState('downloaded', { newVersion: info.version });
+  setUpdateState('downloaded', { newVersion: info.version, manual: manualCheck });
 });
 
+// error ทั้งหมดแสดงผลผ่านแผงในแอปเท่านั้น (ไม่ใช้ dialog ของ Windows ที่บล็อกหน้าจอ)
+// รายละเอียดดิบยังถูกบันทึกลง log ไฟล์ไว้เผื่อต้องตรวจสอบภายหลัง
 autoUpdater.on('error', (err) => {
   log.error('updater error', err);
-  setUpdateState('error', { message: String((err && err.message) || err) });
-  if (manualCheck) {
-    dialog.showMessageBox(mainWindow, {
-      type: 'error',
-      title: 'ตรวจหาอัปเดตไม่สำเร็จ',
-      message: 'เชื่อมต่อเซิร์ฟเวอร์อัปเดตไม่ได้',
-      detail: String((err && err.message) || err)
-    });
-  }
+  setUpdateState('error', { message: friendlyUpdateError(err), manual: manualCheck });
   manualCheck = false;
 });
 
@@ -201,14 +199,7 @@ function checkForUpdates(manual = false) {
   manualCheck = manual;
   if (isDev) {
     log.info('dev mode — ข้ามการตรวจหาอัปเดต');
-    if (manual) {
-      dialog.showMessageBox(mainWindow, {
-        type: 'info',
-        title: 'ตรวจหาอัปเดต',
-        message: 'โหมดพัฒนา (dev) ไม่ตรวจหาอัปเดต',
-        detail: 'ต้องรันจากไฟล์ที่ติดตั้งแล้วเท่านั้น'
-      });
-    }
+    if (manual) setUpdateState('dev-skip', { manual: true });
     manualCheck = false;
     return;
   }

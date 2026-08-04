@@ -181,13 +181,33 @@
         msgEl.textContent = 'ตรวจสอบอัปเดตไม่สำเร็จ — ' + (s.message || 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้');
         break;
 
+      case 'dev-skip':
+        setPanelState(null);
+        setCheckBtn('ตรวจหาอัปเดต', false, false);
+        msgEl.style.display = 'block';
+        msgEl.textContent = 'โหมดพัฒนา — ไม่ตรวจหาอัปเดต';
+        break;
+
       default:
         setPanelState(null);
         setCheckBtn('ตรวจหาอัปเดต', false, false);
     }
   }
 
+  // toast ชั่วคราวที่หายไปเองตัวเดียว ใช้กับสถานะที่ "แค่แจ้งให้รู้" (ไม่ต้องกดอะไรต่อ)
+  var quietTimer = null;
+  function showQuietToast(title, msg, ms) {
+    clearTimeout(quietTimer);
+    elActs.innerHTML = '';
+    elBar.style.display = 'none';
+    elTitle.textContent = title;
+    elMsg.textContent = msg;
+    box.classList.add('show');
+    quietTimer = setTimeout(function () { box.classList.remove('show'); }, ms || 3200);
+  }
+
   function renderToast(s) {
+    clearTimeout(quietTimer);
     elActs.innerHTML = '';
     elBar.style.display = 'none';
 
@@ -213,12 +233,16 @@
       b2.onclick = function () { box.classList.remove('show'); };
       elActs.appendChild(b1); elActs.appendChild(b2);
       box.classList.add('show');
-    } else if (s.status === 'error') {
-      elTitle.textContent = 'อัปเดตไม่สำเร็จ';
-      elMsg.textContent = s.message || 'เชื่อมต่อเซิร์ฟเวอร์อัปเดตไม่ได้';
-      box.classList.add('show');
-      setTimeout(function () { box.classList.remove('show'); }, 8000);
+    } else if (s.status === 'not-available' && s.manual) {
+      // ตรวจเองแล้วเป็นเวอร์ชันล่าสุด — แจ้งสั้น ๆ แล้วหายไปเอง ไม่ต้องกดอะไร
+      showQuietToast('เป็นเวอร์ชันล่าสุดแล้ว', 'v' + (appVersion || s.version), 2600);
+    } else if (s.status === 'error' && s.manual) {
+      // แจ้งเฉพาะตอนผู้ใช้กดตรวจเอง ข้อความสั้นเดียว ไม่ใช่ error ดิบ
+      showQuietToast('ตรวจสอบอัปเดตไม่สำเร็จ', s.message || 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้', 4500);
+    } else if (s.status === 'dev-skip' && s.manual) {
+      showQuietToast('โหมดพัฒนา', 'ไม่ตรวจหาอัปเดตในโหมด dev', 2600);
     } else {
+      // เช็คพื้นหลังที่ไม่พบอะไรใหม่ หรือพบ error แบบเงียบ ๆ — ไม่ต้องรบกวนผู้ใช้เลย
       box.classList.remove('show');
     }
   }
