@@ -76,6 +76,9 @@
             box-shadow: 0 6px 18px -4px rgba(16, 185, 129, 0.55);
         }
     </style>
+
+    <!-- CP9X Desktop: ชั้นธีมใหม่ (ทับ Tailwind — แก้ไฟล์ theme.css ได้อิสระ) -->
+    <link rel="stylesheet" href="./theme.css">
 </head>
 <body class="text-slate-800 min-h-screen flex flex-col items-center">
 
@@ -144,6 +147,7 @@
             </button>
             <button id="tabCloseList" onclick="switchMode('closelist')" class="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-left transition-colors">
                 <i class="fa-solid fa-magnifying-glass w-5 text-center"></i> <span>ตรวจสอบปิดงาน</span>
+            </button>
             <button id="tabStatusReport" onclick="switchMode('statusreport')" class="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-left transition-colors relative">
                 <i class="fa-solid fa-chart-line w-5 text-center"></i> <span>รายงานสถานะดำเนินการ</span>
                 <span id="pendingBadge" class="hidden absolute right-3 top-1/2 -translate-y-1/2 bg-red-600 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">0</span>
@@ -166,10 +170,10 @@
     <div id="sidebarOverlay" onclick="toggleSidebar()" class="hidden fixed inset-0 bg-black/50 z-30 md:hidden"></div>
 
     <!-- ==================== พื้นที่เนื้อหาหลัก ==================== -->
-    <div class="flex-1 min-h-screen flex flex-col bg-white min-w-0">
+    <div id="mainArea" class="flex-1 min-h-screen flex flex-col bg-white min-w-0">
 
         <!-- แถบด้านบน -->
-        <div class="bg-gradient-to-r from-blood-900 via-blood-800 to-blood-700 px-4 md:px-6 py-4 flex items-center justify-between text-white gap-3">
+        <div id="topBar" class="bg-gradient-to-r from-blood-900 via-blood-800 to-blood-700 px-4 md:px-6 py-4 flex items-center justify-between text-white gap-3">
             <div class="flex items-center gap-3">
                 <button type="button" onclick="toggleSidebar()" class="md:hidden text-white/90 hover:text-white text-lg px-1">
                     <i class="fa-solid fa-bars"></i>
@@ -4580,7 +4584,8 @@
         }
     </script>
 
-<!-- CP9X Desktop: updater UI -->
+<!-- CP9X Desktop: ลูกเล่น UI + แถบแจ้งเตือนอัปเดต -->
+<script src="./ui-enhance.js"></script>
 <script src="./updater-ui.js"></script>
 </body>
 </html>

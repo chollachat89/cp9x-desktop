@@ -1,0 +1,644 @@
+/* ==========================================================================
+   CP9X Desktop — Theme Layer  (Hybrid: sidebar เข้มหรู + พื้นที่ทำงานสว่าง)
+   ไฟล์นี้ทับสไตล์ของ Tailwind เท่านั้น ไม่แตะ HTML/JS
+   แก้ที่นี่ได้อย่างอิสระ ถ้าไม่ชอบให้ลบ <link> ในหน้า index.html ก็กลับเป็นของเดิม
+   ========================================================================== */
+
+:root {
+  --cp-bg:        #eef2f7;
+  --cp-bg-2:      #e6ecf3;
+  --cp-surface:   #ffffff;
+  --cp-ink:       #0f172a;
+  --cp-ink-2:     #334155;
+  --cp-muted:     #64748b;
+  --cp-line:      rgba(15, 23, 42, .08);
+
+  --cp-brand-400: #4ade80;
+  --cp-brand-500: #22c55e;
+  --cp-brand-600: #16a34a;
+  --cp-brand-700: #15803d;
+  --cp-brand-900: #052e16;
+  --cp-cyan:      #22d3ee;
+
+  --cp-r-sm: 10px;
+  --cp-r:    14px;
+  --cp-r-lg: 20px;
+
+  --cp-sh-1: 0 1px 2px rgba(15,23,42,.05), 0 1px 3px rgba(15,23,42,.06);
+  --cp-sh-2: 0 2px 4px rgba(15,23,42,.04), 0 8px 20px -8px rgba(15,23,42,.14);
+  --cp-sh-3: 0 10px 30px -12px rgba(15,23,42,.28), 0 2px 6px rgba(15,23,42,.06);
+  --cp-glow: 0 0 0 1px rgba(34,197,94,.28), 0 10px 26px -12px rgba(34,197,94,.75);
+
+  --cp-ease: cubic-bezier(.22,.61,.36,1);
+}
+
+/* ---------- พื้นฐาน ---------- */
+html, body { background: var(--cp-bg) !important; }
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  color: var(--cp-ink) !important;
+}
+::selection { background: rgba(34,197,94,.24); }
+
+*:focus-visible {
+  outline: 2px solid var(--cp-brand-500);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ---------- Scrollbar ---------- */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: rgba(100,116,139,.32);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 99px;
+}
+*::-webkit-scrollbar-thumb:hover { background: rgba(100,116,139,.55); background-clip: padding-box; }
+#sidebar *::-webkit-scrollbar-thumb { background: rgba(148,163,184,.28); background-clip: padding-box; }
+
+
+/* ==========================================================================
+   1. หน้า Login
+   ========================================================================== */
+#loginScreen {
+  background: #04100c !important;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* ชั้นแสงออโรร่า — ก้อนสีเบลอลอยช้า ๆ อยู่หลังการ์ด */
+#loginScreen::before {
+  content: "";
+  position: absolute; inset: -25%;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(38% 42% at 22% 26%, rgba(34,197,94,.55),  transparent 62%),
+    radial-gradient(34% 38% at 78% 22%, rgba(14,165,183,.48), transparent 64%),
+    radial-gradient(42% 46% at 68% 82%, rgba(16,185,129,.42), transparent 62%),
+    radial-gradient(30% 34% at 12% 84%, rgba(6,148,162,.36),  transparent 64%);
+  filter: blur(70px) saturate(120%);
+  opacity: .85;
+  animation: cpAurora 26s ease-in-out infinite alternate;
+}
+@keyframes cpAurora {
+  0%   { transform: translate3d(0,0,0)        scale(1);    }
+  50%  { transform: translate3d(2.5%,-2%,0)   scale(1.09); }
+  100% { transform: translate3d(-2%,2.5%,0)   scale(1.04); }
+}
+
+/* ขอบมืดรอบจอ + จุดละเอียดจาง ๆ ให้ผิวไม่เรียบเกินไป */
+#loginScreen::after {
+  content: "";
+  position: absolute; inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 90% at 50% 40%, transparent 32%, rgba(2,10,7,.62) 78%, rgba(1,6,4,.9) 100%),
+    radial-gradient(rgba(255,255,255,.05) .9px, transparent .9px);
+  background-size: auto, 4px 4px;
+}
+
+#loginScreen > div {
+  position: relative;
+  z-index: 1;
+  background: rgba(255,255,255,.98) !important;
+  border-radius: 26px !important;
+  padding: 40px 36px 30px !important;
+  max-width: 418px !important;
+  border: 1px solid rgba(255,255,255,.55);
+  box-shadow:
+    0 50px 90px -34px rgba(0,0,0,.8),
+    0 0 0 1px rgba(255,255,255,.10),
+    0 0 70px -20px rgba(34,197,94,.35),
+    inset 0 1px 0 rgba(255,255,255,.95) !important;
+  animation: cpRise .5s var(--cp-ease) both;
+}
+@keyframes cpRise { from { opacity:0; transform: translateY(16px) scale(.985);} to {opacity:1; transform:none;} }
+
+#loginScreen .cp9x-mark {
+  width: 62px !important; height: 62px !important;
+  border-radius: 18px;
+  background: linear-gradient(145deg, var(--cp-brand-500), #0891b2) !important;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 12px 26px -10px rgba(34,197,94,.85), inset 0 1px 0 rgba(255,255,255,.4);
+}
+#loginScreen .cp9x-mark i { font-size: 26px !important; }
+#loginScreen h1 { font-size: 40px !important; letter-spacing: .16em; }
+
+#loginScreen label { color: var(--cp-ink-2) !important; font-size: 12px !important; letter-spacing:.02em; }
+#loginScreen input {
+  padding: 13px 15px !important;
+  border-radius: var(--cp-r) !important;
+  background: #f1f5f9 !important;
+  border: 1px solid transparent !important;
+  transition: all .18s var(--cp-ease);
+}
+#loginScreen input:focus {
+  background: #fff !important;
+  border-color: var(--cp-brand-500) !important;
+  box-shadow: 0 0 0 4px rgba(34,197,94,.14) !important;
+}
+#btnLogin {
+  margin-top: 14px !important;
+  padding: 13px !important;
+  border-radius: var(--cp-r) !important;
+  letter-spacing: .04em;
+  background: linear-gradient(180deg, var(--cp-brand-500), var(--cp-brand-600)) !important;
+  box-shadow: 0 12px 24px -12px rgba(34,197,94,.9), inset 0 1px 0 rgba(255,255,255,.28) !important;
+  transition: transform .15s var(--cp-ease), box-shadow .2s var(--cp-ease), filter .2s;
+}
+#btnLogin:hover { filter: brightness(1.06); transform: translateY(-1px); }
+#btnLogin:active { transform: translateY(0) scale(.99); }
+
+/* ---------- แผงเวอร์ชัน / อัปเดต ในการ์ด login ---------- */
+#cp9xLoginUpdate {
+  margin-top: 26px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(15,23,42,.08);
+  font-size: 12.5px;
+}
+#cp9xLoginUpdate .row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+#cp9xLoginUpdate .ver {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 11px; border-radius: 99px;
+  background: #f1f5f9; color: #475569;
+  font-weight: 600; font-size: 11.5px; letter-spacing: .02em;
+}
+#cp9xLoginUpdate .ver .dot {
+  width: 7px; height: 7px; border-radius: 99px; background: #94a3b8;
+  box-shadow: 0 0 0 3px rgba(148,163,184,.18);
+  transition: background .2s, box-shadow .2s;
+}
+#cp9xLoginUpdate.is-ok    .ver .dot { background: var(--cp-brand-500); box-shadow: 0 0 0 3px rgba(34,197,94,.20); }
+#cp9xLoginUpdate.is-new   .ver .dot { background: #f59e0b; box-shadow: 0 0 0 3px rgba(245,158,11,.22); animation: cpBlink 1.4s ease-in-out infinite; }
+#cp9xLoginUpdate.is-err   .ver .dot { background: #ef4444; box-shadow: 0 0 0 3px rgba(239,68,68,.20); }
+@keyframes cpBlink { 0%,100%{opacity:1} 50%{opacity:.35} }
+
+#cp9xLoginUpdate .act {
+  border: 0; background: none; cursor: pointer;
+  color: var(--cp-brand-600); font-weight: 600; font-size: 12.5px;
+  font-family: inherit; padding: 5px 8px; border-radius: 8px;
+  display: inline-flex; align-items: center; gap: 6px;
+  transition: background .15s, color .15s;
+}
+#cp9xLoginUpdate .act:hover { background: rgba(34,197,94,.10); }
+#cp9xLoginUpdate .act[disabled] { color: #94a3b8; cursor: default; background: none; }
+#cp9xLoginUpdate .act .fa-rotate { animation: cpSpin 1s linear infinite; }
+@keyframes cpSpin { to { transform: rotate(360deg); } }
+
+#cp9xLoginUpdate .msg { margin-top: 9px; color: var(--cp-muted); line-height: 1.5; }
+#cp9xLoginUpdate .bar {
+  margin-top: 10px; height: 6px; border-radius: 99px;
+  background: #e2e8f0; overflow: hidden;
+}
+#cp9xLoginUpdate .bar > i {
+  display: block; height: 100%; width: 0;
+  background: linear-gradient(90deg, var(--cp-brand-500), var(--cp-cyan));
+  border-radius: 99px; transition: width .3s var(--cp-ease);
+}
+#cp9xLoginUpdate .install {
+  margin-top: 12px; width: 100%; padding: 11px; border: 0; cursor: pointer;
+  border-radius: var(--cp-r); font-family: inherit; font-weight: 700; font-size: 13.5px;
+  color: #052e16;
+  background: linear-gradient(180deg, #86efac, var(--cp-brand-400));
+  box-shadow: 0 10px 22px -12px rgba(34,197,94,.95), inset 0 1px 0 rgba(255,255,255,.5);
+  transition: transform .15s var(--cp-ease), filter .18s;
+}
+#cp9xLoginUpdate .install:hover { filter: brightness(1.05); transform: translateY(-1px); }
+#cp9xLoginUpdate .install:active { transform: translateY(0) scale(.99); }
+
+/* ซ่อนป้ายเวอร์ชันมุมซ้ายล่างขณะอยู่หน้า login */
+body.cp9x-login #cp9x-ver,
+body.cp9x-login #cp9x-upd { display: none !important; }
+
+
+/* ==========================================================================
+   2. Sidebar
+   ========================================================================== */
+#sidebar {
+  width: 274px !important;
+  background:
+    radial-gradient(600px 260px at 0% 0%, rgba(34,197,94,.10), transparent 60%),
+    linear-gradient(180deg, #0b1322 0%, #0d1526 45%, #090f1c 100%) !important;
+  border-right: 1px solid rgba(148,163,184,.12);
+  box-shadow: 1px 0 0 rgba(255,255,255,.03), 8px 0 32px -20px rgba(0,0,0,.9);
+}
+#sidebar > div:first-child {
+  padding: 20px 18px !important;
+  border-bottom: 1px solid rgba(148,163,184,.10) !important;
+}
+#sidebar .cp9x-mark {
+  border-radius: 12px;
+  background: linear-gradient(145deg, var(--cp-brand-500), #0891b2) !important;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 8px 18px -8px rgba(34,197,94,.9);
+}
+#sidebar nav { padding: 14px 12px !important; }
+
+/* หัวข้อกลุ่มเมนู */
+#sidebar nav > div {
+  margin-top: 16px !important;
+  padding: 0 12px 6px !important;
+  color: #475569 !important;
+  font-size: 10px !important;
+  letter-spacing: .16em !important;
+  border-top: 1px solid rgba(148,163,184,.08);
+  padding-top: 14px !important;
+}
+
+/* ปุ่มเมนู — className ถูก JS เขียนทับ จึงจัดสไตล์ผ่านโครงสร้างแทน */
+#sidebar nav > button {
+  position: relative;
+  padding: 11px 14px !important;
+  border-radius: 12px !important;
+  color: #94a3b8 !important;
+  font-weight: 500 !important;
+  letter-spacing: .01em;
+  overflow: hidden;
+  transition: background .18s var(--cp-ease), color .18s var(--cp-ease),
+              transform .18s var(--cp-ease), box-shadow .22s var(--cp-ease) !important;
+}
+#sidebar nav > button i {
+  font-size: 15px;
+  opacity: .8;
+  transition: transform .22s var(--cp-ease), opacity .18s;
+}
+#sidebar nav > button:hover {
+  background: rgba(148,163,184,.10) !important;
+  color: #f1f5f9 !important;
+  transform: translateX(3px);
+}
+#sidebar nav > button:hover i { opacity: 1; transform: scale(1.08); }
+
+/* สถานะ active — JS ใส่คลาส bg-blood-600 ให้ปุ่มที่เลือกอยู่ */
+#sidebar nav > button.bg-blood-600 {
+  background: linear-gradient(100deg, rgba(34,197,94,.26), rgba(34,211,238,.10) 70%, transparent) !important;
+  color: #ecfdf5 !important;
+  font-weight: 600 !important;
+  box-shadow: var(--cp-glow) !important;
+  transform: none;
+}
+#sidebar nav > button.bg-blood-600::before {
+  content: "";
+  position: absolute; left: 0; top: 50%;
+  height: 60%; width: 3px;
+  transform: translateY(-50%);
+  border-radius: 0 3px 3px 0;
+  background: linear-gradient(180deg, var(--cp-brand-400), var(--cp-cyan));
+  box-shadow: 0 0 12px rgba(34,197,94,.9);
+}
+#sidebar nav > button.bg-blood-600 i { opacity: 1; color: var(--cp-brand-400); }
+
+/* Badge ตัวเลขแจ้งเตือน */
+#sidebar nav > button > span[id$="Badge"] {
+  border-radius: 99px !important;
+  height: 19px !important;
+  min-width: 19px !important;
+  font-size: 10px !important;
+  box-shadow: 0 0 0 2px rgba(11,19,34,.9), 0 4px 10px -3px rgba(0,0,0,.7);
+  animation: cpPulse 2.2s ease-in-out infinite;
+}
+@keyframes cpPulse { 0%,100%{transform:translateY(-50%) scale(1);} 50%{transform:translateY(-50%) scale(1.1);} }
+
+/* แถบผู้ใช้ด้านล่าง */
+#sidebar > div:last-child {
+  padding: 14px 16px !important;
+  border-top: 1px solid rgba(148,163,184,.10) !important;
+  background: rgba(0,0,0,.25);
+  color: #94a3b8 !important;
+}
+#sidebar > div:last-child i { color: var(--cp-brand-400); }
+
+
+/* ==========================================================================
+   3. แถบด้านบน (Top bar)
+   ========================================================================== */
+#topBar {
+  position: sticky; top: 0; z-index: 30;
+  padding: 14px 24px !important;
+  background:
+    radial-gradient(500px 200px at 100% 0%, rgba(34,211,238,.18), transparent 70%),
+    linear-gradient(100deg, #052e16 0%, #064e3b 55%, #053a2c 100%) !important;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  box-shadow: 0 8px 24px -18px rgba(0,0,0,.9);
+}
+#topBar p { color: rgba(226,232,240,.7) !important; font-size: 12px !important; }
+#topBar button {
+  border-radius: 10px !important;
+  padding: 8px 14px !important;
+  background: rgba(255,255,255,.10) !important;
+  border: 1px solid rgba(255,255,255,.14);
+  backdrop-filter: blur(6px);
+  font-weight: 500;
+  transition: all .18s var(--cp-ease);
+}
+#topBar button:hover {
+  background: rgba(255,255,255,.20) !important;
+  border-color: rgba(255,255,255,.28);
+  transform: translateY(-1px);
+}
+#topBar button:active { transform: translateY(0); }
+
+
+/* ==========================================================================
+   4. พื้นที่ทำงาน + การ์ด
+   ========================================================================== */
+#mainArea { background: var(--cp-bg) !important; }
+
+/* กล่อง "วางข้อความด่วน" */
+#mainArea div[id^="section"] > div.mx-6 {
+  margin: 22px 24px 0 !important;
+  padding: 20px !important;
+  border-radius: var(--cp-r-lg) !important;
+  border: 1px solid rgba(34,197,94,.22) !important;
+  border-style: solid !important;
+  background:
+    linear-gradient(180deg, rgba(34,197,94,.07), rgba(255,255,255,.9)) !important;
+  box-shadow: var(--cp-sh-2);
+}
+#mainArea textarea {
+  border-radius: var(--cp-r) !important;
+  border: 1px solid rgba(15,23,42,.10) !important;
+  background: #fff !important;
+  box-shadow: inset 0 1px 2px rgba(15,23,42,.04);
+  transition: border-color .18s, box-shadow .18s;
+}
+#mainArea textarea:focus {
+  border-color: var(--cp-brand-500) !important;
+  box-shadow: 0 0 0 4px rgba(34,197,94,.13) !important;
+}
+
+/* ฟอร์มกลายเป็นการ์ดสีขาว */
+#mainArea div[id^="section"] > div.p-6 { padding: 24px !important; }
+#mainArea form {
+  background: var(--cp-surface);
+  border: 1px solid var(--cp-line);
+  border-radius: var(--cp-r-lg);
+  padding: 26px 26px 24px;
+  box-shadow: var(--cp-sh-2);
+}
+
+/* หัวข้อในการ์ด */
+#mainArea h3 {
+  position: relative;
+  font-size: 16px !important;
+  letter-spacing: .01em;
+  padding-left: 14px !important;
+  padding-bottom: 12px !important;
+  margin-bottom: 20px !important;
+  border-bottom: 1px solid var(--cp-line) !important;
+}
+#mainArea h3::before {
+  content: "";
+  position: absolute; left: 0; top: 2px;
+  width: 4px; height: 18px; border-radius: 99px;
+  background: linear-gradient(180deg, var(--cp-brand-500), var(--cp-cyan));
+}
+#mainArea h3 i { color: var(--cp-brand-600); margin-right: 6px; }
+
+
+/* ==========================================================================
+   5. ฟอร์ม / อินพุต
+   ========================================================================== */
+#mainArea label {
+  font-size: 12.5px !important;
+  font-weight: 600 !important;
+  color: var(--cp-ink-2) !important;
+  letter-spacing: .01em;
+  margin-bottom: 6px !important;
+}
+#mainArea input[type="text"],
+#mainArea input[type="number"],
+#mainArea input[type="password"],
+#mainArea input[type="date"],
+#mainArea select,
+#modalCustomerCase input, #modalCustomerCase select,
+#modalPartRows input, #modalPartRows select {
+  border-radius: var(--cp-r-sm) !important;
+  border: 1px solid rgba(15,23,42,.12) !important;
+  background: #f8fafc !important;
+  padding: 10px 13px !important;
+  font-size: 13.5px !important;
+  transition: border-color .16s var(--cp-ease), box-shadow .16s var(--cp-ease), background .16s;
+}
+#mainArea input[type="text"]:hover,
+#mainArea select:hover { border-color: rgba(15,23,42,.22) !important; }
+#mainArea input[type="text"]:focus,
+#mainArea input[type="number"]:focus,
+#mainArea input[type="password"]:focus,
+#mainArea select:focus,
+#modalCustomerCase input:focus, #modalPartRows input:focus {
+  background: #fff !important;
+  border-color: var(--cp-brand-500) !important;
+  box-shadow: 0 0 0 4px rgba(34,197,94,.13) !important;
+  outline: none !important;
+}
+#mainArea input[readonly] { cursor: pointer; }
+#mainArea select {
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 11px center !important;
+  padding-right: 32px !important;
+}
+
+
+/* ==========================================================================
+   6. ปุ่ม — ระบบเดียวกันทั้งแอป
+   ========================================================================== */
+#mainArea button,
+#modalCustomerCase button,
+#modalPartRows button {
+  border-radius: var(--cp-r-sm) !important;
+  font-weight: 600 !important;
+  letter-spacing: .01em;
+  transition: transform .14s var(--cp-ease), box-shadow .2s var(--cp-ease),
+              filter .18s, background-color .18s, border-color .18s !important;
+}
+#mainArea button:active,
+#modalCustomerCase button:active { transform: translateY(1px) scale(.995); }
+
+/* ปุ่มหลัก (เขียว) */
+#mainArea button[class*="bg-blood-6"],
+#mainArea button[class*="bg-blood-7"],
+#modalCustomerCase button[class*="bg-blood-"],
+#modalPartRows button[class*="bg-blood-"] {
+  background-image: linear-gradient(180deg, var(--cp-brand-500), var(--cp-brand-600)) !important;
+  border: 1px solid rgba(21,128,61,.5) !important;
+  box-shadow: 0 8px 18px -10px rgba(22,163,74,.9), inset 0 1px 0 rgba(255,255,255,.26) !important;
+  padding: 10px 18px !important;
+}
+#mainArea button[class*="bg-blood-6"]:hover,
+#mainArea button[class*="bg-blood-7"]:hover {
+  filter: brightness(1.07);
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px -10px rgba(22,163,74,.95), inset 0 1px 0 rgba(255,255,255,.3) !important;
+}
+
+/* ปุ่มรอง (ขาว-ขอบเทา) */
+#mainArea button.bg-white,
+#modalCustomerCase button.bg-white {
+  background: #fff !important;
+  border: 1px solid rgba(15,23,42,.14) !important;
+  color: var(--cp-ink-2) !important;
+  box-shadow: var(--cp-sh-1) !important;
+  padding: 10px 18px !important;
+}
+#mainArea button.bg-white:hover {
+  background: #f8fafc !important;
+  border-color: rgba(15,23,42,.24) !important;
+  transform: translateY(-1px);
+  box-shadow: var(--cp-sh-2) !important;
+}
+
+/* ปุ่มอันตราย */
+#mainArea button[class*="bg-red-"],
+#modalCustomerCase button[class*="bg-red-"] {
+  background-image: linear-gradient(180deg, #f87171, #dc2626) !important;
+  border: 1px solid rgba(153,27,27,.45) !important;
+  box-shadow: 0 8px 18px -10px rgba(220,38,38,.85), inset 0 1px 0 rgba(255,255,255,.2) !important;
+}
+/* ปุ่มรอง/เตือน โทนอื่น ๆ ให้มีเงาเสมอกัน */
+#mainArea button[class*="bg-amber-"],
+#mainArea button[class*="bg-blue-"],
+#mainArea button[class*="bg-slate-"],
+#mainArea button[class*="bg-emerald-"] {
+  box-shadow: 0 6px 16px -10px rgba(15,23,42,.7), inset 0 1px 0 rgba(255,255,255,.18) !important;
+  border: 1px solid rgba(15,23,42,.10) !important;
+}
+#mainArea button[class*="bg-amber-"]:hover,
+#mainArea button[class*="bg-blue-"]:hover,
+#mainArea button[class*="bg-slate-"]:hover { filter: brightness(1.06); transform: translateY(-1px); }
+
+#mainArea button:disabled,
+#mainArea button[disabled] {
+  opacity: .5 !important;
+  filter: grayscale(.35);
+  transform: none !important;
+  cursor: not-allowed;
+  box-shadow: none !important;
+}
+
+/* กลุ่มปุ่มแนวนอน — ให้เป็น toolbar ที่หายใจได้ */
+#mainArea .flex.gap-2 > button,
+#mainArea .flex.gap-3 > button { min-height: 40px; }
+
+/* แถวปุ่มใต้ textarea (แยกข้อมูล / ล้างข้อความ) */
+#mainArea div[id^="section"] > div.mx-6 .flex.gap-2 { gap: 10px !important; margin-top: 2px; }
+
+
+/* ==========================================================================
+   7. ตาราง
+   ========================================================================== */
+#mainArea table {
+  border-collapse: separate !important;
+  border-spacing: 0;
+  width: 100%;
+  font-size: 13px;
+  background: #fff;
+  border-radius: var(--cp-r) ;
+  overflow: hidden;
+}
+#mainArea thead th {
+  position: sticky; top: 0; z-index: 5;
+  background: linear-gradient(180deg, #f8fafc, #eff3f8) !important;
+  color: #475569 !important;
+  font-size: 11.5px !important;
+  font-weight: 700 !important;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  padding: 11px 14px !important;
+  border-bottom: 1px solid rgba(15,23,42,.10) !important;
+  white-space: nowrap;
+}
+#mainArea tbody td {
+  padding: 11px 14px !important;
+  border-bottom: 1px solid rgba(15,23,42,.055) !important;
+  color: var(--cp-ink-2);
+  vertical-align: middle;
+}
+#mainArea tbody tr { transition: background .14s var(--cp-ease); }
+#mainArea tbody tr:nth-child(even) { background: rgba(241,245,249,.5); }
+#mainArea tbody tr:hover {
+  background: rgba(34,197,94,.07) !important;
+  box-shadow: inset 3px 0 0 var(--cp-brand-500);
+}
+#mainArea tbody tr:last-child td { border-bottom: 0 !important; }
+
+/* กรอบรอบตารางที่อยู่ในกล่อง overflow */
+#mainArea .overflow-x-auto,
+#mainArea .overflow-auto {
+  border: 1px solid var(--cp-line);
+  border-radius: var(--cp-r);
+  background: #fff;
+  box-shadow: var(--cp-sh-2);
+}
+
+/* ปุ่มเล็กในตาราง */
+#mainArea td button {
+  padding: 6px 12px !important;
+  font-size: 12px !important;
+  border-radius: 8px !important;
+}
+
+
+/* ==========================================================================
+   8. Badge / สถานะ / Alert / Modal
+   ========================================================================== */
+#mainArea span[class*="rounded-full"][class*="text-xs"],
+#mainArea span[class*="rounded-full"][class*="text-[10px]"] {
+  font-weight: 700 !important;
+  letter-spacing: .02em;
+  padding: 3px 10px !important;
+  box-shadow: inset 0 0 0 1px rgba(15,23,42,.06);
+}
+
+#alertBox {
+  margin: 18px 24px 0 !important;
+  border-radius: var(--cp-r) !important;
+  box-shadow: var(--cp-sh-2);
+  font-weight: 600;
+  animation: cpRise .28s var(--cp-ease) both;
+}
+
+#warningToast {
+  border-radius: var(--cp-r) !important;
+  background: linear-gradient(150deg, #ef4444, #b91c1c) !important;
+  border: 1px solid rgba(255,255,255,.16) !important;
+  box-shadow: 0 24px 48px -20px rgba(185,28,28,.9), 0 0 0 1px rgba(0,0,0,.1) !important;
+  backdrop-filter: blur(8px);
+}
+
+/* Modal — พื้นหลังเบลอ + การ์ดลอย */
+#modalCustomerCase, #modalPartRows { backdrop-filter: blur(4px); }
+#modalCustomerCase > div, #modalPartRows > div {
+  border-radius: var(--cp-r-lg) !important;
+  box-shadow: 0 40px 90px -30px rgba(2,6,23,.7), 0 0 0 1px rgba(15,23,42,.06) !important;
+  animation: cpRise .26s var(--cp-ease) both;
+}
+
+/* Loader */
+.loader { border-width: 3px !important; border-color: rgba(34,197,94,.25); border-top-color: transparent !important; }
+
+
+/* ==========================================================================
+   9. จอเล็ก
+   ========================================================================== */
+@media (max-width: 768px) {
+  #topBar { padding: 12px 16px !important; }
+  #mainArea div[id^="section"] > div.mx-6 { margin: 16px 14px 0 !important; padding: 16px !important; }
+  #mainArea div[id^="section"] > div.p-6 { padding: 14px !important; }
+  #mainArea form { padding: 18px 16px !important; border-radius: var(--cp-r); }
+  #alertBox { margin: 14px 14px 0 !important; }
+}
+
+/* ลดการเคลื่อนไหวถ้าผู้ใช้ตั้งค่าไว้ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
