@@ -241,7 +241,8 @@
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">เลขที่ใบแจ้งซ่อมบำรุง <span class="text-red-500">*</span></label>
-                                <input type="text" id="op_mainId" required class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                                <input type="text" id="op_mainId" required onblur="checkOpenJobNumberDuplicate(this.value.trim())" oninput="clearOpenJobNumberStatus()" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                                <p id="op_mainIdStatus" class="text-xs mt-1 text-slate-400"></p>
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">Service Type <span class="text-red-500">*</span></label>
@@ -1711,7 +1712,48 @@
             }
         }
 
-        // เช็คว่ามีการเปิดงานเลขนี้ไว้ก่อนหรือไม่ (เช็คสดตอนกรอกเลขงานในฟอร์มปิดงาน)
+        // ==================== กันกรอกเลขงานซ้ำ (เปิดงาน/ปิดงาน) ====================
+        // เช็คสดทันทีที่พิมพ์เลขงานเสร็จ (onblur) ทั้ง 2 ฟอร์ม - เป็นชั้นแจ้งเตือนไว ๆ ให้ผู้ใช้เห็นก่อนกดบันทึก
+        // ส่วนตัวกันจริง (กันสองคนกดพร้อมกัน) อยู่ฝั่งเซิร์ฟเวอร์ที่ตรวจซ้ำอีกทีตอนบันทึกจริงเสมอ
+
+        function clearOpenJobNumberStatus() {
+            const statusEl = document.getElementById('op_mainIdStatus');
+            if (statusEl) { statusEl.textContent = ''; statusEl.className = 'text-xs mt-1 text-slate-400'; }
+        }
+
+        function clearCloseJobNumberStatus() {
+            const statusEl = document.getElementById('cl_kissflowStatus');
+            if (statusEl) { statusEl.textContent = ''; statusEl.className = 'text-xs mt-1 text-slate-400'; }
+        }
+
+        // เช็คว่าเลขที่ใบแจ้งซ่อมบำรุงนี้ถูก "เปิดงาน" ไปแล้วหรือยัง (เช็คสดตอนกรอกเลขงานในฟอร์มเปิดงาน)
+        // ถ้าพบว่ามีอยู่แล้ว = ห้ามเปิดซ้ำ (กันกรณีหลายคนกรอกเลขเดียวกัน)
+        function checkOpenJobNumberDuplicate(jobId) {
+            const statusEl = document.getElementById('op_mainIdStatus');
+            if (!statusEl) return;
+            if (!jobId) { statusEl.textContent = ''; return; }
+
+            statusEl.textContent = 'กำลังตรวจสอบ...';
+            statusEl.className = 'text-xs mt-1 text-slate-400';
+
+            google.script.run.withSuccessHandler(function (res) {
+                if (res && res.error) {
+                    statusEl.textContent = 'ตรวจสอบล้มเหลว: ' + res.error;
+                    statusEl.className = 'text-xs mt-1 text-slate-400';
+                } else if (res && res.exists) {
+                    statusEl.textContent = '✗ เลขที่งานนี้ถูกเปิดงานไปแล้ว ห้ามเปิดซ้ำ';
+                    statusEl.className = 'text-xs mt-1 text-red-500 font-semibold';
+                } else {
+                    statusEl.textContent = '✓ ยังไม่เคยเปิดงานเลขนี้ บันทึกได้';
+                    statusEl.className = 'text-xs mt-1 text-emerald-600';
+                }
+            }).withFailureHandler(function () {
+                statusEl.textContent = 'เชื่อมต่อล้มเหลว ลองใหม่ภายหลัง';
+                statusEl.className = 'text-xs mt-1 text-slate-400';
+            }).checkOpenIssueExists(jobId);
+        }
+
+        // เช็คว่ามีการเปิดงานเลขนี้ไว้ก่อนหรือไม่ + เคยปิดงานไปแล้วหรือยัง (เช็คสดตอนกรอกเลขงานในฟอร์มปิดงาน)
         function checkJobNumberExists(jobId) {
             const statusEl = document.getElementById('cl_kissflowStatus');
             if (!jobId) { statusEl.textContent = ''; return; }
@@ -1725,8 +1767,21 @@
                         statusEl.textContent = 'ตรวจสอบล้มเหลว: ' + res.error;
                         statusEl.className = 'text-xs mt-1 text-red-500';
                     } else if (res && res.exists) {
-                        statusEl.textContent = '✓ พบการเปิดงานเลขนี้แล้ว';
-                        statusEl.className = 'text-xs mt-1 text-emerald-600';
+                        // เปิดงานไว้แล้ว - เช็คต่อว่าปิดงานไปแล้วหรือยัง (กันปิดซ้ำ)
+                        google.script.run.withSuccessHandler(function (closeRes) {
+                            if (closeRes && closeRes.exists) {
+                                statusEl.textContent = '✗ เลขงานนี้ถูกปิดงานไปแล้ว ห้ามปิดซ้ำ';
+                                statusEl.className = 'text-xs mt-1 text-red-500 font-semibold';
+                            } else {
+                                statusEl.textContent = '✓ พบการเปิดงานเลขนี้แล้ว บันทึกปิดงานได้';
+                                statusEl.className = 'text-xs mt-1 text-emerald-600';
+                            }
+                        }).withFailureHandler(function () {
+                            // เช็คสถานะปิดงานล้มเหลว - อย่างน้อยรู้แล้วว่าเปิดงานไว้จริง ปล่อยให้บันทึกต่อได้
+                            // (เซิร์ฟเวอร์จะเช็คซ้ำอีกชั้นตอนกดบันทึกจริงอยู่ดี)
+                            statusEl.textContent = '✓ พบการเปิดงานเลขนี้แล้ว';
+                            statusEl.className = 'text-xs mt-1 text-emerald-600';
+                        }).checkCloseIssueExists(jobId);
                     } else {
                         statusEl.textContent = '⚠ ยังไม่พบการเปิดงานเลขนี้ กรุณาบันทึก "เปิดงาน" ก่อน';
                         statusEl.className = 'text-xs mt-1 text-red-500';
@@ -1851,6 +1906,8 @@
                 document.getElementById('op_serviceWork').value = data.service || '';
                 setBranchAndLookup('op_branchCode', 'op_branchName', 'op_branchStatus', data.branch);
                 document.getElementById('op_details').value = data.details || '';
+                // แยกข้อความแล้วได้เลขงานมา เช็คซ้ำให้ทันที ไม่ต้องรอผู้ใช้คลิกออกจากช่อง
+                if (data.mainId) checkOpenJobNumberDuplicate(data.mainId.trim());
             } else if (mode === 'close') {
                 const data = { kissflow: '', branch: '', date: '', partsList: [], asset: '', action: '' };
                 for (let i = 0; i < lines.length; i++) {
@@ -1887,6 +1944,8 @@
                 }
                 document.getElementById('cl_assetId').value = data.asset || '';
                 document.getElementById('cl_actionTaken').value = data.action || '';
+                // แยกข้อความแล้วได้เลขงานมา เช็คซ้ำให้ทันที ไม่ต้องรอผู้ใช้คลิกออกจากช่อง
+                if (data.kissflow) checkJobNumberExists(data.kissflow.trim());
             } else if (mode === 'pause') {
                 // รองรับข้อความแบบ "ขออนุมัติแจ้งซ่อม" ที่ขึ้นต้นแต่ละบรรทัดด้วยเลขลำดับ "1." "2." ... เช่น:
                 // 1.เลขที่งาน:#CM20260715-0134 / 2.ชื่อสาขา: ... / 7.สถานะเลขงาน: พักงานรออะไหล่
@@ -2989,6 +3048,28 @@
             return formatDurationHours(liveHours) + ' (กำลังดำเนินการ)';
         }
 
+        // สร้าง HTML แสดงช่วงเวลาที่งานถูกพัก (ใช้ในหน้า "ดูรายละเอียด" ของแท็บรายงานสถานะ)
+        // row.pause_periods ต้องมาจากเซิร์ฟเวอร์ (getJobStatusReport) - ถ้ายังไม่มี (เซิร์ฟเวอร์รุ่นเก่า) จะไม่แสดงช่องนี้เลย
+        function getPausePeriodsDisplay(row) {
+            const periods = row.pause_periods;
+            if (!Array.isArray(periods) || periods.length === 0) return null;
+
+            const rowsHtml = periods.map(function (p) {
+                const isPaused = p.status === 'paused';
+                const startTxt = formatTimestamp(p.paused_at) || '-';
+                const endTxt = isPaused ? 'ยังพักอยู่' : (formatTimestamp(p.resumed_at) || '-');
+                const reasonTxt = p.reason ? (' — ' + p.reason) : '';
+                const color = isPaused ? 'text-red-500' : 'text-slate-600';
+                return '<div class="' + color + '">' + startTxt + ' → ' + endTxt + reasonTxt + '</div>';
+            }).join('');
+
+            const totalTxt = (typeof row.pause_hours_total === 'number')
+                ? ' (รวม ' + formatDurationHours(row.pause_hours_total) + ')'
+                : '';
+            return '<div class="text-left space-y-0.5">' + rowsHtml + '</div>' +
+                '<div class="text-xs text-slate-400 mt-1 text-left">พัก ' + periods.length + ' ครั้ง' + totalTxt + '</div>';
+        }
+
         let currentStatusReportRenderedRows = []; // แถวที่กำลังแสดงอยู่จริง (หลังกรอง) - ใช้ให้ปุ่ม "ดูรายละเอียด" อ้างอิงกลับได้ด้วย index
 
         function renderStatusReport(rows) {
@@ -3040,6 +3121,7 @@
                 ['วันที่ปิดงาน', row.closed_at ? formatTimestamp(row.closed_at) : null],
                 ['ดำเนินการแก้ไขแล้ว', row.action_taken],
                 ['ระยะเวลาดำเนินการ', getRowDurationDisplay(row)],
+                ['ช่วงเวลาพักงาน', getPausePeriodsDisplay(row)],
                 ['ส่งมอบงานให้ผู้รับเหมาแล้ว', row.sent_to_contractor ? 'ใช่' : 'ยังไม่ส่ง'],
                 ['เสร็จสิ้น (ตัดบิลแล้ว)', row.completed ? 'ใช่' : 'ยังไม่เสร็จ'],
                 ['สถานะปัจจุบัน', row.status]
@@ -3933,15 +4015,35 @@
                 }
             }
 
-            // ห้ามปิดงานได้ถ้าเลขงานนี้ยังถูกพักงานอยู่ - เช็คก่อนบันทึกจริงเสมอ (เซิร์ฟเวอร์ก็บังคับซ้ำใน saveCloseIssue()
-            // อีกชั้นอยู่ดี กันกรณีเช็คฝั่งนี้พลาด/ช้าเกินไป) ให้เห็น popup แดงทันทีโดยไม่ต้องรอ round-trip เต็มของการบันทึก
-            if (mode === 'close' && formData.kissflowId) {
+            // กันกรอกเลขงานซ้ำ (หลายคนกดพร้อมกัน) - เช็คสดอีกครั้งตอนกดบันทึกจริง (ไม่พึ่งผลเช็คตอน onblur
+            // เพียงอย่างเดียว เพราะอาจเก่าไปแล้วถ้าผู้ใช้วางข้อความ/ค้างหน้าจอไว้นาน) เซิร์ฟเวอร์ยังบังคับเช็คซ้ำ
+            // อีกชั้นใน saveOpenIssue()/saveCloseIssue() เสมอ อยู่ดี ส่วนนี้แค่ทำให้ผู้ใช้เห็น popup แดงไวขึ้นเท่านั้น
+            if (mode === 'open' && formData.mainId) {
+                runServerCall('checkOpenIssueExists', [formData.mainId], function (checkRes) {
+                    if (checkRes && checkRes.exists) {
+                        showAlert('error', 'เลขที่ใบแจ้งซ่อมบำรุง "' + formData.mainId + '" ถูกเปิดงานไปแล้ว ห้ามเปิดซ้ำ');
+                        return;
+                    }
+                    doActualSubmit();
+                }, function () {
+                    // เชื่อมต่อเช็คล้มเหลว - ปล่อยให้บันทึกต่อไปได้ (เซิร์ฟเวอร์จะเช็คซ้ำอีกชั้นใน saveOpenIssue() อยู่ดี)
+                    doActualSubmit();
+                });
+            } else if (mode === 'close' && formData.kissflowId) {
                 runServerCall('checkIssuePausedStatus', [formData.kissflowId], function (checkRes) {
                     if (checkRes && checkRes.paused) {
                         showAlert('error', 'เลขงาน "' + formData.kissflowId + '" กำลังถูกพักงานอยู่ ไม่สามารถปิดงานได้ กรุณากด "กลับมาทำงาน" ในแท็บพักงานก่อน');
                         return;
                     }
-                    doActualSubmit();
+                    runServerCall('checkCloseIssueExists', [formData.kissflowId], function (closeCheckRes) {
+                        if (closeCheckRes && closeCheckRes.exists) {
+                            showAlert('error', 'เลขที่ใบแจ้งซ่อมบำรุง "' + formData.kissflowId + '" ถูกปิดงานไปแล้ว ห้ามปิดซ้ำ');
+                            return;
+                        }
+                        doActualSubmit();
+                    }, function () {
+                        doActualSubmit();
+                    });
                 }, function () {
                     // เชื่อมต่อเช็คล้มเหลว - ปล่อยให้บันทึกต่อไปได้ (เซิร์ฟเวอร์จะเช็คซ้ำอีกชั้นใน saveCloseIssue() อยู่ดี)
                     doActualSubmit();
@@ -4309,6 +4411,11 @@
             }
             container.innerHTML = items.map(function (it) {
                 const isPaused = it.status === 'paused';
+                const startMs = it.paused_at ? new Date(it.paused_at).getTime() : null;
+                const endMs = it.resumed_at ? new Date(it.resumed_at).getTime() : Date.now();
+                const durationTxt = (startMs && !isNaN(startMs) && endMs >= startMs)
+                    ? formatDurationHours((endMs - startMs) / (1000 * 60 * 60)) + (isPaused ? ' (นับต่อเนื่อง)' : '')
+                    : null;
                 return `
                 <div class="border border-slate-200 rounded-xl p-4">
                     <div class="text-sm font-semibold ${isPaused ? 'text-red-600' : 'text-emerald-600'}">
@@ -4321,6 +4428,7 @@
                     <div class="text-xs text-slate-400 mt-1">
                         พัก: ${formatTimestamp(it.paused_at)} โดย ${it.paused_by || '-'}
                         ${it.resumed_at ? '<br>กลับมาทำ: ' + formatTimestamp(it.resumed_at) + ' โดย ' + (it.resumed_by || '-') : ''}
+                        ${durationTxt ? '<br>ระยะเวลาที่พัก: <span class="font-semibold ' + (isPaused ? 'text-red-500' : 'text-slate-500') + '">' + durationTxt + '</span>' : ''}
                     </div>
                 </div>`;
             }).join('');
