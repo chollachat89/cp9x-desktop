@@ -33,22 +33,12 @@ jobs:
           if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; \
           else npm install --no-audit --no-fund; fi
 
-      # ลบ release เดิมของ tag นี้ทิ้งก่อน (ถ้ามี) เพื่อให้ re-run ได้เสมอ
-      # ไม่ลบ tag — แค่ลบตัว release ที่ค้างอยู่
-      - name: Clean existing release for this tag
-        if: startsWith(github.ref, 'refs/tags/')
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          echo "ตรวจ release เดิมของ $TAG"
-          gh release delete "$TAG" --yes --repo "$GITHUB_REPOSITORY" || echo "ไม่มี release เดิม - ข้าม"
-
-      - name: Build & publish to GitHub Releases
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win --x64 --publish always
+      # Build เฉยๆ ไม่ให้ electron-builder ยิง GitHub API เอง (--publish never)
+      # เหตุผล: electron-builder เคยพัง 404 ตอนพยายามเช็ค release เดิมผ่าน releases.atom ของ GitHub
+      # (เป็นปัญหารู้กันในชุมชน electron-builder) จึงแยกขั้นตอน publish ออกมาทำเองด้วย action
+      # ที่เสถียรกว่าแทน (softprops/action-gh-release ด้านล่าง)
+      - name: Build (ไม่ publish เอง)
+        run: npx electron-builder --win --x64 --publish never
 
       - name: Upload artifacts (สำรอง)
         uses: actions/upload-artifact@v4
@@ -59,3 +49,17 @@ jobs:
             dist/*.yml
             dist/*.blockmap
           if-no-files-found: warn
+
+      # สร้าง/อัปเดต GitHub Release ของ tag นี้ พร้อมแนบไฟล์ - action ตัวนี้จัดการ
+      # "อัปเดตของเดิมถ้ามีอยู่แล้ว" ให้เองอย่างปลอดภัย ไม่ต้องลบ release เก่าทิ้งก่อนแบบที่เคยทำ
+      - name: Publish to GitHub Releases
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.exe
+            dist/*.exe.blockmap
+            dist/latest.yml
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
