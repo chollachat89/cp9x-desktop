@@ -552,8 +552,8 @@
 
                     <div class="flex flex-wrap justify-between items-center mb-4 gap-3">
                         <div class="flex gap-2 flex-wrap">
-                            <button type="button" onclick="generateBillingDocuments()" id="btn_generateBilling" class="bg-blood-600 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-blood-700 transition-colors">
-                                <i class="fa-solid fa-link mr-1"></i> จับคู่ข้อมูลเปิดงาน-ปิดงาน
+                            <button type="button" onclick="previewBillingRound()" id="btn_generateBilling" class="bg-blood-600 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-blood-700 transition-colors">
+                                <i class="fa-solid fa-magnifying-glass mr-1"></i> ดูตัวอย่างก่อนบันทึกรอบบิล
                             </button>
                             <button type="button" onclick="saveAllBillingRows()" id="btn_saveAllBilling" class="bg-blood-500 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-blood-600 transition-colors">
                                 <i class="fa-solid fa-floppy-disk mr-1"></i> บันทึกข้อมูลทั้งหมด
@@ -616,7 +616,7 @@
                     </div>
                 </div>
                 <p id="billingStatus" class="text-sm text-slate-400 mb-3">
-                    เลือกช่วงวันที่/เลขงาน และผู้รับเหมา (ถ้าต้องการ) แล้วกด "จับคู่ข้อมูลเปิดงาน-ปิดงาน" หรือ "โหลด/รีเฟรชข้อมูล" เพื่อแสดงข้อมูล
+                    เลือกช่วงวันที่/เลขงาน และผู้รับเหมา (ถ้าต้องการ) แล้วกด "ดูตัวอย่างก่อนบันทึกรอบบิล" เพื่อตรวจสอบข้อมูลก่อนยืนยัน หรือกด "โหลด/รีเฟรชข้อมูล" เพื่อแสดงข้อมูลที่เคยบันทึกไว้แล้ว
                 </p>
                 <div class="overflow-x-auto border border-slate-200 rounded-xl">
                     <table class="w-full text-xs" id="billingTable">
@@ -760,9 +760,23 @@
             <div class="p-6">
                 <div class="flex flex-wrap justify-between items-center mb-4 gap-3">
                     <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-chart-line mr-2"></i> รายงานสถานะดำเนินการ</h3>
-                    <button type="button" onclick="loadStatusReport()" class="bg-slate-700 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-800 transition-colors">
-                        <i class="fa-solid fa-rotate mr-1"></i> โหลด/รีเฟรชข้อมูล
-                    </button>
+                    <div class="flex gap-2">
+                        <button type="button" onclick="loadStatusReport()" class="bg-slate-700 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-800 transition-colors">
+                            <i class="fa-solid fa-rotate mr-1"></i> โหลด/รีเฟรชข้อมูล
+                        </button>
+                        <div class="relative inline-block">
+                            <button type="button" onclick="toggleStatusReportColumnManagerPanel()" class="bg-white text-slate-600 border border-slate-300 text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-50 transition-colors">
+                                <i class="fa-solid fa-table-columns mr-1"></i> จัดการคอลัมน์
+                            </button>
+                            <div id="statusReportColumnManagerPanel" class="hidden absolute right-0 mt-2 z-40 bg-white border border-slate-300 rounded-xl shadow-2xl p-3 w-64 max-h-80 overflow-y-auto">
+                                <div class="flex justify-between items-center mb-2 pb-2 border-b border-slate-100">
+                                    <span class="text-xs font-bold text-slate-700">แสดง/ซ่อนคอลัมน์</span>
+                                    <button type="button" onclick="setAllStatusReportColumns(true)" class="text-[10px] text-blood-600 underline hover:text-blood-800">แสดงทั้งหมด</button>
+                                </div>
+                                <div id="statusReportColumnManagerList" class="space-y-1"></div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- ตัวกรองช่วงวันที่ (กรองที่ฝั่งเซิร์ฟเวอร์ก่อนส่งข้อมูลมา - กันหน้าเว็บค้าง/แล็คตอนข้อมูลมีเยอะ) -->
@@ -820,13 +834,13 @@
                         <thead class="bg-slate-100 text-slate-600">
                             <tr>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">เลขที่ใบแจ้งซ่อมบำรุง</th>
-                                <th class="p-2 text-left font-semibold whitespace-nowrap">สาขา</th>
-                                <th class="p-2 text-left font-semibold whitespace-nowrap">Service Type</th>
-                                <th class="p-2 text-left font-semibold whitespace-nowrap">ผู้รับเหมา</th>
-                                <th class="p-2 text-left font-semibold whitespace-nowrap">วันที่เปิดงาน</th>
-                                <th class="p-2 text-left font-semibold whitespace-nowrap">วันที่เข้าแก้ไข (ปิดงาน)</th>
-                                <th class="p-2 text-left font-semibold whitespace-nowrap">ระยะเวลาดำเนินการ</th>
-                                <th class="p-2 text-left font-semibold whitespace-nowrap">สถานะ</th>
+                                <th data-col="branch" class="p-2 text-left font-semibold whitespace-nowrap">สาขา</th>
+                                <th data-col="service_type" class="p-2 text-left font-semibold whitespace-nowrap">Service Type</th>
+                                <th data-col="contractor" class="p-2 text-left font-semibold whitespace-nowrap">ผู้รับเหมา</th>
+                                <th data-col="opened_at" class="p-2 text-left font-semibold whitespace-nowrap">วันที่เปิดงาน</th>
+                                <th data-col="fix_date" class="p-2 text-left font-semibold whitespace-nowrap">วันที่เข้าแก้ไข (ปิดงาน)</th>
+                                <th data-col="duration" class="p-2 text-left font-semibold whitespace-nowrap">ระยะเวลาดำเนินการ</th>
+                                <th data-col="status" class="p-2 text-left font-semibold whitespace-nowrap">สถานะ</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">รายละเอียด</th>
                             </tr>
                         </thead>
@@ -1108,6 +1122,55 @@
             <div class="flex justify-end p-5 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
                 <button type="button" onclick="closeBillingHistoryModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2 px-6 rounded-xl hover:bg-slate-100 transition-colors">
                     ปิด
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal ดูตัวอย่างก่อนบันทึกรอบบิล (ขั้นที่ 1: ดูอย่างเดียว ไม่บันทึกอะไรเข้าระบบ - ต้องกดยืนยันอีกครั้งในขั้นที่ 2 ถึงจะสร้างรอบบิลจริง) -->
+    <div id="billingPreviewModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] overflow-y-auto">
+            <div class="flex items-center justify-between p-5 border-b border-slate-200 sticky top-0 bg-white z-10">
+                <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-magnifying-glass mr-2 text-blood-600"></i>ดูตัวอย่างก่อนบันทึกรอบบิล</h3>
+                <button type="button" onclick="closeBillingPreviewModal()" class="text-slate-400 hover:text-slate-700 text-xl leading-none">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="p-5">
+                <p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3">
+                    <i class="fa-solid fa-circle-info mr-1"></i> นี่เป็นแค่การดูตัวอย่างเท่านั้น <b>ยังไม่มีการบันทึกข้อมูลใดๆ เข้าระบบ</b> — ตรวจสอบรายการด้านล่างให้ครบถ้วนก่อน แล้วค่อยกด "ยืนยันบันทึกรอบบิล" ด้านล่างสุดอีกครั้ง
+                </p>
+                <div id="billingPreviewLoading" class="text-center text-slate-400 text-sm py-8">กำลังตรวจสอบข้อมูล...</div>
+                <div id="billingPreviewEmpty" class="hidden text-center text-slate-400 text-sm py-8">ไม่พบข้อมูลใหม่ที่ยังไม่เคยบันทึกรอบบิลในช่วง/เลขงานที่เลือก</div>
+                <div id="billingPreviewContent" class="hidden">
+                    <div class="flex flex-wrap gap-3 mb-3 text-xs">
+                        <span class="font-semibold px-3 py-1.5 rounded-full bg-blood-100 text-blood-700">ช่วงรอบบิล: <span id="billingPreviewRoundPeriod">-</span></span>
+                        <span class="font-semibold px-3 py-1.5 rounded-full bg-emerald-100 text-emerald-700">ข้อมูลใหม่ที่จะบันทึก: <span id="billingPreviewNewCount">0</span> เลขงาน</span>
+                        <span id="billingPreviewAlreadyBadge" class="hidden font-semibold px-3 py-1.5 rounded-full bg-slate-100 text-slate-500">บันทึกไปแล้วก่อนหน้านี้ (ข้ามอัตโนมัติ): <span id="billingPreviewAlreadyCount">0</span> เลขงาน</span>
+                    </div>
+                    <div class="overflow-x-auto border border-slate-200 rounded-xl">
+                        <table class="w-full text-xs border-collapse">
+                            <thead>
+                                <tr class="bg-slate-100 text-slate-600">
+                                    <th class="p-2 text-left border-b border-slate-200">เลขที่ใบแจ้งซ่อมบำรุง</th>
+                                    <th class="p-2 text-left border-b border-slate-200">สาขา</th>
+                                    <th class="p-2 text-left border-b border-slate-200">Service Type</th>
+                                    <th class="p-2 text-left border-b border-slate-200">ผู้รับเหมา</th>
+                                    <th class="p-2 text-left border-b border-slate-200">วันที่รับแจ้ง</th>
+                                    <th class="p-2 text-left border-b border-slate-200">วันที่เข้างาน</th>
+                                </tr>
+                            </thead>
+                            <tbody id="billingPreviewTbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="flex justify-end gap-3 p-5 border-t border-slate-200 bg-slate-50 rounded-b-2xl sticky bottom-0">
+                <button type="button" onclick="closeBillingPreviewModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2.5 px-6 rounded-xl hover:bg-slate-100 transition-colors">
+                    ยกเลิก
+                </button>
+                <button type="button" id="btn_confirmBillingRound" onclick="confirmBillingRound()" class="bg-blood-700 text-white font-semibold py-2.5 px-6 rounded-xl hover:bg-blood-800 transition-colors flex items-center gap-2">
+                    <i class="fa-solid fa-check"></i> <span id="text_confirmBillingRound">ยืนยันบันทึกรอบบิล</span>
                 </button>
             </div>
         </div>
@@ -1529,6 +1592,8 @@
             addPartRow();
             loadBillingColumnPrefs();
             applyBillingColumnPrefsToHeaders();
+            loadStatusReportColumnPrefs();
+            applyStatusReportColumnPrefsToHeaders();
             setDefaultOpenDateTime();
             setDefaultCloseDateTime();
             initStatusReportDefaultRange();
@@ -2085,11 +2150,15 @@
             currentBillingData = [];
             document.getElementById('billingBody').innerHTML = '';
             const statusEl = document.getElementById('billingStatus');
-            statusEl.textContent = 'ล้างหน้าจอแล้ว (ข้อมูลเดิมยังอยู่ในระบบ) — กด "โหลด/รีเฟรชข้อมูล" หรือ "จับคู่ข้อมูลเปิดงาน-ปิดงาน" เพื่อดูชุดถัดไป';
+            statusEl.textContent = 'ล้างหน้าจอแล้ว (ข้อมูลเดิมยังอยู่ในระบบ) — กด "โหลด/รีเฟรชข้อมูล" หรือ "ดูตัวอย่างก่อนบันทึกรอบบิล" เพื่อดูชุดถัดไป';
             statusEl.className = 'text-sm text-slate-400 mb-3';
         }
 
-        function generateBillingDocuments() {
+        // ขั้นที่ 1: ดูตัวอย่างเฉยๆ - เรียก previewBillingCandidates (อ่านอย่างเดียว ไม่บันทึกอะไรเข้าระบบ)
+        // เก็บ startDate/endDate/jobIds ที่ใช้ตอนดูตัวอย่างไว้ใน billingPreviewParams เพื่อให้ปุ่มยืนยัน (ขั้นที่ 2) ใช้ชุดเดียวกันเป๊ะๆ
+        let billingPreviewParams = null;
+
+        function previewBillingRound() {
             const btn = document.getElementById('btn_generateBilling');
             const statusEl = document.getElementById('billingStatus');
             const startDate = document.getElementById('billingRangeStart').value || null;
@@ -2103,35 +2172,127 @@
 
             // ต้องมีอย่างใดอย่างหนึ่ง: ระบุเลขงานเจาะจง หรือ ระบุช่วงวันที่ให้ครบทั้ง 2 ช่อง
             if (jobIds.length === 0 && (!startDate || !endDate)) {
-                showAlert('error', 'กรุณาเลือกช่วงวันที่ทั้ง 2 ช่อง หรือระบุเลขงานเจาะจง ก่อนจึงจะกดจับคู่ข้อมูลได้');
+                showAlert('error', 'กรุณาเลือกช่วงวันที่ทั้ง 2 ช่อง หรือระบุเลขงานเจาะจง ก่อนจึงจะดูตัวอย่างได้');
                 return;
             }
 
+            billingPreviewParams = { startDate, endDate, jobIds };
+
             btn.disabled = true;
             btn.classList.add('opacity-60', 'cursor-not-allowed');
-            statusEl.textContent = jobIds.length > 0 ? ('กำลังจับคู่ข้อมูล ' + jobIds.length + ' เลขงาน...') : 'กำลังจับคู่ข้อมูลเปิดงาน-ปิดงาน...';
+            statusEl.textContent = jobIds.length > 0 ? ('กำลังตรวจสอบข้อมูล ' + jobIds.length + ' เลขงาน...') : 'กำลังตรวจสอบข้อมูลเปิดงาน-ปิดงาน...';
             statusEl.className = 'text-sm text-slate-400 mb-3';
+
+            openBillingPreviewModal();
 
             function resetBtn() {
                 btn.disabled = false;
                 btn.classList.remove('opacity-60', 'cursor-not-allowed');
+                statusEl.textContent = '';
             }
 
-            runServerCall('generateBillingDocumentsForAllClosedJobs', [currentSession.username, currentSession.token, startDate, endDate, jobIds], function(res) {
+            runServerCall('previewBillingCandidates', [currentSession.username, currentSession.token, startDate, endDate, jobIds], function(res) {
                 resetBtn();
                 if (res && res.success) {
-                    showAlert('success', res.message);
-                    document.getElementById('billingRoundFilter').value = ''; // จับคู่ข้อมูลใหม่ = กลับไปดูโหมด "งานที่ค้างอยู่ปัจจุบัน" เสมอ
-                    loadBillingDocuments(res.matchedJobIds || []); // โหลดแค่ชุดที่จับคู่รอบนี้ ไม่ดึงข้อมูลเก่าทั้งตารางมาปน
-                    refreshBillingRoundOptions(); // อาจมีรอบบิลใหม่เกิดขึ้น เติม dropdown ให้ทันที
+                    renderBillingPreview(res);
                 } else {
-                    showAlert('error', (res && res.message) || 'จับคู่ข้อมูลล้มเหลว');
-                    statusEl.textContent = '';
+                    closeBillingPreviewModal();
+                    showAlert('error', (res && res.message) || 'ดูตัวอย่างข้อมูลล้มเหลว');
                 }
             }, function(err) {
                 resetBtn();
+                closeBillingPreviewModal();
                 showAlert('error', 'เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : 'ไม่ทราบสาเหตุ') + ' — ลองเลือกช่วงวันที่ให้แคบลงแล้วลองใหม่');
-                statusEl.textContent = '';
+            }, 90000);
+        }
+
+        function openBillingPreviewModal() {
+            document.getElementById('billingPreviewModal').classList.remove('hidden');
+            document.getElementById('billingPreviewLoading').classList.remove('hidden');
+            document.getElementById('billingPreviewEmpty').classList.add('hidden');
+            document.getElementById('billingPreviewContent').classList.add('hidden');
+            document.getElementById('btn_confirmBillingRound').classList.add('hidden');
+        }
+
+        function closeBillingPreviewModal() {
+            document.getElementById('billingPreviewModal').classList.add('hidden');
+        }
+
+        function renderBillingPreview(res) {
+            document.getElementById('billingPreviewLoading').classList.add('hidden');
+            const candidates = res.candidates || [];
+            const confirmBtn = document.getElementById('btn_confirmBillingRound');
+
+            if (candidates.length === 0) {
+                document.getElementById('billingPreviewEmpty').classList.remove('hidden');
+                confirmBtn.classList.add('hidden');
+                return;
+            }
+
+            document.getElementById('billingPreviewContent').classList.remove('hidden');
+            confirmBtn.classList.remove('hidden');
+            confirmBtn.disabled = false;
+            confirmBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+
+            document.getElementById('billingPreviewRoundPeriod').textContent = res.roundPeriod || '-';
+            document.getElementById('billingPreviewNewCount').textContent = candidates.length;
+
+            const alreadyCount = res.alreadyBilledCount || 0;
+            const alreadyBadge = document.getElementById('billingPreviewAlreadyBadge');
+            if (alreadyCount > 0) {
+                alreadyBadge.classList.remove('hidden');
+                document.getElementById('billingPreviewAlreadyCount').textContent = alreadyCount;
+            } else {
+                alreadyBadge.classList.add('hidden');
+            }
+
+            document.getElementById('billingPreviewTbody').innerHTML = candidates.map(c => {
+                return `<tr class="border-t border-slate-100">
+                    <td class="p-2">${c.job_id || ''}</td>
+                    <td class="p-2">${c.branch_name || c.branch_code || ''}</td>
+                    <td class="p-2">${c.service_type || ''}</td>
+                    <td class="p-2">${c.contractor || ''}</td>
+                    <td class="p-2">${c.req_date || ''}</td>
+                    <td class="p-2">${c.visit_date || ''}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        // ขั้นที่ 2: ยืนยันจริง - เรียก generateBillingDocumentsForAllClosedJobs (ใช้ startDate/endDate/jobIds ชุดเดียวกับตอนดูตัวอย่างเป๊ะๆ)
+        function confirmBillingRound() {
+            if (!billingPreviewParams) {
+                showAlert('error', 'ไม่พบข้อมูลที่ดูตัวอย่างไว้ กรุณากด "ดูตัวอย่างก่อนบันทึกรอบบิล" ใหม่อีกครั้ง');
+                return;
+            }
+            const { startDate, endDate, jobIds } = billingPreviewParams;
+            const confirmBtn = document.getElementById('btn_confirmBillingRound');
+            const textEl = document.getElementById('text_confirmBillingRound');
+            const statusEl = document.getElementById('billingStatus');
+
+            confirmBtn.disabled = true;
+            confirmBtn.classList.add('opacity-60', 'cursor-not-allowed');
+            textEl.textContent = 'กำลังบันทึกรอบบิล...';
+
+            runServerCall('generateBillingDocumentsForAllClosedJobs', [currentSession.username, currentSession.token, startDate, endDate, jobIds], function(res) {
+                confirmBtn.disabled = false;
+                confirmBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+                textEl.textContent = 'ยืนยันบันทึกรอบบิล';
+                if (res && res.success) {
+                    closeBillingPreviewModal();
+                    billingPreviewParams = null;
+                    showAlert('success', res.message);
+                    document.getElementById('billingRoundFilter').value = ''; // บันทึกรอบบิลใหม่ = กลับไปดูโหมด "งานที่ค้างอยู่ปัจจุบัน" เสมอ
+                    loadBillingDocuments(res.matchedJobIds || []); // โหลดแค่ชุดที่บันทึกรอบนี้ ไม่ดึงข้อมูลเก่าทั้งตารางมาปน
+                    refreshBillingRoundOptions(); // มีรอบบิลใหม่เกิดขึ้น เติม dropdown ให้ทันที
+                    statusEl.textContent = '';
+                } else {
+                    showAlert('error', (res && res.message) || 'บันทึกรอบบิลล้มเหลว');
+                }
+            }, function(err) {
+                confirmBtn.disabled = false;
+                confirmBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+                textEl.textContent = 'ยืนยันบันทึกรอบบิล';
+                showAlert('error', 'เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : 'ไม่ทราบสาเหตุ') + ' — ลองเลือกช่วงวันที่ให้แคบลงแล้วลองใหม่');
             }, 90000);
         }
 
@@ -2544,6 +2705,86 @@
             BILLING_COLUMN_DEFS.forEach(col => {
                 const th = document.querySelector('th[data-col="' + col.key + '"]');
                 if (th) th.classList.toggle('hidden', isBillingColumnHidden(col.key));
+            });
+        }
+
+        // ==================== จัดการคอลัมน์ตารางรายงานสถานะดำเนินการ (แสดง/ซ่อน) ====================
+        // (เลขที่ใบแจ้งซ่อมบำรุง/รายละเอียด ไม่ให้ซ่อน เพราะเป็นคอลัมน์หลักที่ใช้อ้างอิงแถวเสมอ)
+        const STATUS_REPORT_COLUMN_DEFS = [
+            { key: 'branch', label: 'สาขา' },
+            { key: 'service_type', label: 'Service Type' },
+            { key: 'contractor', label: 'ผู้รับเหมา' },
+            { key: 'opened_at', label: 'วันที่เปิดงาน' },
+            { key: 'fix_date', label: 'วันที่เข้าแก้ไข (ปิดงาน)' },
+            { key: 'duration', label: 'ระยะเวลาดำเนินการ' },
+            { key: 'status', label: 'สถานะ' }
+        ];
+        const STATUS_REPORT_COLUMN_PREFS_KEY = 'crMaintStatusReportColumnPrefs';
+        let statusReportColumnPrefs = {};
+
+        function loadStatusReportColumnPrefs() {
+            try {
+                const raw = localStorage.getItem(STATUS_REPORT_COLUMN_PREFS_KEY);
+                statusReportColumnPrefs = raw ? JSON.parse(raw) : {};
+            } catch (e) {
+                statusReportColumnPrefs = {};
+            }
+        }
+        function saveStatusReportColumnPrefs() {
+            localStorage.setItem(STATUS_REPORT_COLUMN_PREFS_KEY, JSON.stringify(statusReportColumnPrefs));
+        }
+        function isStatusReportColumnHidden(key) {
+            return statusReportColumnPrefs[key] === false;
+        }
+
+        function toggleStatusReportColumnManagerPanel() {
+            const panel = document.getElementById('statusReportColumnManagerPanel');
+            const opening = panel.classList.contains('hidden');
+            if (opening) renderStatusReportColumnManagerList();
+            panel.classList.toggle('hidden');
+        }
+        document.addEventListener('click', function (e) {
+            const panel = document.getElementById('statusReportColumnManagerPanel');
+            if (!panel || panel.classList.contains('hidden')) return;
+            if (panel.contains(e.target) || e.target.closest('button[onclick="toggleStatusReportColumnManagerPanel()"]')) return;
+            panel.classList.add('hidden');
+        });
+
+        function renderStatusReportColumnManagerList() {
+            const listEl = document.getElementById('statusReportColumnManagerList');
+            listEl.innerHTML = STATUS_REPORT_COLUMN_DEFS.map(col => {
+                const checked = !isStatusReportColumnHidden(col.key) ? 'checked' : '';
+                return `<label class="flex items-center gap-2 text-xs text-slate-700 py-0.5 cursor-pointer hover:bg-slate-50 rounded px-1">
+                    <input type="checkbox" ${checked} onchange="setStatusReportColumnVisible('${col.key}', this.checked)" class="rounded border-slate-300">
+                    ${col.label}
+                </label>`;
+            }).join('');
+        }
+
+        function setStatusReportColumnVisible(key, visible) {
+            statusReportColumnPrefs[key] = visible;
+            saveStatusReportColumnPrefs();
+            document.querySelectorAll('[data-col="' + key + '"]').forEach(el => {
+                el.classList.toggle('hidden', !visible);
+            });
+        }
+
+        function setAllStatusReportColumns(visible) {
+            STATUS_REPORT_COLUMN_DEFS.forEach(col => { statusReportColumnPrefs[col.key] = visible; });
+            saveStatusReportColumnPrefs();
+            document.querySelectorAll('[data-col]').forEach(el => {
+                const key = el.dataset.col;
+                if (STATUS_REPORT_COLUMN_DEFS.some(c => c.key === key)) {
+                    el.classList.toggle('hidden', !visible);
+                }
+            });
+            renderStatusReportColumnManagerList();
+        }
+
+        function applyStatusReportColumnPrefsToHeaders() {
+            STATUS_REPORT_COLUMN_DEFS.forEach(col => {
+                const th = document.querySelector('th[data-col="' + col.key + '"]');
+                if (th) th.classList.toggle('hidden', isStatusReportColumnHidden(col.key));
             });
         }
 
@@ -3076,15 +3317,16 @@
             currentStatusReportRenderedRows = rows;
             const tbody = document.getElementById('statusReportBody');
             tbody.innerHTML = rows.map((row, i) => {
+                const hc = (key) => isStatusReportColumnHidden(key) ? ' hidden' : '';
                 return `<tr class="border-t border-slate-100">
                     <td class="p-2 whitespace-nowrap">${row.main_id || ''}</td>
-                    <td class="p-2 whitespace-nowrap">${row.branch || ''}</td>
-                    <td class="p-2 whitespace-nowrap">${row.service_type || ''}</td>
-                    <td class="p-2 whitespace-nowrap">${row.contractor || ''}</td>
-                    <td class="p-2 whitespace-nowrap">${formatTimestamp(row.opened_at)}</td>
-                    <td class="p-2 whitespace-nowrap">${row.fix_date || ''}</td>
-                    <td class="p-2 whitespace-nowrap">${getRowDurationDisplay(row)}</td>
-                    <td class="p-2 whitespace-nowrap">${statusBadgeHtml(row.status)}</td>
+                    <td data-col="branch" class="p-2 whitespace-nowrap${hc('branch')}">${row.branch || ''}</td>
+                    <td data-col="service_type" class="p-2 whitespace-nowrap${hc('service_type')}">${row.service_type || ''}</td>
+                    <td data-col="contractor" class="p-2 whitespace-nowrap${hc('contractor')}">${row.contractor || ''}</td>
+                    <td data-col="opened_at" class="p-2 whitespace-nowrap${hc('opened_at')}">${formatTimestamp(row.opened_at)}</td>
+                    <td data-col="fix_date" class="p-2 whitespace-nowrap${hc('fix_date')}">${row.fix_date || ''}</td>
+                    <td data-col="duration" class="p-2 whitespace-nowrap${hc('duration')}">${getRowDurationDisplay(row)}</td>
+                    <td data-col="status" class="p-2 whitespace-nowrap${hc('status')}">${statusBadgeHtml(row.status)}</td>
                     <td class="p-2 whitespace-nowrap">
                         <button type="button" onclick="showStatusReportDetail(${i})" class="text-blood-600 hover:text-blood-800 text-xs font-semibold" title="ดูรายละเอียด">
                             <i class="fa-solid fa-eye mr-1"></i>ดูรายละเอียด

@@ -565,6 +565,64 @@ async function appendRowsToSheetTab(spreadsheetId: string, sheetName: string, ro
   if (!res.ok) throw new Error(json.error?.message || 'เขียนข้อมูลลง Sheet ล้มเหลว');
 }
 
+// ล้างข้อมูลแถวเก่าทั้งหมดในแท็บ (เว้นแถวหัวตารางแถวที่ 1 ไว้) ก่อนเขียนทับใหม่ทุกครั้ง
+// ทำแบบนี้เพื่อให้ Sheet "ตรงกับฐานข้อมูลเป๊ะเสมอ" ไม่ว่าจะมีการแก้ไข/ลบข้อมูลใน DB ภายหลัง
+// หรือมีคนไปลบแถวใน Sheet เอง (รอบซิงค์ถัดไปจะคืนข้อมูลที่ถูกต้องกลับมาให้เองอัตโนมัติ)
+async function clearSheetTabBody(spreadsheetId: string, sheetName: string, accessToken: string) {
+  const range = encodeURIComponent(sheetName) + '!A2:ZZ200000';
+  const res = await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + '/values/' + range + ':clear', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error?.message || 'ล้างข้อมูลเก่าใน Sheet ล้มเหลว');
+}
+
+// เขียนข้อมูลทั้งหมดทับตั้งแต่แถวที่ 2 เป็นต้นไป (ต้องเรียก clearSheetTabBody ก่อนเสมอ เพื่อไม่ให้มีเศษแถวเก่าตกค้าง)
+async function writeRowsToSheetTab(spreadsheetId: string, sheetName: string, rows: any[][], accessToken: string) {
+  if (rows.length === 0) return;
+  const range = encodeURIComponent(sheetName) + '!A2';
+  const res = await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + '/values/' + range + '?valueInputOption=USER_ENTERED', {
+    method: 'PUT',
+    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ values: rows }),
+  });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error?.message || 'เขียนข้อมูลลง Sheet ล้มเหลว');
+}
+
+// ทำสำเนา "มิเรอร์เต็มรูปแบบ" ของตารางหนึ่งไปยังแท็บหนึ่งใน Google Sheet: สร้างแท็บถ้ายังไม่มี, ล้างของเก่าทิ้ง,
+// เขียนข้อมูลปัจจุบันทั้งหมดจาก DB ทับใหม่ - รับประกันว่า Sheet ตรงกับฐานข้อมูล ไม่มีข้อมูลซ้ำ ไม่มีข้อมูลเก่าค้าง
+async function mirrorRowsToSheetTab(
+  spreadsheetId: string, accessToken: string, existingNames: string[],
+  sheetName: string, color: string, headers: string[], rows: any[][]
+): Promise<string> {
+  if (existingNames.indexOf(sheetName) === -1) {
+    await ensureSheetTab(spreadsheetId, sheetName, headers, color, accessToken);
+    existingNames.push(sheetName);
+  }
+  await clearSheetTabBody(spreadsheetId, sheetName, accessToken);
+  if (rows.length === 0) return sheetName + ': ไม่มีข้อมูล (ล้างชีตให้ว่างตรงกับฐานข้อมูลแล้ว)';
+  await writeRowsToSheetTab(spreadsheetId, sheetName, rows, accessToken);
+  return sheetName + ': ซิงค์ครบ ' + rows.length + ' แถว (ตรงกับฐานข้อมูลล่าสุด)';
+}
+
+// แท็บพิเศษที่ไม่ได้มาจากตารางดิบตารางเดียว แต่เป็นรายงานที่รวมข้อมูลหลายตารางเข้าด้วยกัน (เหมือนหน้า "รายงานสถานะดำเนินการ" ในแอป)
+const STATUS_REPORT_SHEET = {
+  sheetName: 'รายงานสถานะดำเนินการ',
+  color: '#dbeafe',
+  headers: ['เลขที่ใบแจ้งซ่อมบำรุง', 'สาขา', 'Service Type', 'ประเภทสัญญา', 'ผู้รับเหมา', 'รายละเอียดปัญหาที่พบ',
+    'วันที่ร้องขอ', 'วันที่เปิดงาน', 'วันที่เข้าแก้ไข', 'วันที่ปิดงาน', 'ดำเนินการแก้ไขแล้ว',
+    'ระยะเวลาดำเนินการ (ชม.)', 'จำนวนครั้งที่พัก', 'รวมชั่วโมงที่พัก', 'ส่งมอบงานให้ผู้รับเหมาแล้ว', 'เสร็จสิ้น (ตัดบิลแล้ว)', 'สถานะ'],
+  mapRow: (r: any) => [
+    r.main_id, r.branch, r.service_type, r.contract_type ?? '', r.contractor, r.details,
+    r.req_date, r.opened_at, r.fix_date, r.closed_at, r.action_taken,
+    r.duration_hours, r.pause_count, r.pause_hours_total,
+    r.sent_to_contractor ? 'ใช่' : 'ยังไม่ส่ง', r.completed ? 'ใช่' : 'ยังไม่เสร็จ', r.status,
+  ],
+};
+
 const SYNC_TABLE_REGISTRY: { table: string; sheetName: string; color: string; headers: string[]; mapRow: (r: any) => any[] }[] = [
   { table: 'open_issues', sheetName: 'เปิดงาน', color: '#e0e7ff', headers: ['เลขที่ใบแจ้งซ่อมบำรุง', 'Service Type', 'ประเภทสัญญา', 'วันที่ร้องขอ', 'งานบริการ', 'รหัส-ชื่อสาขา', 'รายละเอียดปัญหาที่พบ'], mapRow: (r) => [r.main_id, r.service_type, r.contract_type ?? '', r.req_date, r.service_work, r.branch, r.details] },
   { table: 'close_issues', sheetName: 'ปิดงาน', color: '#d1fae5', headers: ['เลขงาน', 'สาขา', 'วันที่เข้าแก้ไข', 'รายการอะไหล่ที่เปลี่ยน', 'เลขทรัพย์สิน', 'ดำเนินการ', 'ลิงก์แนบรูป'], mapRow: (r) => [r.job_id, r.branch, r.fix_date, r.parts, r.asset_id, r.action_taken, r.photo_form_link] },
@@ -626,6 +684,109 @@ Deno.serve(async (req: Request) => {
   }
 
   async function invalidateAdminBadgeCountsCache(): Promise<void> { /* ไม่มี shared cache ฝั่ง Edge Function - คำนวณสดทุกครั้งแทน (ดู getAdminBadgeCounts) */ }
+  // หาเลขงาน "ที่ตรงเงื่อนไข" สำหรับสร้างรอบบิล (ใช้ร่วมกันทั้งตอน "ดูตัวอย่าง" (previewBillingCandidates)
+  // และตอน "ยืนยันบันทึกรอบบิล" (generateBillingDocumentsForAllClosedJobs) เพื่อให้ผลลัพธ์ตรงกันเป๊ะทั้งสองขั้น)
+  async function resolveBillingCandidateJobIds(startDate: string | null, endDate: string | null, jobIds: string[] | null): Promise<{ candidateJobIds: string[]; roundPeriod: string; error?: string }> {
+    if ((!jobIds || jobIds.length === 0) && (!startDate || !endDate)) {
+      return { candidateJobIds: [], roundPeriod: '', error: 'ต้องระบุช่วงวันที่ (ตั้งแต่วันที่ และ ถึงวันที่) หรือระบุเลขงานเจาะจง ก่อนถึงจะจับคู่ข้อมูลได้' };
+    }
+    if (jobIds && jobIds.length > 0) {
+      const candidateJobIds = Array.from(new Set(jobIds.map((j: string) => (j || '').toString().trim()).filter(Boolean))) as string[];
+      const roundPeriod = 'ระบุเลขงานเจาะจง (' + new Date().toISOString().slice(0, 10) + ')';
+      return { candidateJobIds, roundPeriod };
+    }
+    const roundPeriod = startDate + ' ถึง ' + endDate;
+    const { data: closeData, error: closeErr } = await supabase.from('close_issues').select('job_id,fix_date').order('created_at', { ascending: true });
+    if (closeErr) return { candidateJobIds: [], roundPeriod: '', error: 'ดึงข้อมูล close_issues ล้มเหลว: ' + closeErr.message };
+    const startD = new Date(startDate + 'T00:00:00');
+    const endD = new Date(endDate + 'T23:59:59');
+    const seenJob = new Set();
+    const candidateJobIds: string[] = [];
+    (closeData || []).forEach((r: any) => {
+      if (!r.job_id || seenJob.has(r.job_id)) return;
+      const fx = parseFixDateString(r.fix_date);
+      if (!fx || fx < startD || fx > endD) return;
+      seenJob.add(r.job_id);
+      candidateJobIds.push(r.job_id);
+    });
+    return { candidateJobIds, roundPeriod };
+  }
+
+
+  // คำนวณแถวรายงานสถานะดำเนินการ (ใช้ร่วมกันทั้ง fnName 'getJobStatusReport' และตอนซิงค์ลง Google Sheet
+  // เพื่อให้ตรรกะสถานะ/ระยะเวลา/ข้อมูลพักงาน ตรงกันเป๊ะทั้งสองที่ ไม่มีวันเพี้ยนต่างกัน)
+  async function computeJobStatusReportRows(startDate?: string | null, endDate?: string | null): Promise<any[]> {
+    let openQuery = supabase.from('open_issues').select('main_id,branch,service_type,contract_type,contractor,details,req_date,created_at').order('created_at', { ascending: false });
+    if (startDate) openQuery = openQuery.gte('created_at', startDate + 'T00:00:00');
+    if (endDate) openQuery = openQuery.lte('created_at', endDate + 'T23:59:59');
+    const [openRes, closeRes, billingRes, pauseRes] = await Promise.all([
+      openQuery,
+      supabase.from('close_issues').select('job_id,fix_date,created_at,action_taken').order('created_at', { ascending: true }),
+      supabase.from('billing_documents').select('customer_case,sent_to_contractor,completed_at'),
+      supabase.from('pause_records').select('main_id,reason,note,status,paused_at,resumed_at,paused_by,resumed_by').order('paused_at', { ascending: true }),
+    ]);
+    if (openRes.error) throw new Error(openRes.error.message);
+    if (closeRes.error) throw new Error(closeRes.error.message);
+    if (billingRes.error) throw new Error(billingRes.error.message);
+    if (pauseRes.error) throw new Error(pauseRes.error.message);
+    const closeMap: Record<string, any> = {};
+    (closeRes.data || []).forEach((c: any) => { closeMap[c.job_id] = c; });
+    const billingMap: Record<string, any> = {};
+    (billingRes.data || []).forEach((b: any) => {
+      if (!billingMap[b.customer_case]) billingMap[b.customer_case] = { sent: false, completed: false };
+      if (b.sent_to_contractor) billingMap[b.customer_case].sent = true;
+      if (b.completed_at) billingMap[b.customer_case].completed = true;
+    });
+    // จัดกลุ่มประวัติพักงานตามเลขที่งาน เพื่อฝังเข้าไปในแต่ละแถวของรายงาน (ให้หน้า "ดูรายละเอียด" แสดงช่วงเวลาพักได้
+    // และให้รู้ว่าเลขงานนี้ "กำลังพักอยู่ตอนนี้" หรือไม่ สำหรับคำนวณสถานะ "พักงาน")
+    const pauseMap: Record<string, any[]> = {};
+    (pauseRes.data || []).forEach((p: any) => {
+      if (!pauseMap[p.main_id]) pauseMap[p.main_id] = [];
+      pauseMap[p.main_id].push(p);
+    });
+    return (openRes.data || []).map((o: any) => {
+      const closeRec = closeMap[o.main_id];
+      const billingInfo = billingMap[o.main_id];
+      const pausePeriods = pauseMap[o.main_id] || [];
+      const isCurrentlyPaused = pausePeriods.some((p: any) => p.status === 'paused');
+      let durationHours = null;
+      if (closeRec && closeRec.created_at && o.created_at) {
+        const openedMs = new Date(o.created_at).getTime();
+        const closedMs = new Date(closeRec.created_at).getTime();
+        if (!isNaN(openedMs) && !isNaN(closedMs) && closedMs >= openedMs) {
+          durationHours = Math.round(((closedMs - openedMs) / (1000 * 60 * 60)) * 100) / 100;
+        }
+      }
+      let pauseHoursTotal = 0;
+      pausePeriods.forEach((p: any) => {
+        const startMs = p.paused_at ? new Date(p.paused_at).getTime() : null;
+        const endMs = p.resumed_at ? new Date(p.resumed_at).getTime() : Date.now();
+        if (startMs && !isNaN(startMs) && !isNaN(endMs) && endMs >= startMs) {
+          pauseHoursTotal += (endMs - startMs) / (1000 * 60 * 60);
+        }
+      });
+      // ลำดับความสำคัญของสถานะ: เสร็จสิ้น > ส่งมอบงาน > ปิดงานแล้ว > พักงาน (ถ้ายังไม่ปิด) > รอดำเนินการ
+      let status = 'รอดำเนินการ';
+      if (billingInfo && billingInfo.completed) status = 'เสร็จสิ้น';
+      else if (billingInfo && billingInfo.sent) status = 'ส่งมอบงาน';
+      else if (closeRec) status = 'ปิดงานแล้ว';
+      else if (isCurrentlyPaused) status = 'พักงาน';
+      return {
+        main_id: o.main_id, branch: o.branch, service_type: o.service_type, contract_type: o.contract_type, contractor: o.contractor,
+        details: o.details, req_date: o.req_date, opened_at: o.created_at,
+        fix_date: closeRec ? closeRec.fix_date : null, closed_at: closeRec ? closeRec.created_at : null,
+        action_taken: closeRec ? closeRec.action_taken : null, duration_hours: durationHours,
+        sent_to_contractor: !!(billingInfo && billingInfo.sent), completed: !!(billingInfo && billingInfo.completed), status,
+        is_paused: isCurrentlyPaused,
+        pause_periods: pausePeriods.map((p: any) => ({
+          paused_at: p.paused_at, resumed_at: p.resumed_at, reason: p.reason, note: p.note,
+          paused_by: p.paused_by, resumed_by: p.resumed_by, status: p.status,
+        })),
+        pause_count: pausePeriods.length,
+        pause_hours_total: Math.round(pauseHoursTotal * 100) / 100,
+      };
+    });
+  }
 
   let body: any = {};
   try {
@@ -803,71 +964,7 @@ Deno.serve(async (req: Request) => {
       // ==================== รายงานสถานะ ====================
       case 'getJobStatusReport': {
         const [startDate, endDate] = args;
-        let openQuery = supabase.from('open_issues').select('main_id,branch,service_type,contract_type,contractor,details,req_date,created_at').order('created_at', { ascending: false });
-        if (startDate) openQuery = openQuery.gte('created_at', startDate + 'T00:00:00');
-        if (endDate) openQuery = openQuery.lte('created_at', endDate + 'T23:59:59');
-        const [openRes, closeRes, billingRes, pauseRes] = await Promise.all([
-          openQuery,
-          supabase.from('close_issues').select('job_id,fix_date,created_at,action_taken').order('created_at', { ascending: true }),
-          supabase.from('billing_documents').select('customer_case,sent_to_contractor,completed_at'),
-          supabase.from('pause_records').select('main_id,reason,note,status,paused_at,resumed_at,paused_by,resumed_by').order('paused_at', { ascending: true }),
-        ]);
-        if (openRes.error) throw new Error(openRes.error.message);
-        if (closeRes.error) throw new Error(closeRes.error.message);
-        if (billingRes.error) throw new Error(billingRes.error.message);
-        if (pauseRes.error) throw new Error(pauseRes.error.message);
-        const closeMap: Record<string, any> = {};
-        (closeRes.data || []).forEach((c: any) => { closeMap[c.job_id] = c; });
-        const billingMap: Record<string, any> = {};
-        (billingRes.data || []).forEach((b: any) => {
-          if (!billingMap[b.customer_case]) billingMap[b.customer_case] = { sent: false, completed: false };
-          if (b.sent_to_contractor) billingMap[b.customer_case].sent = true;
-          if (b.completed_at) billingMap[b.customer_case].completed = true;
-        });
-        // จัดกลุ่มประวัติพักงานตามเลขที่งาน เพื่อฝังเข้าไปในแต่ละแถวของรายงาน (ให้หน้า "ดูรายละเอียด" แสดงช่วงเวลาพักได้)
-        const pauseMap: Record<string, any[]> = {};
-        (pauseRes.data || []).forEach((p: any) => {
-          if (!pauseMap[p.main_id]) pauseMap[p.main_id] = [];
-          pauseMap[p.main_id].push(p);
-        });
-        const rows = (openRes.data || []).map((o: any) => {
-          const closeRec = closeMap[o.main_id];
-          const billingInfo = billingMap[o.main_id];
-          const pausePeriods = pauseMap[o.main_id] || [];
-          let durationHours = null;
-          if (closeRec && closeRec.created_at && o.created_at) {
-            const openedMs = new Date(o.created_at).getTime();
-            const closedMs = new Date(closeRec.created_at).getTime();
-            if (!isNaN(openedMs) && !isNaN(closedMs) && closedMs >= openedMs) {
-              durationHours = Math.round(((closedMs - openedMs) / (1000 * 60 * 60)) * 100) / 100;
-            }
-          }
-          let pauseHoursTotal = 0;
-          pausePeriods.forEach((p: any) => {
-            const startMs = p.paused_at ? new Date(p.paused_at).getTime() : null;
-            const endMs = p.resumed_at ? new Date(p.resumed_at).getTime() : Date.now();
-            if (startMs && !isNaN(startMs) && !isNaN(endMs) && endMs >= startMs) {
-              pauseHoursTotal += (endMs - startMs) / (1000 * 60 * 60);
-            }
-          });
-          let status = 'รอดำเนินการ';
-          if (billingInfo && billingInfo.completed) status = 'เสร็จสิ้น';
-          else if (billingInfo && billingInfo.sent) status = 'ส่งมอบงาน';
-          else if (closeRec) status = 'ปิดงานแล้ว';
-          return {
-            main_id: o.main_id, branch: o.branch, service_type: o.service_type, contract_type: o.contract_type, contractor: o.contractor,
-            details: o.details, req_date: o.req_date, opened_at: o.created_at,
-            fix_date: closeRec ? closeRec.fix_date : null, closed_at: closeRec ? closeRec.created_at : null,
-            action_taken: closeRec ? closeRec.action_taken : null, duration_hours: durationHours,
-            sent_to_contractor: !!(billingInfo && billingInfo.sent), completed: !!(billingInfo && billingInfo.completed), status,
-            pause_periods: pausePeriods.map((p: any) => ({
-              paused_at: p.paused_at, resumed_at: p.resumed_at, reason: p.reason, note: p.note,
-              paused_by: p.paused_by, resumed_by: p.resumed_by, status: p.status,
-            })),
-            pause_count: pausePeriods.length,
-            pause_hours_total: Math.round(pauseHoursTotal * 100) / 100,
-          };
-        });
+        const rows = await computeJobStatusReportRows(startDate, endDate);
         return jsonResponse(rows);
       }
 
@@ -1022,6 +1119,62 @@ Deno.serve(async (req: Request) => {
         return jsonResponse(list);
       }
 
+      // ดูตัวอย่างก่อนบันทึกรอบบิลจริง (ไม่เขียนอะไรลงฐานข้อมูลเลย - อ่านอย่างเดียว)
+      // ใช้เงื่อนไขจับคู่แบบเดียวกับตอนบันทึกจริงเป๊ะ (resolveBillingCandidateJobIds) เพื่อให้สิ่งที่เห็นตรงกับสิ่งที่จะถูกบันทึก
+      case 'previewBillingCandidates': {
+        const [username, token, startDate, endDate, jobIds] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ทำรายการนี้ได้' });
+        const candResult = await resolveBillingCandidateJobIds(startDate, endDate, jobIds);
+        if (candResult.error) return jsonResponse({ success: false, message: candResult.error });
+        const candidateJobIds = candResult.candidateJobIds;
+        const roundPeriod = candResult.roundPeriod;
+        if (candidateJobIds.length === 0) {
+          return jsonResponse({ success: true, roundPeriod, candidates: [], alreadyBilledCount: 0 });
+        }
+        // เลขงานที่มีรอบบิลอยู่แล้ว (ถูกจับคู่ไปก่อนหน้า) ไม่นับเป็นตัวอย่างซ้ำ - ให้เห็นแต่ของใหม่จริง ๆ
+        const { data: alreadyBilledData, error: alreadyBilledErr } = await supabase.from('billing_documents').select('customer_case').in('customer_case', candidateJobIds);
+        if (alreadyBilledErr) return jsonResponse({ success: false, message: 'ตรวจสอบรอบบิลเดิมล้มเหลว: ' + alreadyBilledErr.message });
+        const alreadyBilledSet = new Set((alreadyBilledData || []).map((r: any) => r.customer_case));
+        const newJobIds = candidateJobIds.filter((id) => !alreadyBilledSet.has(id));
+        if (newJobIds.length === 0) {
+          return jsonResponse({ success: true, roundPeriod, candidates: [], alreadyBilledCount: alreadyBilledSet.size });
+        }
+        const [openRes, closeRes, branchesRes] = await Promise.all([
+          supabase.from('open_issues').select('main_id,branch,service_work,service_type,req_date,contractor').in('main_id', newJobIds),
+          supabase.from('close_issues').select('job_id,branch,asset_id,fix_date').in('job_id', newJobIds).order('created_at', { ascending: false }),
+          supabase.from('branches').select('branch_code,branch_name'),
+        ]);
+        if (openRes.error) return jsonResponse({ success: false, message: openRes.error.message });
+        if (closeRes.error) return jsonResponse({ success: false, message: closeRes.error.message });
+        const openByJob: Record<string, any> = {};
+        (openRes.data || []).forEach((o: any) => { if (!openByJob[o.main_id]) openByJob[o.main_id] = o; });
+        const closeByJob: Record<string, any> = {};
+        (closeRes.data || []).forEach((c: any) => { if (!closeByJob[c.job_id]) closeByJob[c.job_id] = c; });
+        const branchMap: Record<string, string> = {};
+        (branchesRes.data || []).forEach((b: any) => { if (b.branch_code) branchMap[b.branch_code] = b.branch_name; });
+        const candidates = newJobIds.map((jobId) => {
+          const openRecord = openByJob[jobId] || null;
+          const closeRecord = closeByJob[jobId] || null;
+          const rawBranchText = (closeRecord && closeRecord.branch) || (openRecord && openRecord.branch) || '';
+          let branchCode: string | null = null; let branchName: string | null = null;
+          const codeMatch = rawBranchText.toString().match(/^\d+/);
+          if (codeMatch) { branchCode = codeMatch[0]; branchName = branchMap[branchCode] || rawBranchText; }
+          else if (rawBranchText) { branchName = rawBranchText; }
+          return {
+            job_id: jobId, branch_code: branchCode, branch_name: branchName,
+            service_type: openRecord ? (openRecord.service_work || openRecord.service_type || '-') : '-',
+            asset_id: closeRecord ? (closeRecord.asset_id || '-') : '-',
+            req_date: openRecord ? (openRecord.req_date || '-') : '-',
+            visit_date: closeRecord ? (closeRecord.fix_date || '-') : '-',
+            contractor: openRecord ? (openRecord.contractor || null) : null,
+            has_open_record: !!openRecord, has_close_record: !!closeRecord,
+          };
+        });
+        return jsonResponse({ success: true, roundPeriod, candidates, alreadyBilledCount: alreadyBilledSet.size });
+      }
+
       case 'generateBillingDocumentsForAllClosedJobs': {
         const [username, token, startDate, endDate, jobIds] = args;
         const session = await verifySession(username, token);
@@ -1030,26 +1183,10 @@ Deno.serve(async (req: Request) => {
         if ((!jobIds || jobIds.length === 0) && (!startDate || !endDate)) {
           return jsonResponse({ success: false, message: 'ต้องระบุช่วงวันที่ (ตั้งแต่วันที่ และ ถึงวันที่) หรือระบุเลขงานเจาะจง ก่อนถึงจะจับคู่ข้อมูลได้' });
         }
-        let candidateJobIds: string[] = [];
-        let roundPeriod = '';
-        if (jobIds && jobIds.length > 0) {
-          candidateJobIds = Array.from(new Set(jobIds.map((j: string) => (j || '').toString().trim()).filter(Boolean))) as string[];
-          roundPeriod = 'ระบุเลขงานเจาะจง (' + new Date().toISOString().slice(0, 10) + ')';
-        } else {
-          roundPeriod = startDate + ' ถึง ' + endDate;
-          const { data: closeData, error: closeErr } = await supabase.from('close_issues').select('job_id,fix_date').order('created_at', { ascending: true });
-          if (closeErr) return jsonResponse({ success: false, message: 'ดึงข้อมูล close_issues ล้มเหลว: ' + closeErr.message });
-          const startD = new Date(startDate + 'T00:00:00');
-          const endD = new Date(endDate + 'T23:59:59');
-          const seenJob = new Set();
-          (closeData || []).forEach((r: any) => {
-            if (!r.job_id || seenJob.has(r.job_id)) return;
-            const fx = parseFixDateString(r.fix_date);
-            if (!fx || fx < startD || fx > endD) return;
-            seenJob.add(r.job_id);
-            candidateJobIds.push(r.job_id);
-          });
-        }
+        const candResult = await resolveBillingCandidateJobIds(startDate, endDate, jobIds);
+        if (candResult.error) return jsonResponse({ success: false, message: candResult.error });
+        const candidateJobIds = candResult.candidateJobIds;
+        const roundPeriod = candResult.roundPeriod;
         if (candidateJobIds.length === 0) {
           return jsonResponse({ success: true, message: 'ไม่มีข้อมูลรายการปิดงานในช่วงที่เลือก', created: 0, skipped: 0, matchedJobIds: [] });
         }
@@ -1654,28 +1791,40 @@ Deno.serve(async (req: Request) => {
           return jsonResponse({ success: false, message: 'เปิด Google Sheet ล้มเหลว: ' + String(e) + ' (ตรวจสอบว่าแชร์สิทธิ์ Editor ให้อีเมล ' + (tokenResult.email || '') + ' แล้วหรือยัง)' });
         }
 
+        // ซิงค์แบบ "มิเรอร์เต็มรูปแบบ" ทุกครั้ง: ดึงข้อมูลทั้งหมดจาก DB ปัจจุบัน แล้วเขียนทับ Sheet ทั้งแท็บใหม่เสมอ
+        // (ไม่ใช่ append เฉพาะแถวใหม่แบบเดิม) เพื่อให้ Sheet ตรงกับฐานข้อมูลเป๊ะทุกครั้งที่กดซิงค์:
+        // - ไม่มีข้อมูลซ้ำ (เขียนทับหมดทุกรอบ ไม่ใช่ต่อท้ายเรื่อย ๆ)
+        // - ถ้ามีคนไปลบแถวใน Sheet เอง รอบซิงค์ถัดไปจะคืนข้อมูลที่ถูกต้องกลับมาให้อัตโนมัติ
+        // - ถ้าข้อมูลใน DBถูกแก้ไข/ลบภายหลัง (เช่น แก้ราคาบิล, ลบเลขงานที่กรอกผิด) Sheet จะอัปเดตตามทันทีที่ซิงค์รอบถัดไป
         const results: string[] = [];
         let totalSynced = 0;
         for (const t of SYNC_TABLE_REGISTRY) {
           try {
-            const { data: rows, error } = await supabase.from(t.table).select('*').eq('synced_to_sheet', false).order('created_at', { ascending: true }).limit(500);
+            const { data: rows, error } = await supabase.from(t.table).select('*').order('created_at', { ascending: true }).limit(5000);
             if (error) { results.push(t.table + ': ดึงข้อมูลล้มเหลว (' + error.message + ')'); continue; }
-            if (!rows || rows.length === 0) { results.push(t.table + ': ไม่มีแถวใหม่'); continue; }
-            if (existingNames.indexOf(t.sheetName) === -1) {
-              await ensureSheetTab(spreadsheetId, t.sheetName, t.headers, t.color, accessToken);
-              existingNames.push(t.sheetName);
-            }
             const timestamp = new Date().toISOString();
-            const values = rows.map((r: any) => [timestamp, ...t.mapRow(r)]);
-            await appendRowsToSheetTab(spreadsheetId, t.sheetName, values, accessToken);
-            const ids = rows.map((r: any) => r.id);
-            const { error: updErr } = await supabase.from(t.table).update({ synced_to_sheet: true }).in('id', ids);
-            if (updErr) { results.push(t.table + ': เขียน Sheet สำเร็จ ' + rows.length + ' แถว แต่ mark synced ล้มเหลว (' + updErr.message + ')'); continue; }
-            totalSynced += rows.length;
-            results.push(t.table + ': sync ไป Sheet แล้ว ' + rows.length + ' แถว' + (rows.length === 500 ? ' (อาจมีค้างอีก กดซิงค์ซ้ำได้)' : ''));
+            const values = (rows || []).map((r: any) => [timestamp, ...t.mapRow(r)]);
+            const msg = await mirrorRowsToSheetTab(spreadsheetId, accessToken, existingNames, t.sheetName, t.color, t.headers, values);
+            totalSynced += (rows || []).length;
+            results.push(msg + (values.length === 5000 ? ' (ถึงลิมิต 5000 แถว อาจมีข้อมูลเก่ากว่านี้ตกหล่น)' : ''));
           } catch (e) {
             results.push(t.table + ': ล้มเหลว (' + String(e) + ')');
           }
+        }
+
+        // แท็บ "รายงานสถานะดำเนินการ" - เป็นรายงานรวมข้อมูล ไม่ใช่ตารางดิบตารางเดียว จึงคำนวณแยกต่างหาก
+        try {
+          const reportRows = await computeJobStatusReportRows(null, null);
+          const timestamp = new Date().toISOString();
+          const values = reportRows.map((r: any) => [timestamp, ...STATUS_REPORT_SHEET.mapRow(r)]);
+          const msg = await mirrorRowsToSheetTab(
+            spreadsheetId, accessToken, existingNames,
+            STATUS_REPORT_SHEET.sheetName, STATUS_REPORT_SHEET.color, STATUS_REPORT_SHEET.headers, values
+          );
+          totalSynced += reportRows.length;
+          results.push(msg);
+        } catch (e) {
+          results.push(STATUS_REPORT_SHEET.sheetName + ': ล้มเหลว (' + String(e) + ')');
         }
 
         return jsonResponse({ success: true, message: 'ซิงค์ข้อมูลไป Google Sheet เสร็จสิ้น (รวม ' + totalSynced + ' แถว)\n' + results.join(' | ') + '\nลิงก์ Google Sheet: ' + sheetUrl });
