@@ -865,6 +865,9 @@
                         <button type="button" onclick="loadPmBillingDocuments()" class="bg-slate-700 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-800 transition-colors">
                             <i class="fa-solid fa-rotate mr-1"></i> โหลด/รีเฟรชข้อมูล
                         </button>
+                        <button type="button" onclick="openPmBillingHistoryModal()" class="bg-indigo-600 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-indigo-700 transition-colors">
+                            <i class="fa-solid fa-clock-rotate-left mr-1"></i> ประวัติบิล PM
+                        </button>
                         <button type="button" onclick="downloadPmBillingRoundPdf_()" id="btn_downloadPmBillingPdf" class="bg-slate-800 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-900 transition-colors">
                             <i class="fa-solid fa-file-pdf mr-1"></i> ดาวน์โหลดใบเสนอราคา (PDF)
                         </button>
@@ -924,6 +927,43 @@
                         </thead>
                         <tbody id="pmBillingBody"></tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal ประวัติบิล PM (สรุปทุกรอบที่เคยบันทึก + ดาวน์โหลด PDF ย้อนหลัง) - เฉพาะแอดมิน -->
+        <div id="pmBillingHistoryModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] overflow-y-auto">
+                <div class="flex items-center justify-between p-5 border-b border-slate-200 sticky top-0 bg-white z-10">
+                    <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-clock-rotate-left mr-2 text-indigo-600"></i>ประวัติบิล PM</h3>
+                    <button type="button" onclick="closePmBillingHistoryModal()" class="text-slate-400 hover:text-slate-700 text-xl leading-none">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+                <div class="p-5">
+                    <div id="pmBillingHistoryLoading" class="text-center text-slate-400 text-sm py-8">กำลังโหลดข้อมูล...</div>
+                    <div id="pmBillingHistoryEmpty" class="hidden text-center text-slate-400 text-sm py-8">ยังไม่มีประวัติรอบบิล PM</div>
+                    <div id="pmBillingHistoryTableWrap" class="hidden overflow-x-auto">
+                        <table class="w-full text-sm border-collapse">
+                            <thead>
+                                <tr class="bg-slate-100 text-slate-600 text-xs">
+                                    <th class="p-2 text-left border-b border-slate-200">รอบบิลที่</th>
+                                    <th class="p-2 text-left border-b border-slate-200">เลขที่เอกสาร</th>
+                                    <th class="p-2 text-left border-b border-slate-200">รอบ PM</th>
+                                    <th class="p-2 text-right border-b border-slate-200">จำนวนรายการ</th>
+                                    <th class="p-2 text-right border-b border-slate-200">ยอดรวม (ก่อน VAT)</th>
+                                    <th class="p-2 text-left border-b border-slate-200">วันที่บันทึก</th>
+                                    <th class="p-2 text-center border-b border-slate-200">ดาวน์โหลด</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pmBillingHistoryTbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="flex justify-end p-5 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
+                    <button type="button" onclick="closePmBillingHistoryModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2 px-6 rounded-xl hover:bg-slate-100 transition-colors">
+                        ปิด
+                    </button>
                 </div>
             </div>
         </div>
@@ -2914,8 +2954,12 @@
 
         // ค่าเริ่มต้นของ Description ในใบเสนอราคา (ถ้ายังไม่เคยแก้ desc_override เอง) — ต้องตรงกับฝั่งเซิร์ฟเวอร์ใน generatePmQuotationPdfBase64 เป๊ะๆ
         function pmDefaultDesc(r) {
-            if (r.branch_code && r.branch_name) return r.branch_code + '-' + r.branch_name;
-            return r.branch_code || r.branch_name || '-';
+            // branch_name ในระบบ PM มักมีรหัสสาขาติดมาด้วยแล้ว (เช่น "1349-ตลาดเมืองใหม่มาร์เก็ต เคหะบางพลี")
+            // ถ้าต่อ branch_code ซ้ำอีกจะกลายเป็น "1349-1349-..." จึงเช็คก่อนว่าซ้ำหรือไม่
+            const bCode = (r.branch_code || '').toString().trim();
+            const bName = (r.branch_name || '').toString().trim();
+            if (bCode && bName) return bName.indexOf(bCode + '-') === 0 ? bName : (bCode + '-' + bName);
+            return bCode || bName || '-';
         }
 
         function renderPmBillingTable(rows) {
@@ -3008,6 +3052,114 @@
                 return;
             }
             const btnEl = document.getElementById('btn_downloadPmBillingPdf');
+            const originalHtml = btnEl.innerHTML;
+            btnEl.disabled = true;
+            btnEl.classList.add('opacity-60', 'cursor-not-allowed');
+            btnEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i> กำลังสร้าง...';
+
+            function resetBtn() {
+                btnEl.disabled = false;
+                btnEl.classList.remove('opacity-60', 'cursor-not-allowed');
+                btnEl.innerHTML = originalHtml;
+            }
+
+            runServerCall('downloadPmBillingRoundPdf', [currentSession.username, currentSession.token, roundNo], function (res) {
+                resetBtn();
+                if (res && res.success) {
+                    try {
+                        const byteCharacters = atob(res.base64);
+                        const byteNumbers = new Array(byteCharacters.length);
+                        for (let i = 0; i < byteCharacters.length; i++) byteNumbers[i] = byteCharacters.charCodeAt(i);
+                        const byteArray = new Uint8Array(byteNumbers);
+                        const blob = new Blob([byteArray], { type: 'application/pdf' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = res.filename || ('ใบเสนอราคา_PM_รอบ' + roundNo + '.pdf');
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                    } catch (e) {
+                        showAlert('error', 'เปิดไฟล์ PDF ล้มเหลว: ' + (e && e.message ? e.message : ''));
+                    }
+                } else {
+                    showAlert('error', (res && res.message) || 'สร้างใบเสนอราคา PM ล้มเหลว');
+                }
+            }, function (err) {
+                resetBtn();
+                showAlert('error', 'เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : 'ไม่ทราบสาเหตุ'));
+            }, 60000);
+        }
+
+        // ==================== ประวัติบิล PM (popup สรุปทุกรอบที่เคยบันทึก + ดาวน์โหลด PDF ย้อนหลัง) ====================
+        function openPmBillingHistoryModal() {
+            if (!currentSession) return;
+            document.getElementById('pmBillingHistoryModal').classList.remove('hidden');
+            document.getElementById('pmBillingHistoryLoading').classList.remove('hidden');
+            document.getElementById('pmBillingHistoryEmpty').classList.add('hidden');
+            document.getElementById('pmBillingHistoryTableWrap').classList.add('hidden');
+
+            runServerCall('getPmBillingRoundsHistory', [currentSession.username, currentSession.token], function (res) {
+                document.getElementById('pmBillingHistoryLoading').classList.add('hidden');
+                if (!res || res.error) {
+                    showAlert('error', (res && res.error) || 'โหลดประวัติบิล PM ล้มเหลว');
+                    return;
+                }
+                renderPmBillingHistoryList(res);
+            }, function (err) {
+                document.getElementById('pmBillingHistoryLoading').classList.add('hidden');
+                showAlert('error', 'เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : ''));
+            }, 45000);
+        }
+
+        function closePmBillingHistoryModal() {
+            document.getElementById('pmBillingHistoryModal').classList.add('hidden');
+        }
+
+        function renderPmBillingHistoryList(rows) {
+            const tbody = document.getElementById('pmBillingHistoryTbody');
+            tbody.innerHTML = '';
+
+            if (!rows || rows.length === 0) {
+                document.getElementById('pmBillingHistoryEmpty').classList.remove('hidden');
+                return;
+            }
+            document.getElementById('pmBillingHistoryTableWrap').classList.remove('hidden');
+
+            const numberFmt = function (n) { return (parseFloat(n) || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+            const dateFmt = function (iso) {
+                if (!iso) return '-';
+                const d = new Date(iso);
+                if (isNaN(d.getTime())) return '-';
+                return d.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
+            };
+
+            rows.forEach(function (r, idx) {
+                const tr = document.createElement('tr');
+                tr.className = idx % 2 === 0 ? 'bg-white' : 'bg-slate-50';
+                tr.innerHTML =
+                    '<td class="p-2 border-b border-slate-100 font-semibold">' + (r.round_no !== null && r.round_no !== undefined ? r.round_no : '-') + '</td>' +
+                    '<td class="p-2 border-b border-slate-100">' + (r.doc_no || '-') + '</td>' +
+                    '<td class="p-2 border-b border-slate-100">' + (r.round_period || '-') + '</td>' +
+                    '<td class="p-2 border-b border-slate-100 text-right">' + (r.item_count || 0) + '</td>' +
+                    '<td class="p-2 border-b border-slate-100 text-right">' + numberFmt(r.total_amount) + '</td>' +
+                    '<td class="p-2 border-b border-slate-100">' + dateFmt(r.created_at) + '</td>' +
+                    '<td class="p-2 border-b border-slate-100 text-center"></td>';
+
+                const downloadCell = tr.lastElementChild;
+                const dlBtn = document.createElement('button');
+                dlBtn.type = 'button';
+                dlBtn.className = 'bg-slate-800 text-white text-xs font-semibold py-1.5 px-3 rounded-lg hover:bg-slate-900 transition-colors whitespace-nowrap';
+                dlBtn.innerHTML = '<i class="fa-solid fa-download mr-1"></i> ดาวน์โหลด';
+                dlBtn.onclick = function () { downloadPmBillingHistoryPdf_(r.round_no, dlBtn); };
+                downloadCell.appendChild(dlBtn);
+
+                tbody.appendChild(tr);
+            });
+        }
+
+        function downloadPmBillingHistoryPdf_(roundNo, btnEl) {
             const originalHtml = btnEl.innerHTML;
             btnEl.disabled = true;
             btnEl.classList.add('opacity-60', 'cursor-not-allowed');

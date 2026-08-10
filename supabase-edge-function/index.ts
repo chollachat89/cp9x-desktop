@@ -411,6 +411,24 @@ async function generateBillingPdfBase64(rows: any[], isAdmin: boolean): Promise<
 }
 
 // ==================== ใบเสนอราคา งาน PM (ตามแบบฟอร์ม Excel ต้นฉบับ "CRE-PM-CJ" ที่บริษัทใช้ส่งลูกค้า CJ Express ประจำ) ====================
+// สร้างเลขที่เอกสารรูปแบบ CRE-CJ-PM-{ปี พ.ศ. 2 หลัก}{เดือน 2 หลัก}-{ลำดับ 4 หลัก} ตามต้นฉบับจริง (เช่น CRE-CJ-PM-6908-0001)
+// ปี/เดือน อิงจากวันที่ "สร้างรอบบิลนี้" (created_at แถวแรกสุดของรอบ) ไม่ใช่วันที่กดดาวน์โหลด/ดู — กันเลขเปลี่ยนไปมา
+// ลำดับ 4 หลัก = รอบบิล PM ลำดับที่เท่าไหร่ในเดือนนั้น (นับจากทุกรอบที่เคยสร้างในเดือน/ปีเดียวกัน เรียงตามเลขรอบบิล) — ใช้ร่วมกันทั้งตอนดาวน์โหลด PDF และตอนแสดงประวัติรอบบิล
+function computePmDocNo(roundNo: number | string, roundMinCreated: Record<string, string>): string {
+  const refCreatedAt = roundMinCreated[String(roundNo)] || new Date().toISOString();
+  const refDate = new Date(refCreatedAt);
+  const buddhistYY = String((refDate.getFullYear() + 543) % 100).padStart(2, '0');
+  const mm = String(refDate.getMonth() + 1).padStart(2, '0');
+  const sameMonthRounds = Object.entries(roundMinCreated)
+    .filter(([, createdAt]) => {
+      const d = new Date(createdAt);
+      return d.getFullYear() === refDate.getFullYear() && d.getMonth() === refDate.getMonth();
+    })
+    .sort((a, b) => Number(a[0]) - Number(b[0]));
+  const seqIndex = Math.max(1, sameMonthRounds.findIndex(([rn]) => rn === String(roundNo)) + 1);
+  return 'CRE-CJ-PM-' + buddhistYY + mm + '-' + String(seqIndex).padStart(4, '0');
+}
+
 // แปลงตัวเลขจำนวนเงินเป็นข้อความภาษาไทย ("...บาทถ้วน") แบบมาตรฐานที่ใช้ในเอกสารบัญชีไทยทั่วไป
 function thaiBahtText(amountInput: number): string {
   const THAI_NUMBER = ['ศูนย์', 'หนึ่ง', 'สอง', 'สาม', 'สี่', 'ห้า', 'หก', 'เจ็ด', 'แปด', 'เก้า'];
@@ -489,8 +507,12 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
       const qty = 1;
       const unitPrice = parseFloat(r.price) || 0;
       const amount = qty * unitPrice;
-      const defaultDesc = (r.branch_code && r.branch_name) ? (r.branch_code + '-' + r.branch_name)
-        : (r.branch_code || r.branch_name || '-');
+      // ข้อมูลจริงในระบบ PM: branch_name มักมีรหัสสาขาติดมาด้วยอยู่แล้ว (เช่น "1349-ตลาดเมืองใหม่มาร์เก็ต เคหะบางพลี")
+      // ถ้าเอา branch_code มาต่อหน้าซ้ำอีกจะกลายเป็น "1349-1349-..." จึงต้องเช็คก่อนว่า branch_name ขึ้นต้นด้วยรหัสสาขาอยู่แล้วหรือยัง
+      const bCode = (r.branch_code || '').toString().trim();
+      const bName = (r.branch_name || '').toString().trim();
+      const defaultDesc = (bCode && bName) ? (bName.indexOf(bCode + '-') === 0 ? bName : (bCode + '-' + bName))
+        : (bCode || bName || '-');
       const desc = (r.desc_override && r.desc_override.toString().trim()) ? r.desc_override.toString().trim() : defaultDesc;
       return { desc, qty, unit: 'Lot', unitPrice, amount };
     });
@@ -500,7 +522,7 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
     const vat = netTotal * 0.07;
     const grandTotal = netTotal + vat;
 
-    const colW_item = 24, colW_desc = 260, colW_qty = 30, colW_unit = 45, colW_price = 85; // item/qty แคบลงเล็กน้อย เผื่อพื้นที่คอลัมน์ Amount ให้พอกับยอดรวมหลักแสน-ล้าน ไม่ถูกตัด (...)
+    const colW_item = 28, colW_desc = 260, colW_qty = 26, colW_unit = 45, colW_price = 85; // item 28pt พอให้หัวคอลัมน์ "Item" (ตัวเต็ม ตัวหนา) ไม่ถูกตัดคำ, qty แคบลงชดเชยให้ผลรวมเท่าเดิม (54pt) เพื่อให้ Amount ยังกว้างพอสำหรับยอดหลักแสน-ล้าน
     const colX_item = MARGIN;
     const colX_desc = colX_item + colW_item;
     const colX_qty = colX_desc + colW_desc;
@@ -1748,9 +1770,6 @@ Deno.serve(async (req: Request) => {
         if (error) return jsonResponse({ success: false, message: 'ดึงข้อมูลรอบบิล PM ล้มเหลว: ' + error.message });
         if (!data || data.length === 0) return jsonResponse({ success: false, message: 'ไม่พบข้อมูลของรอบบิล PM นี้' });
 
-        // สร้างเลขที่เอกสารรูปแบบ CRE-CJ-PM-{ปี พ.ศ. 2 หลัก}{เดือน 2 หลัก}-{ลำดับ 4 หลัก} ตามต้นฉบับจริง (เช่น CRE-CJ-PM-6908-0001)
-        // ปี/เดือน อิงจากวันที่ "สร้างรอบบิลนี้" (created_at แถวแรกสุดของรอบ) ไม่ใช่วันที่กดดาวน์โหลด — กันเลขเปลี่ยนไปมาเวลาดาวน์โหลดซ้ำคนละวัน
-        // ลำดับ 4 หลัก = รอบบิล PM ลำดับที่เท่าไหร่ในเดือนนั้น (นับจากทุกรอบที่เคยสร้างในเดือน/ปีเดียวกัน เรียงตามเลขรอบบิล)
         const { data: allRoundsData, error: allRoundsErr } = await supabase.from('pm_billing_documents').select('round_no,created_at').not('round_no', 'is', null);
         if (allRoundsErr) return jsonResponse({ success: false, message: 'สร้างเลขที่เอกสารล้มเหลว: ' + allRoundsErr.message });
         const roundMinCreated: Record<string, string> = {};
@@ -1759,21 +1778,48 @@ Deno.serve(async (req: Request) => {
           if (!r.created_at) return;
           if (!roundMinCreated[key] || r.created_at < roundMinCreated[key]) roundMinCreated[key] = r.created_at;
         });
-        const refCreatedAt = roundMinCreated[String(roundNo)] || new Date().toISOString();
-        const refDate = new Date(refCreatedAt);
-        const buddhistYY = String((refDate.getFullYear() + 543) % 100).padStart(2, '0');
-        const mm = String(refDate.getMonth() + 1).padStart(2, '0');
-        const sameMonthRounds = Object.entries(roundMinCreated)
-          .filter(([, createdAt]) => {
-            const d = new Date(createdAt);
-            return d.getFullYear() === refDate.getFullYear() && d.getMonth() === refDate.getMonth();
-          })
-          .sort((a, b) => Number(a[0]) - Number(b[0]));
-        const seqIndex = Math.max(1, sameMonthRounds.findIndex(([rn]) => rn === String(roundNo)) + 1);
-        const docNo = 'CRE-CJ-PM-' + buddhistYY + mm + '-' + String(seqIndex).padStart(4, '0');
+        const docNo = computePmDocNo(roundNo, roundMinCreated);
 
         const pdfResult = await generatePmQuotationPdfBase64(data, roundNo, docNo);
         return jsonResponse(pdfResult);
+      }
+
+      // ประวัติรอบบิล PM ทั้งหมด (สรุปทีละรอบ: จำนวนรายการ/ยอดรวม/เลขที่เอกสาร/วันที่บันทึก) — ไว้ดูย้อนหลังโดยไม่ต้องไล่เลือกทีละรอบในตัวกรองหลัก — เฉพาะแอดมิน
+      case 'getPmBillingRoundsHistory': {
+        const [username, token] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เมนู PM สำหรับแอดมินเท่านั้น' });
+        const { data, error } = await supabase.from('pm_billing_documents')
+          .select('round_no,round_period,created_at,price')
+          .not('round_no', 'is', null);
+        if (error) return jsonResponse({ success: false, message: error.message });
+
+        const roundMinCreated: Record<string, string> = {};
+        (data || []).forEach((r: any) => {
+          const key = String(r.round_no);
+          if (!r.created_at) return;
+          if (!roundMinCreated[key] || r.created_at < roundMinCreated[key]) roundMinCreated[key] = r.created_at;
+        });
+
+        const groups: Record<string, { round_no: any; round_period: string; item_count: number; total_amount: number; created_at: string }> = {};
+        (data || []).forEach((r: any) => {
+          const key = String(r.round_no);
+          if (!groups[key]) groups[key] = { round_no: r.round_no, round_period: r.round_period || '', item_count: 0, total_amount: 0, created_at: roundMinCreated[key] || r.created_at || '' };
+          groups[key].item_count += 1;
+          groups[key].total_amount += parseFloat(r.price) || 0;
+        });
+
+        const list = Object.values(groups).map((g) => ({
+          round_no: g.round_no,
+          round_period: g.round_period,
+          item_count: g.item_count,
+          total_amount: g.total_amount,
+          created_at: g.created_at,
+          doc_no: computePmDocNo(g.round_no, roundMinCreated),
+        }));
+        list.sort((a: any, b: any) => Number(b.round_no) - Number(a.round_no));
+        return jsonResponse(list);
       }
 
       case 'fixBillingSeqNumbers': {
