@@ -531,18 +531,28 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
       return y - 16; // บล็อกข้อความหัวกระดาษ (~77pt) สูงกว่าโลโก้ (46pt) อยู่แล้ว จึงไม่มีทางชนกัน ไม่ต้องเผื่อเพิ่ม
     }
 
+    // กล่องข้อมูลลูกค้า มีเส้นขอบล้อมรอบ + เส้นแบ่งซ้าย-ขวา ตามแบบฟอร์ม Excel ต้นฉบับ (เรียน/สำเนาเรียน/ที่อยู่ ทางซ้าย, เลขที่/วันที่/TEL ทางขวา)
     function drawCustomerBlock(page: any, yStart: number): number {
-      let y = yStart;
       const rightX = PAGE_W - MARGIN - 200;
-      page.drawText('เรียน/Attention: คุณวศิน / ที่นับถือ', { x: MARGIN, y, size: 10, font, color: BLACK });
-      page.drawText('เลขที่/No. : ' + docNo, { x: rightX, y, size: 10, font, color: BLACK });
-      y -= 15;
-      page.drawText('สำเนาเรียน/CC. คุณอาร์ม / ที่นับถือ', { x: MARGIN, y, size: 10, font, color: BLACK });
-      page.drawText('วันที่ Date : ' + thaiDateString(), { x: rightX, y, size: 10, font, color: BLACK });
-      y -= 15;
-      page.drawText('ที่อยู่/Address : บริษัท ซี.เจ. เอ็กซ์เพรส กรุ๊ป จำกัด', { x: MARGIN, y, size: 10, font, color: BLACK });
-      page.drawText('TEL. : -', { x: rightX, y, size: 10, font, color: BLACK });
-      y -= 20;
+      const rowH = 15;
+      const boxTop = yStart;
+      const boxBottom = yStart - rowH * 3;
+      for (let i = 0; i <= 3; i++) {
+        const ly = boxTop - i * rowH;
+        page.drawLine({ start: { x: MARGIN, y: ly }, end: { x: MARGIN + usableWidth, y: ly }, thickness: 0.75, color: BORDER });
+      }
+      page.drawLine({ start: { x: MARGIN, y: boxTop }, end: { x: MARGIN, y: boxBottom }, thickness: 0.75, color: BORDER });
+      page.drawLine({ start: { x: rightX - 6, y: boxTop }, end: { x: rightX - 6, y: boxBottom }, thickness: 0.75, color: BORDER });
+      page.drawLine({ start: { x: MARGIN + usableWidth, y: boxTop }, end: { x: MARGIN + usableWidth, y: boxBottom }, thickness: 0.75, color: BORDER });
+
+      page.drawText('เรียน/Attention: คุณวศิน / ที่นับถือ', { x: MARGIN + 4, y: boxTop - 11, size: 10, font, color: BLACK });
+      page.drawText('เลขที่/No. : ' + docNo, { x: rightX, y: boxTop - 11, size: 10, font, color: BLACK });
+      page.drawText('สำเนาเรียน/CC. คุณอาร์ม / ที่นับถือ', { x: MARGIN + 4, y: boxTop - 11 - rowH, size: 10, font, color: BLACK });
+      page.drawText('วันที่ Date : ' + thaiDateString(), { x: rightX, y: boxTop - 11 - rowH, size: 10, font, color: BLACK });
+      page.drawText('ที่อยู่/Address : บริษัท ซี.เจ. เอ็กซ์เพรส กรุ๊ป จำกัด', { x: MARGIN + 4, y: boxTop - 11 - rowH * 2, size: 10, font, color: BLACK });
+      page.drawText('TEL. : -', { x: rightX, y: boxTop - 11 - rowH * 2, size: 10, font, color: BLACK });
+
+      let y = boxBottom - 12;
       page.drawText('ขอเสนอราคาและเงื่อนไขสำหรับท่านดังนี้', { x: MARGIN, y, size: 10, font, color: BLACK });
       y -= 13;
       page.drawText('We are please to submit you the following described here in at price, items and terms stated :', { x: MARGIN, y, size: 9, font, color: BLACK });
@@ -551,15 +561,16 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
     }
 
     const HEADER_H = 20;
+    const WHITE = rgb(1, 1, 1);
     function drawTableHeaderRow(page: any, y: number): number {
-      page.drawRectangle({ x: MARGIN, y: y - HEADER_H, width: usableWidth, height: HEADER_H, color: rgb(0.85, 0.85, 0.85) });
-      pdfDrawCellText(page, boldFont, 'Item', colX_item, y - HEADER_H + 6, colW_item, 9, BLACK, 'center');
-      pdfDrawCellText(page, boldFont, 'Description', colX_desc, y - HEADER_H + 6, colW_desc, 9, BLACK, 'center');
-      pdfDrawCellText(page, boldFont, 'Qty', colX_qty, y - HEADER_H + 6, colW_qty, 9, BLACK, 'center');
-      pdfDrawCellText(page, boldFont, 'Unit', colX_unit, y - HEADER_H + 6, colW_unit, 9, BLACK, 'center');
-      pdfDrawCellText(page, boldFont, 'Unit Price', colX_price, y - HEADER_H + 6, colW_price, 9, BLACK, 'center');
-      pdfDrawCellText(page, boldFont, 'Amount', colX_amount, y - HEADER_H + 6, colW_amount, 9, BLACK, 'center');
-      colStops.forEach((x) => { page.drawLine({ start: { x, y }, end: { x, y: y - HEADER_H }, thickness: 0.5, color: BORDER }); });
+      page.drawRectangle({ x: MARGIN, y: y - HEADER_H, width: usableWidth, height: HEADER_H, color: rgb(0, 0, 0) });
+      pdfDrawCellText(page, boldFont, 'Item', colX_item, y - HEADER_H + 6, colW_item, 9, WHITE, 'center');
+      pdfDrawCellText(page, boldFont, 'Description', colX_desc, y - HEADER_H + 6, colW_desc, 9, WHITE, 'center');
+      pdfDrawCellText(page, boldFont, 'Qty', colX_qty, y - HEADER_H + 6, colW_qty, 9, WHITE, 'center');
+      pdfDrawCellText(page, boldFont, 'Unit', colX_unit, y - HEADER_H + 6, colW_unit, 9, WHITE, 'center');
+      pdfDrawCellText(page, boldFont, 'Unit Price', colX_price, y - HEADER_H + 6, colW_price, 9, WHITE, 'center');
+      pdfDrawCellText(page, boldFont, 'Amount', colX_amount, y - HEADER_H + 6, colW_amount, 9, WHITE, 'center');
+      colStops.forEach((x) => { page.drawLine({ start: { x, y }, end: { x, y: y - HEADER_H }, thickness: 0.5, color: rgb(0.4, 0.4, 0.4) }); });
       page.drawLine({ start: { x: MARGIN, y: y - HEADER_H }, end: { x: MARGIN + usableWidth, y: y - HEADER_H }, thickness: 0.5, color: BORDER });
       return y - HEADER_H;
     }
@@ -585,10 +596,10 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
       pdfDrawCellText(page, font, String(info.idx + 1), colX_item, yTop - h + 5, colW_item, 9, BLACK, 'center');
       let ly = yTop - 11;
       info.lines.forEach((line: string) => { page.drawText(line, { x: colX_desc + 3, y: ly, size: 9, font, color: BLACK }); ly -= 11; });
-      pdfDrawCellText(page, font, String(info.item.qty), colX_qty, yTop - h + 5, colW_qty, 9, BLACK, 'center');
+      pdfDrawCellText(page, font, info.item.qty.toFixed(2), colX_qty, yTop - h + 5, colW_qty, 9, BLACK, 'center');
       pdfDrawCellText(page, font, info.item.unit, colX_unit, yTop - h + 5, colW_unit, 9, BLACK, 'center');
-      pdfDrawCellText(page, font, info.item.unitPrice ? money(info.item.unitPrice) : '', colX_price, yTop - h + 5, colW_price, 9, BLACK, 'right', 6);
-      pdfDrawCellText(page, font, info.item.amount ? money(info.item.amount) : '', colX_amount, yTop - h + 5, colW_amount, 9, BLACK, 'right', 6);
+      pdfDrawCellText(page, font, info.item.unitPrice ? money(info.item.unitPrice) : '-', colX_price, yTop - h + 5, colW_price, 9, BLACK, 'right', 6);
+      pdfDrawCellText(page, font, info.item.amount ? money(info.item.amount) : '-', colX_amount, yTop - h + 5, colW_amount, 9, BLACK, 'right', 6);
       colStops.forEach((x) => { page.drawLine({ start: { x, y: yTop }, end: { x, y: yTop - h }, thickness: 0.4, color: BORDER }); });
       page.drawLine({ start: { x: MARGIN, y: yTop - h }, end: { x: MARGIN + usableWidth, y: yTop - h }, thickness: 0.4, color: BORDER });
     }
@@ -623,17 +634,22 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
 
     // ---- สรุปยอด ----
     const summaryLabelX = colX_price - 90;
-    function drawSummaryLine(label: string, value: string, bold = false): void {
+    const ORANGE = rgb(0.969, 0.796, 0.588); // สีส้ม/พีชสำหรับไฮไลท์แถว Grand Total ตามแบบฟอร์ม Excel ต้นฉบับ
+    function moneyOrDash(n: number): string { return n ? money(n) : '-'; }
+    function drawSummaryLine(label: string, value: string, bold = false, highlight = false): void {
       const f = bold ? boldFont : font;
+      if (highlight) {
+        page.drawRectangle({ x: MARGIN, y: y - 4, width: usableWidth, height: 15, color: ORANGE });
+      }
       page.drawText(label, { x: summaryLabelX, y, size: 10, font: f, color: BLACK });
       pdfDrawCellText(page, f, value, colX_amount, y, colW_amount, 10, BLACK, 'right', 6);
       y -= 15;
     }
-    drawSummaryLine('Total Item', money(totalItem));
-    drawSummaryLine('Special Discount', money(discount));
-    drawSummaryLine('Net Total', money(netTotal));
-    drawSummaryLine('VAT 7%', money(vat));
-    drawSummaryLine('Grand Total', money(grandTotal), true);
+    drawSummaryLine('Total Item', moneyOrDash(totalItem));
+    drawSummaryLine('Special Discount', moneyOrDash(discount));
+    drawSummaryLine('Net Total', moneyOrDash(netTotal));
+    drawSummaryLine('VAT 7%', moneyOrDash(vat));
+    drawSummaryLine('Grand Total', moneyOrDash(grandTotal), true, true);
     y -= 4;
     page.drawText('(' + thaiBahtText(grandTotal) + ')', { x: MARGIN, y, size: 9, font, color: BLACK });
     y -= 20;
