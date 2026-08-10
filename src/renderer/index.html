@@ -914,6 +914,7 @@
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">รอบ PM</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">วันที่เข้างาน</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">ราคา</th>
+                                <th class="p-2 text-left font-semibold whitespace-nowrap min-w-[220px]">Description ในใบเสนอราคา (แก้ไขได้)</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">หมายเหตุ</th>
                             </tr>
                         </thead>
@@ -2862,8 +2863,21 @@
             });
         }
 
+        // ค่าเริ่มต้นของ Description ในใบเสนอราคา (ถ้ายังไม่เคยแก้ desc_override เอง) — ต้องตรงกับฝั่งเซิร์ฟเวอร์ใน generatePmQuotationPdfBase64 เป๊ะๆ
+        function pmDefaultDesc(r) {
+            return [r.branch_code, r.branch_name].filter(Boolean).join(' ').trim() || '-';
+        }
+
         function renderPmBillingTable(rows) {
+            const isAdmin = currentSession && currentSession.role === 'admin';
             document.getElementById('pmBillingBody').innerHTML = rows.map(r => {
+                const priceCell = isAdmin
+                    ? `<input type="number" step="0.01" data-id="${r.id}" data-field="price" data-original="${r.price ?? ''}" value="${r.price ?? ''}" placeholder="0.00" onblur="savePmBillingField(this)" class="w-24 px-2 py-1 rounded border border-slate-200 text-xs">`
+                    : formatMoneyTh(r.price);
+                const descValue = (r.desc_override || '').toString().replace(/"/g, '&quot;');
+                const descCell = isAdmin
+                    ? `<input type="text" data-id="${r.id}" data-field="desc_override" data-original="${descValue}" value="${descValue}" placeholder="${pmDefaultDesc(r).replace(/"/g, '&quot;')} (ค่าเริ่มต้น)" onblur="savePmBillingField(this)" class="w-56 px-2 py-1 rounded border border-slate-200 text-xs">`
+                    : (r.desc_override || pmDefaultDesc(r));
                 return `<tr class="border-t border-slate-100">
                     <td class="p-2 whitespace-nowrap">${r.round_no !== null && r.round_no !== undefined ? r.round_no : '-'}</td>
                     <td class="p-2 whitespace-nowrap">${r.branch_name || r.branch_code || ''}</td>
@@ -2871,10 +2885,44 @@
                     <td class="p-2 whitespace-nowrap">${r.technician || '-'}</td>
                     <td class="p-2 whitespace-nowrap">${pmQuarterLabel(r)}</td>
                     <td class="p-2 whitespace-nowrap">${r.visit_date || '-'}</td>
-                    <td class="p-2 whitespace-nowrap">${formatMoneyTh(r.price)}</td>
+                    <td class="p-2 whitespace-nowrap">${priceCell}</td>
+                    <td class="p-2 whitespace-nowrap">${descCell}</td>
                     <td class="p-2 whitespace-nowrap">${r.remark || ''}</td>
                 </tr>`;
             }).join('');
+        }
+
+        // บันทึกทีละช่อง (เสีย focus = ยิงบันทึกอัตโนมัติ) ใช้กับช่อง "ราคา" และ "Description ในใบเสนอราคา" ในตารางเมนู PM
+        // ใช้แก้ไข 1 ช่องต่อ 1 ครั้งเรียก ไม่ต้องกดปุ่ม "บันทึกทั้งหมด" แยก เพราะแถวในเมนูนี้ไม่ได้เยอะเท่าตาราง CJ
+        function savePmBillingField(inputEl) {
+            const id = inputEl.dataset.id;
+            const field = inputEl.dataset.field;
+            const value = inputEl.value;
+            const original = inputEl.dataset.original || '';
+            if (value === original) return;
+            inputEl.disabled = true;
+            inputEl.classList.add('opacity-60');
+            const fields = {};
+            fields[field] = value;
+            runServerCall('updatePmBillingRow', [currentSession.username, currentSession.token, id, fields], function (res) {
+                inputEl.disabled = false;
+                inputEl.classList.remove('opacity-60');
+                if (res && res.success) {
+                    inputEl.dataset.original = value;
+                    inputEl.classList.add('border-emerald-400');
+                    setTimeout(() => inputEl.classList.remove('border-emerald-400'), 1200);
+                    const row = currentPmBillingData.find(r => String(r.id) === String(id));
+                    if (row) row[field] = value === '' ? null : value;
+                } else {
+                    showAlert('error', (res && res.message) || 'บันทึกล้มเหลว');
+                    inputEl.value = original;
+                }
+            }, function (err) {
+                inputEl.disabled = false;
+                inputEl.classList.remove('opacity-60');
+                showAlert('error', 'เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : ''));
+                inputEl.value = original;
+            });
         }
 
         function refreshPmBillingRoundOptions() {
