@@ -531,25 +531,31 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
       return y - 16; // บล็อกข้อความหัวกระดาษ (~77pt) สูงกว่าโลโก้ (46pt) อยู่แล้ว จึงไม่มีทางชนกัน ไม่ต้องเผื่อเพิ่ม
     }
 
-    // กล่องข้อมูลลูกค้า มีเส้นขอบล้อมรอบ + เส้นแบ่งซ้าย-ขวา ตามแบบฟอร์ม Excel ต้นฉบับ (เรียน/สำเนาเรียน/ที่อยู่ ทางซ้าย, เลขที่/วันที่/TEL ทางขวา)
+    // กล่องข้อมูลลูกค้า ตามแบบฟอร์ม Excel ต้นฉบับเป๊ะๆ (ตรวจสอบตำแหน่งเส้นจากภาพจริงแล้ว):
+    // ฝั่งซ้าย (เรียน/สำเนาเรียน/ที่อยู่) เป็นช่องเดียวไม่มีเส้นแบ่งภายใน ตัวหนา
+    // ฝั่งขวา (เลขที่/วันที่/TEL) มีเส้นแบ่งเป็น 3 แถวย่อยภายในกล่องขวา ตัวปกติ
     function drawCustomerBlock(page: any, yStart: number): number {
       const rightX = PAGE_W - MARGIN - 200;
+      const dividerX = rightX - 6;
       const rowH = 15;
       const boxTop = yStart;
       const boxBottom = yStart - rowH * 3;
-      for (let i = 0; i <= 3; i++) {
-        const ly = boxTop - i * rowH;
-        page.drawLine({ start: { x: MARGIN, y: ly }, end: { x: MARGIN + usableWidth, y: ly }, thickness: 0.75, color: BORDER });
-      }
+      // กรอบนอกรอบทั้งกล่อง
+      page.drawLine({ start: { x: MARGIN, y: boxTop }, end: { x: MARGIN + usableWidth, y: boxTop }, thickness: 0.75, color: BORDER });
+      page.drawLine({ start: { x: MARGIN, y: boxBottom }, end: { x: MARGIN + usableWidth, y: boxBottom }, thickness: 0.75, color: BORDER });
       page.drawLine({ start: { x: MARGIN, y: boxTop }, end: { x: MARGIN, y: boxBottom }, thickness: 0.75, color: BORDER });
-      page.drawLine({ start: { x: rightX - 6, y: boxTop }, end: { x: rightX - 6, y: boxBottom }, thickness: 0.75, color: BORDER });
       page.drawLine({ start: { x: MARGIN + usableWidth, y: boxTop }, end: { x: MARGIN + usableWidth, y: boxBottom }, thickness: 0.75, color: BORDER });
+      // เส้นแบ่งซ้าย-ขวา (เต็มความสูงกล่อง)
+      page.drawLine({ start: { x: dividerX, y: boxTop }, end: { x: dividerX, y: boxBottom }, thickness: 0.75, color: BORDER });
+      // เส้นแบ่งแถวย่อย เฉพาะฝั่งขวาเท่านั้น (ฝั่งซ้ายไม่มีเส้นแบ่งภายใน ตามต้นฉบับ)
+      page.drawLine({ start: { x: dividerX, y: boxTop - rowH }, end: { x: MARGIN + usableWidth, y: boxTop - rowH }, thickness: 0.75, color: BORDER });
+      page.drawLine({ start: { x: dividerX, y: boxTop - rowH * 2 }, end: { x: MARGIN + usableWidth, y: boxTop - rowH * 2 }, thickness: 0.75, color: BORDER });
 
-      page.drawText('เรียน/Attention: คุณวศิน / ที่นับถือ', { x: MARGIN + 4, y: boxTop - 11, size: 10, font, color: BLACK });
+      page.drawText('เรียน/Attention: คุณวศิน / ที่นับถือ', { x: MARGIN + 4, y: boxTop - 11, size: 10, font: boldFont, color: BLACK });
       page.drawText('เลขที่/No. : ' + docNo, { x: rightX, y: boxTop - 11, size: 10, font, color: BLACK });
-      page.drawText('สำเนาเรียน/CC. คุณอาร์ม / ที่นับถือ', { x: MARGIN + 4, y: boxTop - 11 - rowH, size: 10, font, color: BLACK });
+      page.drawText('สำเนาเรียน/CC. คุณอาร์ม / ที่นับถือ', { x: MARGIN + 4, y: boxTop - 11 - rowH, size: 10, font: boldFont, color: BLACK });
       page.drawText('วันที่ Date : ' + thaiDateString(), { x: rightX, y: boxTop - 11 - rowH, size: 10, font, color: BLACK });
-      page.drawText('ที่อยู่/Address : บริษัท ซี.เจ. เอ็กซ์เพรส กรุ๊ป จำกัด', { x: MARGIN + 4, y: boxTop - 11 - rowH * 2, size: 10, font, color: BLACK });
+      page.drawText('ที่อยู่/Address : บริษัท ซี.เจ. เอ็กซ์เพรส กรุ๊ป จำกัด', { x: MARGIN + 4, y: boxTop - 11 - rowH * 2, size: 10, font: boldFont, color: BLACK });
       page.drawText('TEL. : -', { x: rightX, y: boxTop - 11 - rowH * 2, size: 10, font, color: BLACK });
 
       let y = boxBottom - 12;
