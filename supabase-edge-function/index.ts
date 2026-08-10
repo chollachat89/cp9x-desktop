@@ -654,21 +654,16 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
       rowCursor++;
     }
 
-    // ---- บรรทัดรายการเสริมท้ายตาราง (ตามไฟล์ต้นฉบับฉบับสมบูรณ์ CRE-CJ-PM-6908-0001 — มีบรรทัดเดียว ไม่มีบรรทัดค่าน้ำ/ค่าไฟฟ้าแล้ว) ----
-    // เว้นช่องว่างจากเส้นขอบล่างของแถวรายการสุดท้ายให้พอ (เดิมเว้นแค่ 4pt ทำให้ตัวอักษรไทย/สระ-วรรณยุกต์ชนกับแถวสุดท้ายเมื่อรายการมีจำนวนมาก เช่น 120 แถว)
-    y -= 14;
-    page.drawText(' - รายการอื่น ๆ ที่มิได้ระบุไว้ข้างต้น', { x: MARGIN, y, size: 9, font, color: BLACK });
-    y -= 18;
+    // ---- ช่องว่างคั่นก่อนสรุปยอด (ตามแบบฟอร์มล่าสุดที่ใช้จริง — ไม่มีบรรทัด "รายการอื่นๆ" แล้ว) ----
+    // เว้นช่องว่างจากเส้นขอบล่างของแถวรายการสุดท้ายให้พอ (กัน text ไทย/สระ-วรรณยุกต์ชนกับแถวสุดท้ายเมื่อรายการมีจำนวนมาก เช่น 120 แถว)
+    y -= 22;
 
     // ---- สรุปยอด ----
     const summaryLabelX = colX_price - 90;
     const ORANGE = rgb(0.969, 0.796, 0.588); // สีส้ม/พีชสำหรับไฮไลท์แถว Grand Total ตามแบบฟอร์ม Excel ต้นฉบับ
     function moneyOrDash(n: number): string { return n ? money(n) : '-'; }
-    function drawSummaryLine(label: string, value: string, bold = false, highlight = false): void {
+    function drawSummaryLine(label: string, value: string, bold = false): void {
       const f = bold ? boldFont : font;
-      if (highlight) {
-        page.drawRectangle({ x: MARGIN, y: y - 4, width: usableWidth, height: 15, color: ORANGE });
-      }
       page.drawText(label, { x: summaryLabelX, y, size: 10, font: f, color: BLACK });
       pdfDrawCellText(page, f, value, colX_amount, y, colW_amount, 10, BLACK, 'right', 6);
       y -= 15;
@@ -677,9 +672,15 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
     drawSummaryLine('Special Discount', moneyOrDash(discount));
     drawSummaryLine('Net Total', moneyOrDash(netTotal));
     drawSummaryLine('VAT 7%', moneyOrDash(vat));
-    drawSummaryLine('Grand Total', moneyOrDash(grandTotal), true, true);
-    y -= 4;
-    page.drawText('(' + thaiBahtText(grandTotal) + ')', { x: MARGIN, y, size: 9, font, color: BLACK });
+
+    // ---- แถว Grand Total: จำนวนเงินตัวอักษรอยู่ฝั่งซ้าย + Grand Total ฝั่งขวา อยู่แถวเดียวกัน ไฮไลท์สีส้มเต็มความกว้าง ตามแบบฟอร์มล่าสุด ----
+    page.drawRectangle({ x: MARGIN, y: y - 4, width: usableWidth, height: 15, color: ORANGE });
+    const bahtText = '(' + thaiBahtText(grandTotal) + ')';
+    const bahtMaxWidth = summaryLabelX - MARGIN - 8;
+    const bahtSize = font.widthOfTextAtSize(bahtText, 10) <= bahtMaxWidth ? 10 : 8;
+    page.drawText(bahtText, { x: MARGIN + 4, y: y + (bahtSize === 10 ? 0 : 1), size: bahtSize, font, color: BLACK });
+    page.drawText('Grand Total', { x: summaryLabelX, y, size: 10, font: boldFont, color: BLACK });
+    pdfDrawCellText(page, boldFont, moneyOrDash(grandTotal), colX_amount, y, colW_amount, 10, BLACK, 'right', 6);
     y -= 20;
 
     // ---- เงื่อนไขชำระเงิน + ลายเซ็น ----
@@ -725,9 +726,9 @@ async function generatePmQuotationXlsxBase64(rows: any[], roundNo: number | stri
     sheet.getColumn(1).width = 6;   // Item
     sheet.getColumn(2).width = 46;  // Description
     sheet.getColumn(3).width = 8;   // Qty
-    sheet.getColumn(4).width = 8;   // Unit
+    sheet.getColumn(4).width = 13;  // Unit
     sheet.getColumn(5).width = 15;  // Unit Price
-    sheet.getColumn(6).width = 15;  // Amount
+    sheet.getColumn(6).width = 13;  // Amount
 
     const GRAY_BORDER = 'FF808080';
     const BLACK_FILL = 'FF000000';
@@ -839,23 +840,25 @@ async function generatePmQuotationXlsxBase64(rows: any[], roundNo: number | stri
       r++;
     });
 
-    sheet.mergeCells(r, 1, r, 6); setCell(r, 1, ' - รายการอื่น ๆ ที่มิได้ระบุไว้ข้างต้น', { size: 9 }); r++;
-    r++;
+    r++; // แถวว่างคั่นก่อนสรุปยอด (ตามแบบฟอร์มล่าสุด — ไม่มีบรรทัด "รายการอื่นๆ" แล้ว)
 
-    // ---- สรุปยอด ----
-    function summaryLine(label: string, value: number, opts: { bold?: boolean; highlight?: boolean } = {}): void {
-      sheet.mergeCells(r, 4, r, 5); setCell(r, 4, label, { bold: !!opts.bold, align: 'right' });
+    // ---- สรุปยอด (label อยู่คอลัมน์ E เดี่ยวๆ ไม่ merge กับ D ตามแบบฟอร์มล่าสุด) ----
+    function summaryLine(label: string, value: number, opts: { bold?: boolean } = {}): void {
+      setCell(r, 5, label, { bold: !!opts.bold, align: 'left' });
       setCell(r, 6, value, { bold: !!opts.bold, align: 'right' }); sheet.getCell(r, 6).numFmt = numFmtDash;
-      if (opts.highlight) { for (let c = 1; c <= 6; c++) sheet.getCell(r, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ORANGE_FILL } }; }
       r++;
     }
     summaryLine('Total Item', totalItem);
     summaryLine('Special Discount', discount);
     summaryLine('Net Total', netTotal);
     summaryLine('VAT 7%', vat);
-    summaryLine('Grand Total', grandTotal, { bold: true, highlight: true });
 
-    sheet.mergeCells(r, 1, r, 6); setCell(r, 1, '(' + thaiBahtText(grandTotal) + ')', { size: 9 }); r++;
+    // ---- แถว Grand Total: จำนวนเงินตัวอักษร (คอลัมน์ B) + Grand Total (คอลัมน์ E/F) อยู่แถวเดียวกัน ไฮไลท์สีส้มเต็มความกว้าง ----
+    setCell(r, 2, '(' + thaiBahtText(grandTotal) + ')', { size: 11 });
+    setCell(r, 5, 'Grand Total', { bold: true });
+    setCell(r, 6, grandTotal, { bold: true, align: 'right' }); sheet.getCell(r, 6).numFmt = numFmtDash;
+    for (let c = 1; c <= 6; c++) sheet.getCell(r, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ORANGE_FILL } };
+    r++;
     r++;
 
     // ---- เงื่อนไขชำระเงิน + ลายเซ็น ----
