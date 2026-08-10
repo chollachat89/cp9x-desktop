@@ -1,7 +1,7 @@
 {
   "name": "cp9x-desktop",
   "productName": "CP9X",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "description": "CP9X Desktop App (Electron + Supabase)",
   "main": "src/main.js",
   "author": {

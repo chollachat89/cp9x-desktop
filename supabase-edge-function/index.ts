@@ -500,7 +500,7 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
     const vat = netTotal * 0.07;
     const grandTotal = netTotal + vat;
 
-    const colW_item = 30, colW_desc = 260, colW_qty = 35, colW_unit = 45, colW_price = 85;
+    const colW_item = 24, colW_desc = 260, colW_qty = 30, colW_unit = 45, colW_price = 85; // item/qty แคบลงเล็กน้อย เผื่อพื้นที่คอลัมน์ Amount ให้พอกับยอดรวมหลักแสน-ล้าน ไม่ถูกตัด (...)
     const colX_item = MARGIN;
     const colX_desc = colX_item + colW_item;
     const colX_qty = colX_desc + colW_desc;
@@ -593,7 +593,7 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
       page.drawLine({ start: { x: MARGIN, y: yTop - h }, end: { x: MARGIN + usableWidth, y: yTop - h }, thickness: 0.4, color: BORDER });
     }
 
-    const FOOTER_RESERVE = 260; // พื้นที่กันไว้ท้ายเอกสาร สำหรับสรุปยอด+VAT+จำนวนเงินตัวอักษร+เงื่อนไขชำระเงิน+ลายเซ็น (ต้องอยู่หน้าเดียวกันทั้งหมด ไม่ตัดข้ามหน้า)
+    const FOOTER_RESERVE = 280; // พื้นที่กันไว้ท้ายเอกสาร สำหรับสรุปยอด+VAT+จำนวนเงินตัวอักษร+เงื่อนไขชำระเงิน+ลายเซ็น (ต้องอยู่หน้าเดียวกันทั้งหมด ไม่ตัดข้ามหน้า) — เผื่อเพิ่มจากเดิมให้ตรงกับช่องว่างที่ขยายด้านบน
     let page = pdfDoc.addPage([PAGE_W, PAGE_H]);
     let y = drawLetterhead(page);
     y = drawCustomerBlock(page, y);
@@ -616,7 +616,8 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
     }
 
     // ---- บรรทัดรายการเสริมท้ายตาราง (ตามไฟล์ต้นฉบับฉบับสมบูรณ์ CRE-CJ-PM-6908-0001 — มีบรรทัดเดียว ไม่มีบรรทัดค่าน้ำ/ค่าไฟฟ้าแล้ว) ----
-    y -= 4;
+    // เว้นช่องว่างจากเส้นขอบล่างของแถวรายการสุดท้ายให้พอ (เดิมเว้นแค่ 4pt ทำให้ตัวอักษรไทย/สระ-วรรณยุกต์ชนกับแถวสุดท้ายเมื่อรายการมีจำนวนมาก เช่น 120 แถว)
+    y -= 14;
     page.drawText(' - รายการอื่น ๆ ที่มิได้ระบุไว้ข้างต้น', { x: MARGIN, y, size: 9, font, color: BLACK });
     y -= 18;
 
