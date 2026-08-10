@@ -713,6 +713,178 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
   }
 }
 
+// สร้าง "ใบเสนอราคา" งาน PM เป็นไฟล์ .xlsx จริง (ไม่ใช่ PDF) — หน้าตา/สี/เส้นขอบตรงกับ generatePmQuotationPdfBase64() ด้านบน
+// เพื่อให้ผู้ใช้แก้ไข/พิมพ์ต่อได้เองใน Excel โดยตรง เหมือนไฟล์แบบฟอร์มต้นฉบับของบริษัท
+async function generatePmQuotationXlsxBase64(rows: any[], roundNo: number | string, docNo: string): Promise<any> {
+  if (!rows || rows.length === 0) return { success: false, message: 'ไม่มีข้อมูลสำหรับสร้างใบเสนอราคา' };
+  try {
+    const ExcelJS = await loadExcelJS();
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('ใบเสนอราคา', { pageSetup: { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.4, right: 0.4, top: 0.4, bottom: 0.4, header: 0, footer: 0 } } });
+
+    sheet.getColumn(1).width = 6;   // Item
+    sheet.getColumn(2).width = 46;  // Description
+    sheet.getColumn(3).width = 8;   // Qty
+    sheet.getColumn(4).width = 8;   // Unit
+    sheet.getColumn(5).width = 15;  // Unit Price
+    sheet.getColumn(6).width = 15;  // Amount
+
+    const GRAY_BORDER = 'FF808080';
+    const BLACK_FILL = 'FF000000';
+    const ORANGE_FILL = 'FFF7CB96';
+    function border(r: number, c: number, sides: { top?: boolean; bottom?: boolean; left?: boolean; right?: boolean }): void {
+      const cell = sheet.getCell(r, c);
+      const line = { style: 'thin', color: { argb: GRAY_BORDER } };
+      cell.border = {
+        top: sides.top ? line : undefined,
+        bottom: sides.bottom ? line : undefined,
+        left: sides.left ? line : undefined,
+        right: sides.right ? line : undefined,
+      };
+    }
+    function setCell(r: number, c: number, value: any, opts: { bold?: boolean; size?: number; align?: string; wrap?: boolean; color?: string; fill?: string } = {}): void {
+      const cell = sheet.getCell(r, c);
+      cell.value = (value === null || value === undefined) ? '' : value;
+      cell.font = { name: 'Tahoma', size: opts.size || 10, bold: !!opts.bold, color: { argb: opts.color || 'FF1F1F1F' } };
+      cell.alignment = { horizontal: opts.align || 'left', vertical: 'middle', wrapText: !!opts.wrap };
+      if (opts.fill) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: opts.fill } };
+    }
+
+    // ---- โลโก้ + หัวกระดาษบริษัท ----
+    const logoBuf = Uint8Array.from(atob(PM_QUOTATION_LOGO_PNG_BASE64), (c) => c.charCodeAt(0));
+    const logoImgId = workbook.addImage({ buffer: logoBuf, extension: 'png' });
+    sheet.addImage(logoImgId, { tl: { col: 0.1, row: 0.1 }, ext: { width: 60, height: 60 } });
+
+    sheet.mergeCells(1, 1, 1, 6); setCell(1, 1, 'บริษัท ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด', { bold: true, size: 16, align: 'center' });
+    sheet.mergeCells(2, 1, 2, 6); setCell(2, 1, '557-557/1 ถนน ไทยรามัญ แขวงสามวาตะวันตก เขตคลองสามวา กรุงเทพมหานคร 10510', { size: 10, align: 'center' });
+    sheet.mergeCells(3, 1, 3, 6); setCell(3, 1, 'โทร 089-743-7111 : เลขประจำตัวผู้เสียภาษี 0105562019441', { size: 10, align: 'center' });
+    sheet.mergeCells(4, 1, 4, 6); setCell(4, 1, 'ใบเสนอราคา / QUOTATION', { bold: true, size: 16, align: 'center' });
+    for (let c = 1; c <= 6; c++) border(4, c, { bottom: true });
+    [1, 2, 3, 4].forEach((r) => { sheet.getRow(r).height = r === 1 ? 24 : r === 4 ? 26 : 16; });
+
+    // ---- กล่องข้อมูลลูกค้า (แถว 5-7): ฝั่งซ้าย A:D ไม่มีเส้นแบ่งภายใน ตัวหนา / ฝั่งขวา E:F มีเส้นแบ่งเป็น 3 แถว ตัวปกติ ----
+    const custR1 = 5, custR2 = 7;
+    sheet.mergeCells(custR1, 1, custR1, 4); setCell(custR1, 1, 'เรียน/Attention: คุณวศิน / ที่นับถือ', { bold: true });
+    sheet.mergeCells(custR1, 5, custR1, 6); setCell(custR1, 5, 'เลขที่/No. : ' + docNo);
+    sheet.mergeCells(custR1 + 1, 1, custR1 + 1, 4); setCell(custR1 + 1, 1, 'สำเนาเรียน/CC. คุณอาร์ม / ที่นับถือ', { bold: true });
+    sheet.mergeCells(custR1 + 1, 5, custR1 + 1, 6); setCell(custR1 + 1, 5, 'วันที่ Date : ' + thaiDateString());
+    sheet.mergeCells(custR2, 1, custR2, 4); setCell(custR2, 1, 'ที่อยู่/Address : บริษัท ซี.เจ. เอ็กซ์เพรส กรุ๊ป จำกัด', { bold: true });
+    sheet.mergeCells(custR2, 5, custR2, 6); setCell(custR2, 5, 'TEL. : -');
+    for (let r = custR1; r <= custR2; r++) {
+      for (let c = 1; c <= 6; c++) {
+        border(r, c, {
+          top: r === custR1 || (c >= 5 && r > custR1),
+          bottom: r === custR2,
+          left: c === 1,
+          right: c === 6 || c === 4,
+        });
+      }
+      sheet.getRow(r).height = 16;
+    }
+
+    let r = custR2 + 1;
+    sheet.mergeCells(r, 1, r, 6); setCell(r, 1, 'ขอเสนอราคาและเงื่อนไขสำหรับท่านดังนี้'); r++;
+    sheet.mergeCells(r, 1, r, 6); setCell(r, 1, 'We are please to submit you the following described here in at price, items and terms stated :', { size: 9 }); r++;
+    r++; // แถวว่างคั่นก่อนตาราง
+
+    // ---- หัวตารางรายการ (พื้นดำ ตัวขาว) ----
+    const tableHeaderRow = r;
+    ['Item', 'Description', 'Qty', 'Unit', 'Unit Price', 'Amount'].forEach((label, i) => {
+      setCell(tableHeaderRow, i + 1, label, { bold: true, align: 'center', color: 'FFFFFFFF', fill: BLACK_FILL });
+      border(tableHeaderRow, i + 1, { top: true, bottom: true, left: i === 0, right: true });
+    });
+    sheet.getRow(tableHeaderRow).height = 18;
+    r++;
+
+    // ---- แถวหัวรายการรวม ----
+    const visitDates = rows.map((rr: any) => rr.visit_date).filter(Boolean).sort();
+    let headerMonth = new Date().getMonth() + 1;
+    let headerYear = new Date().getFullYear();
+    if (visitDates.length > 0) {
+      const d = new Date(visitDates[0].toString().length <= 10 ? visitDates[0] + 'T00:00:00' : visitDates[0]);
+      if (!isNaN(d.getTime())) { headerMonth = d.getMonth() + 1; headerYear = d.getFullYear(); }
+    }
+    sheet.mergeCells(r, 2, r, 6);
+    setCell(r, 2, 'ค่าดำเนินการงาน Preventive Maintenance เครื่องเย็น โครงการ CJ Express ตามสัญญาบริการ ประจำเดือน ' + headerMonth + '/' + headerYear, { size: 9 });
+    for (let c = 1; c <= 6; c++) border(r, c, { bottom: true });
+    r++;
+
+    // ---- แถวรายการ (Description ใช้ desc_override ถ้ามี ไม่งั้นใช้ "รหัสสาขา-ชื่อสาขา" — เช็คกันซ้ำรหัสสาขาเหมือนฝั่ง PDF/หน้าแอป) ----
+    const numFmtDash = '#,##0.00;-#,##0.00;"-"';
+    const lineItems = rows.map((rr: any) => {
+      const qty = 1;
+      const unitPrice = parseFloat(rr.price) || 0;
+      const amount = qty * unitPrice;
+      const bCode = (rr.branch_code || '').toString().trim();
+      const bName = (rr.branch_name || '').toString().trim();
+      const defaultDesc = (bCode && bName) ? (bName.indexOf(bCode + '-') === 0 ? bName : (bCode + '-' + bName)) : (bCode || bName || '-');
+      const desc = (rr.desc_override && rr.desc_override.toString().trim()) ? rr.desc_override.toString().trim() : defaultDesc;
+      return { desc, qty, unit: 'Lot', unitPrice, amount };
+    });
+    const totalItem = lineItems.reduce((s: number, it: any) => s + it.amount, 0);
+    const discount = 0;
+    const netTotal = totalItem - discount;
+    const vat = netTotal * 0.07;
+    const grandTotal = netTotal + vat;
+
+    lineItems.forEach((item: any, idx: number) => {
+      setCell(r, 1, idx + 1, { align: 'center' });
+      setCell(r, 2, item.desc, { wrap: true });
+      setCell(r, 3, item.qty, { align: 'center' }); sheet.getCell(r, 3).numFmt = '0.00';
+      setCell(r, 4, item.unit, { align: 'center' });
+      setCell(r, 5, item.unitPrice, { align: 'right' }); sheet.getCell(r, 5).numFmt = numFmtDash;
+      setCell(r, 6, item.amount, { align: 'right' }); sheet.getCell(r, 6).numFmt = numFmtDash;
+      for (let c = 1; c <= 6; c++) border(r, c, { bottom: true, left: c === 1, right: true, top: false });
+      sheet.getRow(r).height = item.desc.length > 55 ? 30 : 16;
+      r++;
+    });
+
+    sheet.mergeCells(r, 1, r, 6); setCell(r, 1, ' - รายการอื่น ๆ ที่มิได้ระบุไว้ข้างต้น', { size: 9 }); r++;
+    r++;
+
+    // ---- สรุปยอด ----
+    function summaryLine(label: string, value: number, opts: { bold?: boolean; highlight?: boolean } = {}): void {
+      sheet.mergeCells(r, 4, r, 5); setCell(r, 4, label, { bold: !!opts.bold, align: 'right' });
+      setCell(r, 6, value, { bold: !!opts.bold, align: 'right' }); sheet.getCell(r, 6).numFmt = numFmtDash;
+      if (opts.highlight) { for (let c = 1; c <= 6; c++) sheet.getCell(r, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ORANGE_FILL } }; }
+      r++;
+    }
+    summaryLine('Total Item', totalItem);
+    summaryLine('Special Discount', discount);
+    summaryLine('Net Total', netTotal);
+    summaryLine('VAT 7%', vat);
+    summaryLine('Grand Total', grandTotal, { bold: true, highlight: true });
+
+    sheet.mergeCells(r, 1, r, 6); setCell(r, 1, '(' + thaiBahtText(grandTotal) + ')', { size: 9 }); r++;
+    r++;
+
+    // ---- เงื่อนไขชำระเงิน + ลายเซ็น ----
+    sheet.mergeCells(r, 1, r, 4); setCell(r, 1, 'เงื่อนไขชำระเงิน  1)  100% ชำระเมื่อส่งมอบงาน  (เครดิต 45 วัน)', { size: 9 });
+    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, 'ขอแสดงความนับถือ', { size: 9, align: 'center' }); r++;
+    sheet.mergeCells(r, 1, r, 4); setCell(r, 1, 'กำหนดยืนราคา :  45 วันหลังจากในใบเสนอราคานี้', { size: 9 });
+    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, 'บริษัท  ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด', { size: 9, align: 'center' }); r++;
+
+    const sigRowStart = r;
+    const sigBuf = Uint8Array.from(atob(PM_QUOTATION_SIGNATURE_PNG_BASE64), (c) => c.charCodeAt(0));
+    const sigImgId = workbook.addImage({ buffer: sigBuf, extension: 'png' });
+    sheet.addImage(sigImgId, { tl: { col: 4.3, row: sigRowStart - 1 + 0.1 }, ext: { width: 90, height: 40 } });
+    r += 2;
+    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, '........................................................', { size: 9, align: 'center' }); r++;
+    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, '( นายเจริญ พูนน้อย )', { size: 9, align: 'center' }); r++;
+    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, 'Managing Director', { size: 9, align: 'center' }); r++;
+    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, '089-743-7111', { size: 9, align: 'center' });
+
+    const buffer: ArrayBuffer = await workbook.xlsx.writeBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary2 = '';
+    for (let i = 0; i < bytes.length; i++) binary2 += String.fromCharCode(bytes[i]);
+    const base64 = btoa(binary2);
+    return { success: true, base64, filename: docNo + '.xlsx' };
+  } catch (error) {
+    return { success: false, message: 'สร้างไฟล์ Excel ใบเสนอราคา PM ล้มเหลว: ' + String(error) };
+  }
+}
+
 // ==================== สร้างไฟล์ "ฟอร์มวางบิล" .xlsx ต่อเลขงาน (แทน Google Sheets แม่แบบ) ====================
 function xlsxApplyBoxStyle(ws: any, r1: number, c1: number, r2: number, c2: number) {
   for (let r = r1; r <= r2; r++) {
@@ -1782,6 +1954,31 @@ Deno.serve(async (req: Request) => {
 
         const pdfResult = await generatePmQuotationPdfBase64(data, roundNo, docNo);
         return jsonResponse(pdfResult);
+      }
+
+      // ดาวน์โหลด "ใบเสนอราคา" เป็นไฟล์ .xlsx (Excel จริง แก้ไขต่อได้) ของรอบบิล PM รอบใดรอบหนึ่ง — เฉพาะแอดมิน เหมือนกับ downloadPmBillingRoundPdf ทุกอย่าง ต่างแค่รูปแบบไฟล์
+      case 'downloadPmBillingRoundExcel': {
+        const [username, token, roundNo] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ดาวน์โหลดใบเสนอราคาได้' });
+        if (roundNo === undefined || roundNo === null || roundNo === '') return jsonResponse({ success: false, message: 'กรุณาเลือกรอบบิล PM ที่ต้องการดาวน์โหลดก่อน' });
+        const { data, error } = await supabase.from('pm_billing_documents').select('*').eq('round_no', roundNo).order('seq', { ascending: true });
+        if (error) return jsonResponse({ success: false, message: 'ดึงข้อมูลรอบบิล PM ล้มเหลว: ' + error.message });
+        if (!data || data.length === 0) return jsonResponse({ success: false, message: 'ไม่พบข้อมูลของรอบบิล PM นี้' });
+
+        const { data: allRoundsData2, error: allRoundsErr2 } = await supabase.from('pm_billing_documents').select('round_no,created_at').not('round_no', 'is', null);
+        if (allRoundsErr2) return jsonResponse({ success: false, message: 'สร้างเลขที่เอกสารล้มเหลว: ' + allRoundsErr2.message });
+        const roundMinCreated2: Record<string, string> = {};
+        (allRoundsData2 || []).forEach((r: any) => {
+          const key = String(r.round_no);
+          if (!r.created_at) return;
+          if (!roundMinCreated2[key] || r.created_at < roundMinCreated2[key]) roundMinCreated2[key] = r.created_at;
+        });
+        const docNo2 = computePmDocNo(roundNo, roundMinCreated2);
+
+        const xlsxResult = await generatePmQuotationXlsxBase64(data, roundNo, docNo2);
+        return jsonResponse(xlsxResult);
       }
 
       // ประวัติรอบบิล PM ทั้งหมด (สรุปทีละรอบ: จำนวนรายการ/ยอดรวม/เลขที่เอกสาร/วันที่บันทึก) — ไว้ดูย้อนหลังโดยไม่ต้องไล่เลือกทีละรอบในตัวกรองหลัก — เฉพาะแอดมิน

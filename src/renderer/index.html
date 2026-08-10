@@ -871,6 +871,9 @@
                         <button type="button" onclick="downloadPmBillingRoundPdf_()" id="btn_downloadPmBillingPdf" class="bg-slate-800 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-900 transition-colors">
                             <i class="fa-solid fa-file-pdf mr-1"></i> ดาวน์โหลดใบเสนอราคา (PDF)
                         </button>
+                        <button type="button" onclick="downloadPmBillingRoundExcel_()" id="btn_downloadPmBillingExcel" class="bg-emerald-700 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-emerald-800 transition-colors">
+                            <i class="fa-solid fa-file-excel mr-1"></i> ดาวน์โหลดใบเสนอราคา (Excel)
+                        </button>
                         <button type="button" onclick="openPmAddLineItemModal()" id="btn_openPmAddLineItem" class="bg-emerald-600 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-emerald-700 transition-colors">
                             <i class="fa-solid fa-plus mr-1"></i> เพิ่มรายการเอง
                         </button>
@@ -3092,6 +3095,54 @@
             }, 60000);
         }
 
+        function downloadPmBillingRoundExcel_() {
+            if (!currentSession) return;
+            const roundNo = document.getElementById('pmBillingRoundFilter').value;
+            if (!roundNo) {
+                showAlert('error', 'กรุณาเลือก "กรองตามรอบบิล PM" เป็นรอบใดรอบหนึ่งก่อน แล้วจึงกดดาวน์โหลดใบเสนอราคาของรอบนั้น');
+                return;
+            }
+            const btnEl = document.getElementById('btn_downloadPmBillingExcel');
+            const originalHtml = btnEl.innerHTML;
+            btnEl.disabled = true;
+            btnEl.classList.add('opacity-60', 'cursor-not-allowed');
+            btnEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i> กำลังสร้าง...';
+
+            function resetBtn() {
+                btnEl.disabled = false;
+                btnEl.classList.remove('opacity-60', 'cursor-not-allowed');
+                btnEl.innerHTML = originalHtml;
+            }
+
+            runServerCall('downloadPmBillingRoundExcel', [currentSession.username, currentSession.token, roundNo], function (res) {
+                resetBtn();
+                if (res && res.success) {
+                    try {
+                        const byteCharacters = atob(res.base64);
+                        const byteNumbers = new Array(byteCharacters.length);
+                        for (let i = 0; i < byteCharacters.length; i++) byteNumbers[i] = byteCharacters.charCodeAt(i);
+                        const byteArray = new Uint8Array(byteNumbers);
+                        const blob = new Blob([byteArray], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = res.filename || ('ใบเสนอราคา_PM_รอบ' + roundNo + '.xlsx');
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                    } catch (e) {
+                        showAlert('error', 'เปิดไฟล์ Excel ล้มเหลว: ' + (e && e.message ? e.message : ''));
+                    }
+                } else {
+                    showAlert('error', (res && res.message) || 'สร้างใบเสนอราคา PM (Excel) ล้มเหลว');
+                }
+            }, function (err) {
+                resetBtn();
+                showAlert('error', 'เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : 'ไม่ทราบสาเหตุ'));
+            }, 60000);
+        }
+
         // ==================== ประวัติบิล PM (popup สรุปทุกรอบที่เคยบันทึก + ดาวน์โหลด PDF ย้อนหลัง) ====================
         function openPmBillingHistoryModal() {
             if (!currentSession) return;
@@ -3148,12 +3199,25 @@
                     '<td class="p-2 border-b border-slate-100 text-center"></td>';
 
                 const downloadCell = tr.lastElementChild;
-                const dlBtn = document.createElement('button');
-                dlBtn.type = 'button';
-                dlBtn.className = 'bg-slate-800 text-white text-xs font-semibold py-1.5 px-3 rounded-lg hover:bg-slate-900 transition-colors whitespace-nowrap';
-                dlBtn.innerHTML = '<i class="fa-solid fa-download mr-1"></i> ดาวน์โหลด';
-                dlBtn.onclick = function () { downloadPmBillingHistoryPdf_(r.round_no, dlBtn); };
-                downloadCell.appendChild(dlBtn);
+                downloadCell.className += ' whitespace-nowrap';
+                const btnWrap = document.createElement('div');
+                btnWrap.className = 'flex gap-1.5 justify-center';
+
+                const pdfBtn = document.createElement('button');
+                pdfBtn.type = 'button';
+                pdfBtn.className = 'bg-slate-800 text-white text-xs font-semibold py-1.5 px-3 rounded-lg hover:bg-slate-900 transition-colors whitespace-nowrap';
+                pdfBtn.innerHTML = '<i class="fa-solid fa-file-pdf mr-1"></i> PDF';
+                pdfBtn.onclick = function () { downloadPmBillingHistoryPdf_(r.round_no, pdfBtn); };
+                btnWrap.appendChild(pdfBtn);
+
+                const xlsBtn = document.createElement('button');
+                xlsBtn.type = 'button';
+                xlsBtn.className = 'bg-emerald-700 text-white text-xs font-semibold py-1.5 px-3 rounded-lg hover:bg-emerald-800 transition-colors whitespace-nowrap';
+                xlsBtn.innerHTML = '<i class="fa-solid fa-file-excel mr-1"></i> Excel';
+                xlsBtn.onclick = function () { downloadPmBillingHistoryExcel_(r.round_no, xlsBtn); };
+                btnWrap.appendChild(xlsBtn);
+
+                downloadCell.appendChild(btnWrap);
 
                 tbody.appendChild(tr);
             });
@@ -3193,6 +3257,47 @@
                     }
                 } else {
                     showAlert('error', (res && res.message) || 'สร้างใบเสนอราคา PM ล้มเหลว');
+                }
+            }, function (err) {
+                resetBtn();
+                showAlert('error', 'เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : 'ไม่ทราบสาเหตุ'));
+            }, 60000);
+        }
+
+        function downloadPmBillingHistoryExcel_(roundNo, btnEl) {
+            const originalHtml = btnEl.innerHTML;
+            btnEl.disabled = true;
+            btnEl.classList.add('opacity-60', 'cursor-not-allowed');
+            btnEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i>';
+
+            function resetBtn() {
+                btnEl.disabled = false;
+                btnEl.classList.remove('opacity-60', 'cursor-not-allowed');
+                btnEl.innerHTML = originalHtml;
+            }
+
+            runServerCall('downloadPmBillingRoundExcel', [currentSession.username, currentSession.token, roundNo], function (res) {
+                resetBtn();
+                if (res && res.success) {
+                    try {
+                        const byteCharacters = atob(res.base64);
+                        const byteNumbers = new Array(byteCharacters.length);
+                        for (let i = 0; i < byteCharacters.length; i++) byteNumbers[i] = byteCharacters.charCodeAt(i);
+                        const byteArray = new Uint8Array(byteNumbers);
+                        const blob = new Blob([byteArray], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = res.filename || ('ใบเสนอราคา_PM_รอบ' + roundNo + '.xlsx');
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                    } catch (e) {
+                        showAlert('error', 'เปิดไฟล์ Excel ล้มเหลว: ' + (e && e.message ? e.message : ''));
+                    }
+                } else {
+                    showAlert('error', (res && res.message) || 'สร้างใบเสนอราคา PM (Excel) ล้มเหลว');
                 }
             }, function (err) {
                 resetBtn();
