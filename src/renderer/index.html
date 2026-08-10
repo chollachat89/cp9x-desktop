@@ -865,6 +865,9 @@
                         <button type="button" onclick="loadPmBillingDocuments()" class="bg-slate-700 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-800 transition-colors">
                             <i class="fa-solid fa-rotate mr-1"></i> โหลด/รีเฟรชข้อมูล
                         </button>
+                        <button type="button" onclick="downloadPmBillingRoundPdf_()" id="btn_downloadPmBillingPdf" class="bg-slate-800 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-900 transition-colors">
+                            <i class="fa-solid fa-file-pdf mr-1"></i> ดาวน์โหลดใบเสนอราคา (PDF)
+                        </button>
                     </div>
                 </div>
                 <p class="text-xs text-slate-400 mb-3">
@@ -873,6 +876,25 @@
 
                 <div class="flex flex-wrap items-end gap-3 mb-3 p-3 bg-blood-50 border border-blood-200 border-dashed rounded-xl">
                     <div>
+                        <label class="block text-slate-700 text-xs font-semibold mb-1">วันที่เข้างาน ตั้งแต่ (เว้นว่างทั้งคู่ = ทั้งหมด)</label>
+                        <div class="relative inline-block">
+                            <input type="text" id="pmBillingRangeStartDisplay" readonly placeholder="dd/mm/yyyy" onclick="openCustomDatePicker('pmBillingRangeStart')" class="px-3 py-2 pr-8 rounded-lg border border-slate-300 text-sm w-36 date-picker-trigger cursor-pointer bg-white hover:border-blood-400">
+                            <input type="hidden" id="pmBillingRangeStart" value="">
+                            <i class="fa-solid fa-calendar-days absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"></i>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-slate-700 text-xs font-semibold mb-1">ถึงวันที่</label>
+                        <div class="relative inline-block">
+                            <input type="text" id="pmBillingRangeEndDisplay" readonly placeholder="dd/mm/yyyy" onclick="openCustomDatePicker('pmBillingRangeEnd')" class="px-3 py-2 pr-8 rounded-lg border border-slate-300 text-sm w-36 date-picker-trigger cursor-pointer bg-white hover:border-blood-400">
+                            <input type="hidden" id="pmBillingRangeEnd" value="">
+                            <i class="fa-solid fa-calendar-days absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"></i>
+                        </div>
+                    </div>
+                    <button type="button" onclick="clearPmBillingDateRange()" class="text-slate-500 text-xs underline hover:text-slate-700 pb-2">
+                        ล้างช่วงวันที่
+                    </button>
+                    <div class="ml-auto">
                         <label class="block text-slate-700 text-xs font-semibold mb-1">กรองตามรอบบิล PM</label>
                         <select id="pmBillingRoundFilter" onchange="loadPmBillingDocuments()" class="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white min-w-[220px]">
                             <option value="">-- งานล่าสุดทั้งหมด --</option>
@@ -2700,10 +2722,27 @@
             return 'Q' + (row.quarter || '-') + '/' + (row.cycle_year || '-');
         }
 
+        // เก็บช่วงวันที่ที่ใช้ตอน "ดูตัวอย่าง" ไว้ ให้ปุ่ม "ยืนยันบันทึกรอบบิล" (ขั้นที่ 2) ใช้ชุดเดียวกันเป๊ะๆ เหมือนฝั่งบิล CJ
+        let pmBillingPreviewParams = null;
+
+        function clearPmBillingDateRange() {
+            document.getElementById('pmBillingRangeStart').value = '';
+            document.getElementById('pmBillingRangeEnd').value = '';
+            document.getElementById('pmBillingRangeStartDisplay').value = '';
+            document.getElementById('pmBillingRangeEndDisplay').value = '';
+        }
+
         function previewPmBillingRound() {
             if (!currentSession) return;
+            const startDate = document.getElementById('pmBillingRangeStart').value || null;
+            const endDate = document.getElementById('pmBillingRangeEnd').value || null;
+            if ((startDate && !endDate) || (!startDate && endDate)) {
+                showAlert('error', 'กรุณาเลือกช่วงวันที่ให้ครบทั้ง 2 ช่อง หรือกด "ล้างช่วงวันที่" เพื่อดูงานทั้งหมด');
+                return;
+            }
+            pmBillingPreviewParams = { startDate, endDate };
             openPmBillingPreviewModal();
-            runServerCall('previewPmBillingCandidates', [currentSession.username, currentSession.token], function (res) {
+            runServerCall('previewPmBillingCandidates', [currentSession.username, currentSession.token, startDate, endDate], function (res) {
                 if (res && res.success) {
                     renderPmBillingPreview(res);
                 } else {
@@ -2777,12 +2816,14 @@
             confirmBtn.classList.add('opacity-60', 'cursor-not-allowed');
             textEl.textContent = 'กำลังบันทึกรอบบิล PM...';
 
-            runServerCall('confirmPmBillingRound', [currentSession.username, currentSession.token], function (res) {
+            const dates = pmBillingPreviewParams || { startDate: null, endDate: null };
+            runServerCall('confirmPmBillingRound', [currentSession.username, currentSession.token, dates.startDate, dates.endDate], function (res) {
                 confirmBtn.disabled = false;
                 confirmBtn.classList.remove('opacity-60', 'cursor-not-allowed');
                 textEl.textContent = 'ยืนยันบันทึกรอบบิล PM';
                 if (res && res.success) {
                     closePmBillingPreviewModal();
+                    pmBillingPreviewParams = null;
                     showAlert('success', res.message);
                     document.getElementById('pmBillingRoundFilter').value = '';
                     loadPmBillingDocuments();
@@ -2850,6 +2891,56 @@
                     }).join('');
                 if (res.some(r => String(r.round_no) === currentVal)) select.value = currentVal;
             }, function () {});
+        }
+
+        // ดาวน์โหลด "ใบเสนอราคา" PDF ของรอบบิล PM ที่เลือกอยู่ในตัวกรอง "กรองตามรอบบิล PM" ด้านบน
+        // (ต้องเลือกรอบใดรอบหนึ่งก่อน — เลือก "งานล่าสุดทั้งหมด" ไม่ได้ เพราะใบเสนอราคา 1 ฉบับต้องผูกกับรอบบิล 1 รอบเท่านั้น)
+        function downloadPmBillingRoundPdf_() {
+            if (!currentSession) return;
+            const roundNo = document.getElementById('pmBillingRoundFilter').value;
+            if (!roundNo) {
+                showAlert('error', 'กรุณาเลือก "กรองตามรอบบิล PM" เป็นรอบใดรอบหนึ่งก่อน แล้วจึงกดดาวน์โหลดใบเสนอราคาของรอบนั้น');
+                return;
+            }
+            const btnEl = document.getElementById('btn_downloadPmBillingPdf');
+            const originalHtml = btnEl.innerHTML;
+            btnEl.disabled = true;
+            btnEl.classList.add('opacity-60', 'cursor-not-allowed');
+            btnEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i> กำลังสร้าง...';
+
+            function resetBtn() {
+                btnEl.disabled = false;
+                btnEl.classList.remove('opacity-60', 'cursor-not-allowed');
+                btnEl.innerHTML = originalHtml;
+            }
+
+            runServerCall('downloadPmBillingRoundPdf', [currentSession.username, currentSession.token, roundNo], function (res) {
+                resetBtn();
+                if (res && res.success) {
+                    try {
+                        const byteCharacters = atob(res.base64);
+                        const byteNumbers = new Array(byteCharacters.length);
+                        for (let i = 0; i < byteCharacters.length; i++) byteNumbers[i] = byteCharacters.charCodeAt(i);
+                        const byteArray = new Uint8Array(byteNumbers);
+                        const blob = new Blob([byteArray], { type: 'application/pdf' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = res.filename || ('ใบเสนอราคา_PM_รอบ' + roundNo + '.pdf');
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                    } catch (e) {
+                        showAlert('error', 'เปิดไฟล์ PDF ล้มเหลว: ' + (e && e.message ? e.message : ''));
+                    }
+                } else {
+                    showAlert('error', (res && res.message) || 'สร้างใบเสนอราคา PM ล้มเหลว');
+                }
+            }, function (err) {
+                resetBtn();
+                showAlert('error', 'เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : 'ไม่ทราบสาเหตุ'));
+            }, 60000);
         }
 
         // มุมมอง "บิลรวม" (แอดมิน ไม่ได้เลือกผู้รับเหมาคนใดคนหนึ่ง): เลขลำดับในฐานข้อมูลรีเซ็ตใหม่ทุกผู้รับเหมา

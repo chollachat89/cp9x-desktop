@@ -401,6 +401,245 @@ async function generateBillingPdfBase64(rows: any[], isAdmin: boolean): Promise<
   }
 }
 
+// ==================== ใบเสนอราคา งาน PM (ตามแบบฟอร์ม Excel ต้นฉบับ "CRE-PM-CJ" ที่บริษัทใช้ส่งลูกค้า CJ Express ประจำ) ====================
+// แปลงตัวเลขจำนวนเงินเป็นข้อความภาษาไทย ("...บาทถ้วน") แบบมาตรฐานที่ใช้ในเอกสารบัญชีไทยทั่วไป
+function thaiBahtText(amountInput: number): string {
+  const THAI_NUMBER = ['ศูนย์', 'หนึ่ง', 'สอง', 'สาม', 'สี่', 'ห้า', 'หก', 'เจ็ด', 'แปด', 'เก้า'];
+  const THAI_DIGIT_NAME = ['', 'สิบ', 'ร้อย', 'พัน', 'หมื่น', 'แสน', 'ล้าน'];
+
+  function convertInt(numStr: string): string {
+    if (numStr === '0') return 'ศูนย์';
+    let result = '';
+    const len = numStr.length;
+    for (let i = 0; i < len; i++) {
+      const digit = parseInt(numStr.charAt(i), 10);
+      const place = len - i - 1;
+      const placeInGroup = place % 6;
+      if (digit !== 0) {
+        if (placeInGroup === 0 && digit === 1 && len > 1 && i !== 0) result += 'เอ็ด';
+        else if (placeInGroup === 1 && digit === 2) result += 'ยี่' + THAI_DIGIT_NAME[1];
+        else if (placeInGroup === 1 && digit === 1) result += THAI_DIGIT_NAME[1];
+        else result += THAI_NUMBER[digit] + THAI_DIGIT_NAME[placeInGroup];
+      }
+      if (placeInGroup === 0 && place > 0) result += 'ล้าน';
+    }
+    return result;
+  }
+
+  let amount = Math.round((parseFloat(String(amountInput)) || 0) * 100) / 100;
+  const negative = amount < 0;
+  amount = Math.abs(amount);
+  const baht = Math.floor(amount);
+  const satang = Math.round((amount - baht) * 100);
+  let text = convertInt(String(baht)) + 'บาท';
+  text += satang === 0 ? 'ถ้วน' : (convertInt(String(satang)) + 'สตางค์');
+  return (negative ? 'ลบ' : '') + text;
+}
+
+// สร้าง PDF "ใบเสนอราคา" 1 ฉบับต่อรอบบิล PM 1 รอบ โดยจำลองหน้าตาให้ตรงกับแบบฟอร์ม Excel ต้นฉบับที่บริษัทใช้ส่งลูกค้าอยู่แล้ว
+// (หัวกระดาษบริษัท / เรียน-สำเนาเรียน / ตารางรายการ Item-Description-Qty-Unit-Unit Price-Amount / สรุปยอด+VAT+จำนวนเงินตัวอักษร / เงื่อนไข+ลายเซ็น)
+// แต่ละแถวรายการ = งาน PM 1 สาขาที่บันทึกไว้ในรอบบิลนี้ — Description = รหัสสาขา + ชื่อสาขา ตามที่ตกลงกันไว้
+async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | string): Promise<any> {
+  if (!rows || rows.length === 0) return { success: false, message: 'ไม่มีข้อมูลสำหรับสร้างใบเสนอราคา' };
+  try {
+    const [regularBytes, boldBytes] = await Promise.all([
+      fetch(THAI_FONT_REGULAR_URL).then((r) => r.arrayBuffer()),
+      fetch(THAI_FONT_BOLD_URL).then((r) => r.arrayBuffer()),
+    ]);
+    const [{ PDFDocument }, fontkit] = await Promise.all([loadPdfLib(), loadFontkit()]);
+    const pdfDoc = await PDFDocument.create();
+    pdfDoc.registerFontkit(fontkit);
+    const font = await pdfDoc.embedFont(regularBytes, { subset: true });
+    const boldFont = await pdfDoc.embedFont(boldBytes, { subset: true });
+
+    const PAGE_W = 595.28, PAGE_H = 841.89; // A4 แนวตั้ง (point) — เอกสารใบเสนอราคาใช้ A4 ตามต้นฉบับ (ต่างจากตารางวางบิล CJ ที่ใช้ A3 แนวนอน)
+    const MARGIN = 36;
+    const usableWidth = PAGE_W - MARGIN * 2;
+    const BLACK = rgb(0.15, 0.15, 0.15);
+    const BORDER = rgb(0.5, 0.5, 0.5);
+
+    // เดา "เดือน/ปี" ที่จะโชว์ในบรรทัดหัวรายการ จากวันที่เข้างานแรกสุดของรอบนี้ (ถ้าไม่มีข้อมูลวันที่เลยใช้เดือนปัจจุบัน)
+    const visitDates = rows.map((r: any) => r.visit_date).filter(Boolean).sort();
+    let headerMonth = new Date().getMonth() + 1;
+    let headerYear = new Date().getFullYear();
+    if (visitDates.length > 0) {
+      const d = new Date(visitDates[0].toString().length <= 10 ? visitDates[0] + 'T00:00:00' : visitDates[0]);
+      if (!isNaN(d.getTime())) { headerMonth = d.getMonth() + 1; headerYear = d.getFullYear(); }
+    }
+
+    const lineItems = rows.map((r: any) => {
+      const qty = 1;
+      const unitPrice = parseFloat(r.price) || 0;
+      const amount = qty * unitPrice;
+      const desc = [r.branch_code, r.branch_name].filter(Boolean).join(' ').trim() || '-';
+      return { desc, qty, unit: 'Lot', unitPrice, amount };
+    });
+    const totalItem = lineItems.reduce((s: number, r: any) => s + r.amount, 0);
+    const discount = 0;
+    const netTotal = totalItem - discount;
+    const vat = netTotal * 0.07;
+    const grandTotal = netTotal + vat;
+
+    const colW_item = 30, colW_desc = 260, colW_qty = 35, colW_unit = 45, colW_price = 85;
+    const colX_item = MARGIN;
+    const colX_desc = colX_item + colW_item;
+    const colX_qty = colX_desc + colW_desc;
+    const colX_unit = colX_qty + colW_qty;
+    const colX_price = colX_unit + colW_unit;
+    const colX_amount = colX_price + colW_price;
+    const colW_amount = usableWidth - (colW_item + colW_desc + colW_qty + colW_unit + colW_price);
+    const colStops = [colX_item, colX_desc, colX_qty, colX_unit, colX_price, colX_amount, MARGIN + usableWidth];
+
+    function money(n: number): string { return (n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+
+    function drawLetterhead(page: any): number {
+      let y = PAGE_H - MARGIN;
+      pdfCenterText(page, boldFont, 'บริษัท ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด', PAGE_W / 2, y, 15, BLACK);
+      y -= 16;
+      pdfCenterText(page, font, '557-557/1 ถนน ไทยรามัญ แขวงสามวาตะวันตก เขตคลองสามวา กรุงเทพมหานคร 10510', PAGE_W / 2, y, 9, BLACK);
+      y -= 12;
+      pdfCenterText(page, font, 'โทร 089-743-7111 : เลขประจำตัวผู้เสียภาษี 0105562019441', PAGE_W / 2, y, 9, BLACK);
+      y -= 20;
+      pdfCenterText(page, boldFont, 'ใบเสนอราคา / QUOTATION', PAGE_W / 2, y, 15, BLACK);
+      y -= 10;
+      page.drawLine({ start: { x: MARGIN, y: y - 4 }, end: { x: PAGE_W - MARGIN, y: y - 4 }, thickness: 1, color: BORDER });
+      return y - 16;
+    }
+
+    function drawCustomerBlock(page: any, yStart: number): number {
+      let y = yStart;
+      const rightX = PAGE_W - MARGIN - 200;
+      page.drawText('เรียน/Attention: คุณวศิน / ที่นับถือ', { x: MARGIN, y, size: 10, font, color: BLACK });
+      page.drawText('เลขที่/No. : PM-' + roundNo, { x: rightX, y, size: 10, font, color: BLACK });
+      y -= 15;
+      page.drawText('สำเนาเรียน/CC. คุณอาร์ม / ที่นับถือ', { x: MARGIN, y, size: 10, font, color: BLACK });
+      page.drawText('วันที่ Date : ' + thaiDateString(), { x: rightX, y, size: 10, font, color: BLACK });
+      y -= 15;
+      page.drawText('ที่อยู่/Address : บริษัท ซี.เจ. เอ็กซ์เพรส กรุ๊ป จำกัด', { x: MARGIN, y, size: 10, font, color: BLACK });
+      page.drawText('TEL. : -', { x: rightX, y, size: 10, font, color: BLACK });
+      y -= 20;
+      page.drawText('ขอเสนอราคาและเงื่อนไขสำหรับท่านดังนี้', { x: MARGIN, y, size: 10, font, color: BLACK });
+      y -= 13;
+      page.drawText('We are please to submit you the following described here in at price, items and terms stated :', { x: MARGIN, y, size: 9, font, color: BLACK });
+      y -= 10;
+      return y;
+    }
+
+    const HEADER_H = 20;
+    function drawTableHeaderRow(page: any, y: number): number {
+      page.drawRectangle({ x: MARGIN, y: y - HEADER_H, width: usableWidth, height: HEADER_H, color: rgb(0.85, 0.85, 0.85) });
+      pdfDrawCellText(page, boldFont, 'Item', colX_item, y - HEADER_H + 6, colW_item, 9, BLACK, 'center');
+      pdfDrawCellText(page, boldFont, 'Description', colX_desc, y - HEADER_H + 6, colW_desc, 9, BLACK, 'center');
+      pdfDrawCellText(page, boldFont, 'Qty', colX_qty, y - HEADER_H + 6, colW_qty, 9, BLACK, 'center');
+      pdfDrawCellText(page, boldFont, 'Unit', colX_unit, y - HEADER_H + 6, colW_unit, 9, BLACK, 'center');
+      pdfDrawCellText(page, boldFont, 'Unit Price', colX_price, y - HEADER_H + 6, colW_price, 9, BLACK, 'center');
+      pdfDrawCellText(page, boldFont, 'Amount', colX_amount, y - HEADER_H + 6, colW_amount, 9, BLACK, 'center');
+      colStops.forEach((x) => { page.drawLine({ start: { x, y }, end: { x, y: y - HEADER_H }, thickness: 0.5, color: BORDER }); });
+      page.drawLine({ start: { x: MARGIN, y: y - HEADER_H }, end: { x: MARGIN + usableWidth, y: y - HEADER_H }, thickness: 0.5, color: BORDER });
+      return y - HEADER_H;
+    }
+
+    // แถวหัวรายการรวม (ไม่มีเลข/ราคา แค่คำอธิบายงานโดยรวม เหมือนแถวที่ 12 ในแบบฟอร์ม Excel ต้นฉบับ)
+    function drawGroupLabelRow(page: any, y: number): number {
+      const text = 'ค่าดำเนินการงาน Preventive Maintenance เครื่องเย็น โครงการ CJ Express ตามสัญญาบริการ ประจำเดือน ' + headerMonth + '/' + headerYear;
+      const rowH = 16;
+      page.drawText(text, { x: colX_desc, y: y - rowH + 5, size: 9, font, color: BLACK });
+      page.drawLine({ start: { x: MARGIN, y: y - rowH }, end: { x: MARGIN + usableWidth, y: y - rowH }, thickness: 0.4, color: BORDER });
+      return y - rowH;
+    }
+
+    const DATA_ROW_H = 15;
+    const rowRenderInfo = lineItems.map((item: any, idx: number) => {
+      const lines = pdfWrapText(font, item.desc, 9, colW_desc - 6);
+      const h = Math.max(DATA_ROW_H, lines.length * 11 + 4);
+      return { item, idx, lines, h };
+    });
+
+    function drawItemRow(page: any, yTop: number, info: any): void {
+      const h = info.h;
+      pdfDrawCellText(page, font, String(info.idx + 1), colX_item, yTop - h + 5, colW_item, 9, BLACK, 'center');
+      let ly = yTop - 11;
+      info.lines.forEach((line: string) => { page.drawText(line, { x: colX_desc + 3, y: ly, size: 9, font, color: BLACK }); ly -= 11; });
+      pdfDrawCellText(page, font, String(info.item.qty), colX_qty, yTop - h + 5, colW_qty, 9, BLACK, 'center');
+      pdfDrawCellText(page, font, info.item.unit, colX_unit, yTop - h + 5, colW_unit, 9, BLACK, 'center');
+      pdfDrawCellText(page, font, info.item.unitPrice ? money(info.item.unitPrice) : '', colX_price, yTop - h + 5, colW_price, 9, BLACK, 'right', 6);
+      pdfDrawCellText(page, font, info.item.amount ? money(info.item.amount) : '', colX_amount, yTop - h + 5, colW_amount, 9, BLACK, 'right', 6);
+      colStops.forEach((x) => { page.drawLine({ start: { x, y: yTop }, end: { x, y: yTop - h }, thickness: 0.4, color: BORDER }); });
+      page.drawLine({ start: { x: MARGIN, y: yTop - h }, end: { x: MARGIN + usableWidth, y: yTop - h }, thickness: 0.4, color: BORDER });
+    }
+
+    const FOOTER_RESERVE = 260; // พื้นที่กันไว้ท้ายเอกสาร สำหรับสรุปยอด+VAT+จำนวนเงินตัวอักษร+เงื่อนไขชำระเงิน+ลายเซ็น (ต้องอยู่หน้าเดียวกันทั้งหมด ไม่ตัดข้ามหน้า)
+    let page = pdfDoc.addPage([PAGE_W, PAGE_H]);
+    let y = drawLetterhead(page);
+    y = drawCustomerBlock(page, y);
+    y = drawTableHeaderRow(page, y);
+    y = drawGroupLabelRow(page, y);
+
+    let rowCursor = 0;
+    while (rowCursor < rowRenderInfo.length) {
+      const info = rowRenderInfo[rowCursor];
+      const isLastRow = rowCursor === rowRenderInfo.length - 1;
+      const neededSpace = info.h + (isLastRow ? FOOTER_RESERVE : 0);
+      if (y - neededSpace < MARGIN) {
+        page = pdfDoc.addPage([PAGE_W, PAGE_H]);
+        y = drawLetterhead(page);
+        y = drawTableHeaderRow(page, y);
+      }
+      drawItemRow(page, y, info);
+      y -= info.h;
+      rowCursor++;
+    }
+
+    // ---- บรรทัดรายการเสริมท้ายตาราง (ตามต้นฉบับ) ----
+    y -= 4;
+    page.drawText(' - ค่าน้ำ , ค่าไฟฟ้าที่ใช้ในหน่วยงาน', { x: MARGIN, y, size: 9, font, color: BLACK });
+    y -= 13;
+    page.drawText(' - รายการอื่น ๆ ที่มิได้ระบุไว้ข้างต้น', { x: MARGIN, y, size: 9, font, color: BLACK });
+    y -= 18;
+
+    // ---- สรุปยอด ----
+    const summaryLabelX = colX_price - 90;
+    function drawSummaryLine(label: string, value: string, bold = false): void {
+      const f = bold ? boldFont : font;
+      page.drawText(label, { x: summaryLabelX, y, size: 10, font: f, color: BLACK });
+      pdfDrawCellText(page, f, value, colX_amount, y, colW_amount, 10, BLACK, 'right', 6);
+      y -= 15;
+    }
+    drawSummaryLine('Total Item', money(totalItem));
+    drawSummaryLine('Special Discount', money(discount));
+    drawSummaryLine('Net Total', money(netTotal));
+    drawSummaryLine('VAT 7%', money(vat));
+    drawSummaryLine('Grand Total', money(grandTotal), true);
+    y -= 4;
+    page.drawText('(' + thaiBahtText(grandTotal) + ')', { x: MARGIN, y, size: 9, font, color: BLACK });
+    y -= 20;
+
+    // ---- เงื่อนไขชำระเงิน + ลายเซ็น ----
+    page.drawText('เงื่อนไขชำระเงิน  1)  100% ชำระเมื่อส่งมอบงาน  (เครดิต 45 วัน)', { x: MARGIN, y, size: 9, font, color: BLACK });
+    const sigX = PAGE_W - MARGIN - 200;
+    page.drawText('ขอแสดงความนับถือ', { x: sigX, y, size: 9, font, color: BLACK });
+    y -= 13;
+    page.drawText('กำหนดยืนราคา :  45 วันหลังจากในใบเสนอราคานี้', { x: MARGIN, y, size: 9, font, color: BLACK });
+    page.drawText('บริษัท  ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด', { x: sigX, y, size: 9, font, color: BLACK });
+    y -= 45;
+    page.drawText('........................................................................', { x: sigX, y, size: 9, font, color: BLACK });
+    y -= 13;
+    page.drawText('( นายเจริญ พูนน้อย )', { x: sigX + 30, y, size: 9, font, color: BLACK });
+    y -= 12;
+    page.drawText('Managing Director', { x: sigX + 30, y, size: 9, font, color: BLACK });
+    y -= 12;
+    page.drawText('089-743-7111', { x: sigX + 30, y, size: 9, font, color: BLACK });
+
+    const pdfBytes = await pdfDoc.save();
+    let binary = '';
+    for (let i = 0; i < pdfBytes.length; i++) binary += String.fromCharCode(pdfBytes[i]);
+    const base64 = btoa(binary);
+    return { success: true, base64, filename: 'ใบเสนอราคา_PM_รอบ' + roundNo + '.pdf' };
+  } catch (error) {
+    return { success: false, message: 'สร้างใบเสนอราคา PM ล้มเหลว: ' + String(error) };
+  }
+}
+
 // ==================== สร้างไฟล์ "ฟอร์มวางบิล" .xlsx ต่อเลขงาน (แทน Google Sheets แม่แบบ) ====================
 function xlsxApplyBoxStyle(ws: any, r1: number, c1: number, r2: number, c2: number) {
   for (let r = r1; r <= r2; r++) {
@@ -736,6 +975,21 @@ Deno.serve(async (req: Request) => {
     } catch (e: any) {
       return { visits: [], error: 'เชื่อมต่อระบบ PM ล้มเหลว: ' + (e && e.message ? e.message : String(e)) };
     }
+  }
+
+  // กรองงาน PM ตาม "วันที่เข้างาน" (visit_date) ช่วงที่เลือกไว้ตอนดูตัวอย่าง/ยืนยันบันทึกรอบบิล PM
+  // ใช้ร่วมกันทั้ง 2 ขั้นตอนเป๊ะๆ (เหมือน resolveBillingCandidateJobIds ของฝั่งบิล CJ) — ถ้าไม่ระบุช่วงวันที่มา ก็ไม่กรอง (คืนของเดิมทั้งหมด เหมือนพฤติกรรมเดิมก่อนมีตัวกรองนี้)
+  function filterPmVisitsByDateRange(visits: any[], startDate: string | null, endDate: string | null): any[] {
+    if (!startDate || !endDate) return visits;
+    const startD = new Date(startDate + 'T00:00:00');
+    const endD = new Date(endDate + 'T23:59:59');
+    if (isNaN(startD.getTime()) || isNaN(endD.getTime())) return visits;
+    return visits.filter((v: any) => {
+      if (!v.visit_date) return false;
+      const vd = new Date(v.visit_date.toString().length <= 10 ? v.visit_date + 'T00:00:00' : v.visit_date);
+      if (isNaN(vd.getTime())) return false;
+      return vd >= startD && vd <= endD;
+    });
   }
 
 
@@ -1272,12 +1526,16 @@ Deno.serve(async (req: Request) => {
       // แยกจากระบบวางบิล CJ เดิมทั้งหมด (คนละตาราง คนละเลขรอบบิล) ตามที่ตกลงกันไว้
       // ขั้นที่ 1: ดูตัวอย่างก่อน (อ่านอย่างเดียว ไม่เขียนอะไรลงฐานข้อมูลเลย)
       case 'previewPmBillingCandidates': {
-        const [username, token] = args;
+        const [username, token, startDate, endDate] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ทำรายการนี้ได้' });
-        const { visits, error } = await fetchPmBillableVisits();
+        if ((startDate && !endDate) || (!startDate && endDate)) {
+          return jsonResponse({ success: false, message: 'กรุณาเลือกช่วงวันที่ให้ครบทั้ง 2 ช่อง (ตั้งแต่วันที่ และ ถึงวันที่) หรือเว้นว่างทั้งคู่เพื่อดูงานทั้งหมด' });
+        }
+        const { visits: rawVisits, error } = await fetchPmBillableVisits();
         if (error) return jsonResponse({ success: false, message: error });
+        const visits = filterPmVisitsByDateRange(rawVisits, startDate || null, endDate || null);
         if (visits.length === 0) return jsonResponse({ success: true, roundPeriod: '', candidates: [], alreadyBilledCount: 0 });
         const { data: alreadyBilledData, error: alreadyBilledErr } = await supabase.from('pm_billing_documents').select('pm_visit_id');
         if (alreadyBilledErr) return jsonResponse({ success: false, message: 'ตรวจสอบรอบบิล PM เดิมล้มเหลว: ' + alreadyBilledErr.message });
@@ -1290,15 +1548,19 @@ Deno.serve(async (req: Request) => {
         return jsonResponse({ success: true, roundPeriod, candidates, alreadyBilledCount });
       }
 
-      // ขั้นที่ 2: ยืนยันบันทึกจริง - ดึงข้อมูลจากระบบ PM ใหม่อีกครั้ง (สดที่สุด) แล้วกรองซ้ำด้วยเงื่อนไขเดียวกับตอนดูตัวอย่างเป๊ะๆ
+      // ขั้นที่ 2: ยืนยันบันทึกจริง - ดึงข้อมูลจากระบบ PM ใหม่อีกครั้ง (สดที่สุด) แล้วกรองซ้ำด้วยเงื่อนไขเดียวกับตอนดูตัวอย่างเป๊ะๆ (ทั้งช่วงวันที่และรายการที่บันทึกไปแล้ว)
       case 'confirmPmBillingRound': {
-        const [username, token] = args;
+        const [username, token, startDate, endDate] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ทำรายการนี้ได้' });
-        const { visits, error } = await fetchPmBillableVisits();
+        if ((startDate && !endDate) || (!startDate && endDate)) {
+          return jsonResponse({ success: false, message: 'กรุณาเลือกช่วงวันที่ให้ครบทั้ง 2 ช่อง (ตั้งแต่วันที่ และ ถึงวันที่) หรือเว้นว่างทั้งคู่เพื่อบันทึกงานทั้งหมด' });
+        }
+        const { visits: rawVisits, error } = await fetchPmBillableVisits();
         if (error) return jsonResponse({ success: false, message: error });
-        if (visits.length === 0) return jsonResponse({ success: true, message: 'ไม่มีข้อมูลงาน PM ที่พร้อมวางบิล', created: 0, skipped: 0 });
+        const visits = filterPmVisitsByDateRange(rawVisits, startDate || null, endDate || null);
+        if (visits.length === 0) return jsonResponse({ success: true, message: 'ไม่มีข้อมูลงาน PM ที่พร้อมวางบิลในช่วงที่เลือก', created: 0, skipped: 0 });
         const { data: alreadyBilledData, error: alreadyBilledErr } = await supabase.from('pm_billing_documents').select('pm_visit_id');
         if (alreadyBilledErr) return jsonResponse({ success: false, message: 'ตรวจสอบรอบบิล PM เดิมล้มเหลว: ' + alreadyBilledErr.message });
         const alreadyBilledSet = new Set((alreadyBilledData || []).map((r: any) => r.pm_visit_id));
@@ -1373,6 +1635,20 @@ Deno.serve(async (req: Request) => {
         const { error } = await supabase.from('pm_billing_documents').update(clean).eq('id', id);
         if (error) return jsonResponse({ success: false, message: error.message });
         return jsonResponse({ success: true });
+      }
+
+      // ดาวน์โหลด "ใบเสนอราคา" PDF ของรอบบิล PM รอบใดรอบหนึ่ง (ตามแบบฟอร์ม Excel ต้นฉบับ) — เฉพาะแอดมิน เพราะเป็นเอกสารที่จะส่งให้ลูกค้าโดยตรง
+      case 'downloadPmBillingRoundPdf': {
+        const [username, token, roundNo] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ดาวน์โหลดใบเสนอราคาได้' });
+        if (roundNo === undefined || roundNo === null || roundNo === '') return jsonResponse({ success: false, message: 'กรุณาเลือกรอบบิล PM ที่ต้องการดาวน์โหลดก่อน' });
+        const { data, error } = await supabase.from('pm_billing_documents').select('*').eq('round_no', roundNo).order('seq', { ascending: true });
+        if (error) return jsonResponse({ success: false, message: 'ดึงข้อมูลรอบบิล PM ล้มเหลว: ' + error.message });
+        if (!data || data.length === 0) return jsonResponse({ success: false, message: 'ไม่พบข้อมูลของรอบบิล PM นี้' });
+        const pdfResult = await generatePmQuotationPdfBase64(data, roundNo);
+        return jsonResponse(pdfResult);
       }
 
       case 'fixBillingSeqNumbers': {
