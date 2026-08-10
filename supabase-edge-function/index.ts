@@ -34,6 +34,13 @@ const corsHeaders = {
 const AUTH_SALT = 'CR-MAINT-SYSTEM-SALT-2026';
 const NOT_SUPPORTED_PREFIX = 'ฟังก์ชันนี้ต้องใช้ Google API (Docs/Sheets/Drive) ซึ่งยังไม่รองรับในเวอร์ชัน Supabase นี้: ';
 
+// ==================== เชื่อมกับระบบ PM (คนละโปรเจกต์ Supabase กัน: ucxzsfiktqswabxfnojr) ====================
+// ดึงข้อมูลงาน PM ที่พร้อมวางบิลมาแสดงในเมนู "PM" — ทางเดียว (PM -> CP9X อ่านอย่างเดียว ไม่เขียนอะไรกลับไปที่ฝั่ง PM เลย)
+// ใช้ shared secret (x-api-key) แทน JWT เพราะเป็นการเรียกข้ามโปรเจกต์ - ต้องตรงกับค่าที่ตั้งไว้ใน Edge Function
+// "pm-billing-export" ฝั่งโปรเจกต์ PM เป๊ะๆ (ถ้าจะเปลี่ยน secret ต้องแก้ทั้ง 2 ฝั่งพร้อมกัน)
+const PM_EXPORT_URL = 'https://ucxzsfiktqswabxfnojr.supabase.co/functions/v1/pm-billing-export';
+const PM_EXPORT_SECRET = 'bec97b11ee0f19b59a176c30708ec9c978fe185b455af34bdea8f24df3ef67eb';
+
 async function hashPassword(password: string): Promise<string> {
   const data = new TextEncoder().encode(AUTH_SALT + password);
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
@@ -712,6 +719,25 @@ Deno.serve(async (req: Request) => {
     return { candidateJobIds, roundPeriod };
   }
 
+  // ดึงรายการงาน PM ที่ "พร้อมวางบิล" จากระบบ PM (คนละโปรเจกต์ Supabase) มาทั้งหมด
+  // ใช้ร่วมกันทั้งตอน "ดูตัวอย่าง" (previewPmBillingCandidates) และตอน "ยืนยันบันทึกรอบบิล" (confirmPmBillingRound)
+  // เพื่อให้ผลลัพธ์ตรงกันเป๊ะทั้งสองขั้น (เหมือน resolveBillingCandidateJobIds ของฝั่งบิล CJ)
+  async function fetchPmBillableVisits(): Promise<{ visits: any[]; error?: string }> {
+    try {
+      const res = await fetch(PM_EXPORT_URL, {
+        method: 'POST',
+        headers: { 'x-api-key': PM_EXPORT_SECRET, 'Content-Type': 'application/json' },
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || data.success !== true) {
+        return { visits: [], error: 'เชื่อมต่อระบบ PM ล้มเหลว: ' + (data && data.message ? data.message : ('HTTP ' + res.status)) };
+      }
+      return { visits: data.visits || [] };
+    } catch (e: any) {
+      return { visits: [], error: 'เชื่อมต่อระบบ PM ล้มเหลว: ' + (e && e.message ? e.message : String(e)) };
+    }
+  }
+
 
   // คำนวณแถวรายงานสถานะดำเนินการ (ใช้ร่วมกันทั้ง fnName 'getJobStatusReport' และตอนซิงค์ลง Google Sheet
   // เพื่อให้ตรรกะสถานะ/ระยะเวลา/ข้อมูลพักงาน ตรงกันเป๊ะทั้งสองที่ ไม่มีวันเพี้ยนต่างกัน)
@@ -1240,6 +1266,113 @@ Deno.serve(async (req: Request) => {
         }
         const message = 'สร้างสำเร็จ ' + claimedJobIds.length + ' เลขงาน (รอบบิลที่ ' + roundNo + ')' + (skippedAlreadyClaimed > 0 ? ' | ข้าม ' + skippedAlreadyClaimed + ' เลขงานที่มีบิลอยู่แล้ว' : '');
         return jsonResponse({ success: true, message, created: claimedJobIds.length, skipped: skippedAlreadyClaimed, matchedJobIds: claimedJobIds, roundNo });
+      }
+
+      // ==================== เมนู "PM" — วางบิลงาน Preventive Maintenance (ดึงจากระบบ PM คนละโปรเจกต์ Supabase) ====================
+      // แยกจากระบบวางบิล CJ เดิมทั้งหมด (คนละตาราง คนละเลขรอบบิล) ตามที่ตกลงกันไว้
+      // ขั้นที่ 1: ดูตัวอย่างก่อน (อ่านอย่างเดียว ไม่เขียนอะไรลงฐานข้อมูลเลย)
+      case 'previewPmBillingCandidates': {
+        const [username, token] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ทำรายการนี้ได้' });
+        const { visits, error } = await fetchPmBillableVisits();
+        if (error) return jsonResponse({ success: false, message: error });
+        if (visits.length === 0) return jsonResponse({ success: true, roundPeriod: '', candidates: [], alreadyBilledCount: 0 });
+        const { data: alreadyBilledData, error: alreadyBilledErr } = await supabase.from('pm_billing_documents').select('pm_visit_id');
+        if (alreadyBilledErr) return jsonResponse({ success: false, message: 'ตรวจสอบรอบบิล PM เดิมล้มเหลว: ' + alreadyBilledErr.message });
+        const alreadyBilledSet = new Set((alreadyBilledData || []).map((r: any) => r.pm_visit_id));
+        const candidates = visits.filter((v: any) => !alreadyBilledSet.has(v.pm_visit_id));
+        const alreadyBilledCount = visits.length - candidates.length;
+        if (candidates.length === 0) return jsonResponse({ success: true, roundPeriod: '', candidates: [], alreadyBilledCount });
+        const dates = candidates.map((c: any) => c.visit_date).filter(Boolean).sort();
+        const roundPeriod = dates.length ? (dates[0] + ' ถึง ' + dates[dates.length - 1]) : ('PM รอบ ' + new Date().toISOString().slice(0, 10));
+        return jsonResponse({ success: true, roundPeriod, candidates, alreadyBilledCount });
+      }
+
+      // ขั้นที่ 2: ยืนยันบันทึกจริง - ดึงข้อมูลจากระบบ PM ใหม่อีกครั้ง (สดที่สุด) แล้วกรองซ้ำด้วยเงื่อนไขเดียวกับตอนดูตัวอย่างเป๊ะๆ
+      case 'confirmPmBillingRound': {
+        const [username, token] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ทำรายการนี้ได้' });
+        const { visits, error } = await fetchPmBillableVisits();
+        if (error) return jsonResponse({ success: false, message: error });
+        if (visits.length === 0) return jsonResponse({ success: true, message: 'ไม่มีข้อมูลงาน PM ที่พร้อมวางบิล', created: 0, skipped: 0 });
+        const { data: alreadyBilledData, error: alreadyBilledErr } = await supabase.from('pm_billing_documents').select('pm_visit_id');
+        if (alreadyBilledErr) return jsonResponse({ success: false, message: 'ตรวจสอบรอบบิล PM เดิมล้มเหลว: ' + alreadyBilledErr.message });
+        const alreadyBilledSet = new Set((alreadyBilledData || []).map((r: any) => r.pm_visit_id));
+        const newVisits = visits.filter((v: any) => !alreadyBilledSet.has(v.pm_visit_id));
+        if (newVisits.length === 0) {
+          return jsonResponse({ success: true, message: 'ไม่มีงาน PM ใหม่ให้บันทึก (ทั้งหมดถูกบันทึกรอบบิลไปแล้ว/มีแอดมินคนอื่นเพิ่งบันทึกไปพร้อมกัน)', created: 0, skipped: visits.length });
+        }
+        const dates = newVisits.map((v: any) => v.visit_date).filter(Boolean).sort();
+        const roundPeriod = dates.length ? (dates[0] + ' ถึง ' + dates[dates.length - 1]) : ('PM รอบ ' + new Date().toISOString().slice(0, 10));
+        const { data: roundNoData, error: roundNoErr } = await supabase.rpc('next_pm_billing_round_no');
+        if (roundNoErr) return jsonResponse({ success: false, message: 'ขอเลขรอบบิล PM ล้มเหลว: ' + roundNoErr.message + ' (ตรวจสอบว่ารัน add-pm-billing-table.sql แล้วหรือยัง)' });
+        const roundNo = roundNoData as number;
+        const rowsToInsert = newVisits.map((v: any, idx: number) => ({
+          pm_visit_id: v.pm_visit_id, round_no: roundNo, round_period: roundPeriod, seq: idx + 1,
+          job_code: v.job_code || null, branch_code: v.branch_code || null, branch_name: v.branch_name || null,
+          contractor: v.contractor_name || null, technician: v.technician_name || null,
+          cycle_year: v.cycle_year || null, quarter: v.quarter || null, visit_date: v.visit_date || null,
+          price: (v.price !== undefined && v.price !== null) ? v.price : null, due_date: v.due_date || null,
+          work_done: v.work_done || null, remark: v.remark || null, synced_to_sheet: false,
+        }));
+        const { error: insertErr } = await supabase.from('pm_billing_documents').insert(rowsToInsert);
+        if (insertErr) {
+          // เลขงาน PM ซ้ำ (มีแอดมินคนอื่นกดบันทึกพร้อมกันเสี้ยววินาทีเดียวกัน) - unique constraint บน pm_visit_id กันไว้ให้แล้ว
+          const isDup = insertErr.code === '23505' || /duplicate key/i.test(insertErr.message || '');
+          return jsonResponse({ success: false, message: isDup ? 'มีงาน PM บางรายการถูกบันทึกรอบบิลไปแล้วพอดี (อาจมีแอดมินคนอื่นกดพร้อมกัน) กรุณากด "ดูตัวอย่าง" ใหม่อีกครั้ง' : ('บันทึกรอบบิล PM ล้มเหลว: ' + insertErr.message) });
+        }
+        const message = 'บันทึกรอบบิล PM สำเร็จ ' + newVisits.length + ' รายการ (รอบบิลที่ ' + roundNo + ')';
+        return jsonResponse({ success: true, message, created: newVisits.length, skipped: visits.length - newVisits.length, roundNo });
+      }
+
+      case 'getPmBillingDocuments': {
+        const [username, token, roundNo] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        let q = supabase.from('pm_billing_documents').select('*');
+        if (roundNo !== null && roundNo !== undefined && roundNo !== '') {
+          q = q.eq('round_no', roundNo).order('seq', { ascending: true });
+        } else {
+          q = q.order('round_no', { ascending: false }).order('seq', { ascending: true }).limit(2000);
+        }
+        const { data, error } = await q;
+        if (error) return jsonResponse({ success: false, message: error.message });
+        return jsonResponse(data || []);
+      }
+
+      case 'getPmBillingRoundOptions': {
+        const [username, token] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        const { data, error } = await supabase.from('pm_billing_documents').select('round_no,round_period').not('round_no', 'is', null);
+        if (error) return jsonResponse({ success: false, message: error.message });
+        const seen = new Set(); const options: any[] = [];
+        (data || []).forEach((r: any) => { if (seen.has(r.round_no)) return; seen.add(r.round_no); options.push({ round_no: r.round_no, round_period: r.round_period || '' }); });
+        options.sort((a: any, b: any) => b.round_no - a.round_no);
+        return jsonResponse(options);
+      }
+
+      // แก้ไขราคา/ข้อมูลรายแถวได้ภายหลัง (ข้อมูลราคาจากต้นทางระบบ PM ยังกรอกไม่ครบทุกสาขา - ให้แอดมิน CP9X เติม/แก้ราคาตรงนี้ได้)
+      case 'updatePmBillingRow': {
+        const [username, token, id, fields] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่แก้ไขข้อมูลได้' });
+        const clean: any = {};
+        Object.keys(fields || {}).forEach((key) => {
+          if (key === 'price') {
+            clean.price = (fields.price === '' || fields.price === null || fields.price === undefined) ? null : parseFloat(fields.price);
+          } else if (['contractor', 'technician', 'remark'].includes(key)) {
+            clean[key] = fields[key] === '' ? null : fields[key];
+          }
+        });
+        const { error } = await supabase.from('pm_billing_documents').update(clean).eq('id', id);
+        if (error) return jsonResponse({ success: false, message: error.message });
+        return jsonResponse({ success: true });
       }
 
       case 'fixBillingSeqNumbers': {

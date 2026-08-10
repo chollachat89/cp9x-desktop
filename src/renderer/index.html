@@ -137,6 +137,9 @@
             <button id="tabBilling" onclick="switchMode('billing')" class="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-left transition-colors">
                 <i class="fa-solid fa-receipt w-5 text-center"></i> <span>ตารางวางบิล</span>
             </button>
+            <button id="tabPM" onclick="switchMode('pm')" class="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-left transition-colors">
+                <i class="fa-solid fa-screwdriver-wrench w-5 text-center"></i> <span>PM</span>
+            </button>
             <button id="tabJobForms" onclick="switchMode('jobforms')" class="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-left transition-colors relative">
                 <i class="fa-solid fa-file-arrow-up w-5 text-center"></i> <span>ฟอร์มวางบิล</span>
                 <span id="jobFormsBadge" class="hidden absolute right-3 top-1/2 -translate-y-1/2 bg-red-600 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">0</span>
@@ -846,6 +849,103 @@
                         </thead>
                         <tbody id="statusReportBody"></tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== โหมด PM (วางบิลงาน Preventive Maintenance - ดึงข้อมูลจากระบบ PM คนละโปรเจกต์ Supabase) ==================== -->
+        <div id="sectionPM" class="hidden fade-in">
+            <div class="p-6">
+                <div class="flex flex-wrap justify-between items-center mb-4 gap-3">
+                    <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-screwdriver-wrench mr-2"></i> วางบิลงาน PM</h3>
+                    <div class="flex gap-2 flex-wrap">
+                        <button type="button" onclick="previewPmBillingRound()" id="btn_previewPmBilling" class="bg-blood-600 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-blood-700 transition-colors">
+                            <i class="fa-solid fa-magnifying-glass mr-1"></i> ดูตัวอย่างก่อนบันทึกรอบบิล PM
+                        </button>
+                        <button type="button" onclick="loadPmBillingDocuments()" class="bg-slate-700 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-800 transition-colors">
+                            <i class="fa-solid fa-rotate mr-1"></i> โหลด/รีเฟรชข้อมูล
+                        </button>
+                    </div>
+                </div>
+                <p class="text-xs text-slate-400 mb-3">
+                    ดึงข้อมูลงาน PM ที่ "เสร็จเรียบร้อย + แอดมินยืนยันแล้ว" มาจากระบบ PM โดยตรงแบบสดๆ ทุกครั้งที่กดดูตัวอย่าง — งานที่เคยบันทึกรอบบิลไปแล้วจะไม่ถูกดึงมาซ้ำ (แยกรอบบิล/ตารางจากระบบวางบิล CJ โดยสิ้นเชิง)
+                </p>
+
+                <div class="flex flex-wrap items-end gap-3 mb-3 p-3 bg-blood-50 border border-blood-200 border-dashed rounded-xl">
+                    <div>
+                        <label class="block text-slate-700 text-xs font-semibold mb-1">กรองตามรอบบิล PM</label>
+                        <select id="pmBillingRoundFilter" onchange="loadPmBillingDocuments()" class="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white min-w-[220px]">
+                            <option value="">-- งานล่าสุดทั้งหมด --</option>
+                        </select>
+                    </div>
+                </div>
+
+                <p id="pmBillingStatus" class="text-sm text-slate-400 mb-3">กดปุ่ม "โหลด/รีเฟรชข้อมูล" เพื่อดึงรายการรอบบิล PM ที่เคยบันทึกไว้มาแสดง</p>
+                <div class="overflow-x-auto border border-slate-200 rounded-xl">
+                    <table class="w-full text-xs" id="pmBillingTable">
+                        <thead class="bg-slate-100 text-slate-600">
+                            <tr>
+                                <th class="p-2 text-left font-semibold whitespace-nowrap">รอบบิลที่</th>
+                                <th class="p-2 text-left font-semibold whitespace-nowrap">สาขา</th>
+                                <th class="p-2 text-left font-semibold whitespace-nowrap">ผู้รับเหมา</th>
+                                <th class="p-2 text-left font-semibold whitespace-nowrap">ช่างเข้างาน</th>
+                                <th class="p-2 text-left font-semibold whitespace-nowrap">รอบ PM</th>
+                                <th class="p-2 text-left font-semibold whitespace-nowrap">วันที่เข้างาน</th>
+                                <th class="p-2 text-left font-semibold whitespace-nowrap">ราคา</th>
+                                <th class="p-2 text-left font-semibold whitespace-nowrap">หมายเหตุ</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pmBillingBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal ดูตัวอย่างก่อนบันทึกรอบบิล PM (ขั้นที่ 1: ดูอย่างเดียว ไม่บันทึกอะไรเข้าระบบ) -->
+        <div id="pmBillingPreviewModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] overflow-y-auto">
+                <div class="flex items-center justify-between p-5 border-b border-slate-200 sticky top-0 bg-white z-10">
+                    <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-magnifying-glass mr-2 text-blood-600"></i>ดูตัวอย่างก่อนบันทึกรอบบิล PM</h3>
+                    <button type="button" onclick="closePmBillingPreviewModal()" class="text-slate-400 hover:text-slate-700 text-xl leading-none">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+                <div class="p-5">
+                    <p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3">
+                        <i class="fa-solid fa-circle-info mr-1"></i> นี่เป็นแค่การดูตัวอย่างเท่านั้น <b>ยังไม่มีการบันทึกข้อมูลใดๆ เข้าระบบ</b> — ราคาบางรายการอาจว่าง (ข้อมูลจากระบบ PM ยังกรอกราคาไม่ครบ) แก้ไขราคาได้ภายหลังจากตารางหลังบันทึกแล้ว
+                    </p>
+                    <div id="pmPreviewLoading" class="text-center text-slate-400 text-sm py-8">กำลังตรวจสอบข้อมูล...</div>
+                    <div id="pmPreviewEmpty" class="hidden text-center text-slate-400 text-sm py-8">ไม่พบงาน PM ใหม่ที่ยังไม่เคยบันทึกรอบบิล</div>
+                    <div id="pmPreviewContent" class="hidden">
+                        <div class="flex flex-wrap gap-3 mb-3 text-xs">
+                            <span class="font-semibold px-3 py-1.5 rounded-full bg-blood-100 text-blood-700">ช่วงรอบบิล: <span id="pmPreviewRoundPeriod">-</span></span>
+                            <span class="font-semibold px-3 py-1.5 rounded-full bg-emerald-100 text-emerald-700">งานใหม่ที่จะบันทึก: <span id="pmPreviewNewCount">0</span> รายการ</span>
+                            <span id="pmPreviewAlreadyBadge" class="hidden font-semibold px-3 py-1.5 rounded-full bg-slate-100 text-slate-500">บันทึกไปแล้วก่อนหน้านี้ (ข้ามอัตโนมัติ): <span id="pmPreviewAlreadyCount">0</span> รายการ</span>
+                        </div>
+                        <div class="overflow-x-auto border border-slate-200 rounded-xl">
+                            <table class="w-full text-xs border-collapse">
+                                <thead>
+                                    <tr class="bg-slate-100 text-slate-600">
+                                        <th class="p-2 text-left border-b border-slate-200">สาขา</th>
+                                        <th class="p-2 text-left border-b border-slate-200">ผู้รับเหมา</th>
+                                        <th class="p-2 text-left border-b border-slate-200">ช่างเข้างาน</th>
+                                        <th class="p-2 text-left border-b border-slate-200">รอบ PM</th>
+                                        <th class="p-2 text-left border-b border-slate-200">วันที่เข้างาน</th>
+                                        <th class="p-2 text-left border-b border-slate-200">ราคา</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="pmPreviewTbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-3 p-5 border-t border-slate-200 bg-slate-50 rounded-b-2xl sticky bottom-0">
+                    <button type="button" onclick="closePmBillingPreviewModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2.5 px-6 rounded-xl hover:bg-slate-100 transition-colors">
+                        ยกเลิก
+                    </button>
+                    <button type="button" id="btn_confirmPmBillingRound" onclick="confirmPmBillingRound()" class="bg-blood-700 text-white font-semibold py-2.5 px-6 rounded-xl hover:bg-blood-800 transition-colors flex items-center gap-2">
+                        <i class="fa-solid fa-check"></i> <span id="text_confirmPmBillingRound">ยืนยันบันทึกรอบบิล PM</span>
+                    </button>
                 </div>
             </div>
         </div>
@@ -1734,8 +1834,8 @@
 
         function switchMode(mode) {
             currentMode = mode;
-            const tabs = { open: document.getElementById('tabOpen'), close: document.getElementById('tabClose'), pause: document.getElementById('tabPause'), billing: document.getElementById('tabBilling'), jobforms: document.getElementById('tabJobForms'), openlist: document.getElementById('tabOpenList'), closelist: document.getElementById('tabCloseList'), statusreport: document.getElementById('tabStatusReport'), submissions: document.getElementById('tabSubmissions'), completed: document.getElementById('tabCompleted') };
-            const sections = { open: document.getElementById('sectionOpen'), close: document.getElementById('sectionClose'), pause: document.getElementById('sectionPause'), billing: document.getElementById('sectionBilling'), jobforms: document.getElementById('sectionJobForms'), openlist: document.getElementById('sectionOpenList'), closelist: document.getElementById('sectionCloseList'), statusreport: document.getElementById('sectionStatusReport'), submissions: document.getElementById('sectionSubmissions'), completed: document.getElementById('sectionCompleted') };
+            const tabs = { open: document.getElementById('tabOpen'), close: document.getElementById('tabClose'), pause: document.getElementById('tabPause'), billing: document.getElementById('tabBilling'), pm: document.getElementById('tabPM'), jobforms: document.getElementById('tabJobForms'), openlist: document.getElementById('tabOpenList'), closelist: document.getElementById('tabCloseList'), statusreport: document.getElementById('tabStatusReport'), submissions: document.getElementById('tabSubmissions'), completed: document.getElementById('tabCompleted') };
+            const sections = { open: document.getElementById('sectionOpen'), close: document.getElementById('sectionClose'), pause: document.getElementById('sectionPause'), billing: document.getElementById('sectionBilling'), pm: document.getElementById('sectionPM'), jobforms: document.getElementById('sectionJobForms'), openlist: document.getElementById('sectionOpenList'), closelist: document.getElementById('sectionCloseList'), statusreport: document.getElementById('sectionStatusReport'), submissions: document.getElementById('sectionSubmissions'), completed: document.getElementById('sectionCompleted') };
 
             document.getElementById('alertBox').classList.add('hidden');
             closeSidebarOnMobile(); // เลือกเมนูแล้วปิด sidebar อัตโนมัติบนมือถือ
@@ -1752,6 +1852,10 @@
 
             if (mode === 'billing' && currentBillingData.length === 0 && currentSession && currentSession.role !== 'admin') {
                 loadBillingDocuments(); // ผู้รับเหมา: โหลดบิลของตัวเองให้ทันที ไม่ต้องเลือกอะไรก่อน
+            }
+            if (mode === 'pm' && currentPmBillingData.length === 0) {
+                loadPmBillingDocuments(); // เปิดแท็บนี้ทีไร โหลดรายการที่เคยบันทึกรอบบิล PM ไว้แล้วให้ทันที
+                refreshPmBillingRoundOptions();
             }
             if (mode === 'jobforms') {
                 loadJobFormsTab(); // เปิดแท็บนี้ทีไร โหลดสถานะล่าสุดใหม่เสมอ (งานที่ตีกลับมาจะโผล่กลับมาให้เห็นทันที)
@@ -2576,6 +2680,174 @@
                         return `<option value="${r.round_no}">${label}</option>`;
                     }).join('');
 
+                if (res.some(r => String(r.round_no) === currentVal)) select.value = currentVal;
+            }, function () {});
+        }
+
+        // ==================== เมนู "PM" — วางบิลงาน Preventive Maintenance (ดึงข้อมูลจากระบบ PM คนละโปรเจกต์ Supabase) ====================
+        // แยกจากระบบวางบิล CJ โดยสิ้นเชิง (คนละตาราง คนละเลขรอบบิล) — ใช้ pattern ดูตัวอย่างก่อน/ยืนยันบันทึกแบบเดียวกับ CJ
+        let currentPmBillingData = [];
+
+        function formatMoneyTh(n) {
+            if (n === null || n === undefined || n === '') return '-';
+            const num = parseFloat(n);
+            if (isNaN(num)) return '-';
+            return num.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        function pmQuarterLabel(row) {
+            if (!row.quarter && !row.cycle_year) return '-';
+            return 'Q' + (row.quarter || '-') + '/' + (row.cycle_year || '-');
+        }
+
+        function previewPmBillingRound() {
+            if (!currentSession) return;
+            openPmBillingPreviewModal();
+            runServerCall('previewPmBillingCandidates', [currentSession.username, currentSession.token], function (res) {
+                if (res && res.success) {
+                    renderPmBillingPreview(res);
+                } else {
+                    closePmBillingPreviewModal();
+                    showAlert('error', (res && res.message) || 'ดูตัวอย่างข้อมูล PM ล้มเหลว');
+                }
+            }, function (err) {
+                closePmBillingPreviewModal();
+                showAlert('error', 'เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : 'ไม่ทราบสาเหตุ'));
+            }, 60000);
+        }
+
+        function openPmBillingPreviewModal() {
+            document.getElementById('pmBillingPreviewModal').classList.remove('hidden');
+            document.getElementById('pmPreviewLoading').classList.remove('hidden');
+            document.getElementById('pmPreviewEmpty').classList.add('hidden');
+            document.getElementById('pmPreviewContent').classList.add('hidden');
+            document.getElementById('btn_confirmPmBillingRound').classList.add('hidden');
+        }
+
+        function closePmBillingPreviewModal() {
+            document.getElementById('pmBillingPreviewModal').classList.add('hidden');
+        }
+
+        function renderPmBillingPreview(res) {
+            document.getElementById('pmPreviewLoading').classList.add('hidden');
+            const candidates = res.candidates || [];
+            const confirmBtn = document.getElementById('btn_confirmPmBillingRound');
+
+            if (candidates.length === 0) {
+                document.getElementById('pmPreviewEmpty').classList.remove('hidden');
+                confirmBtn.classList.add('hidden');
+                return;
+            }
+
+            document.getElementById('pmPreviewContent').classList.remove('hidden');
+            confirmBtn.classList.remove('hidden');
+            confirmBtn.disabled = false;
+            confirmBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+
+            document.getElementById('pmPreviewRoundPeriod').textContent = res.roundPeriod || '-';
+            document.getElementById('pmPreviewNewCount').textContent = candidates.length;
+
+            const alreadyCount = res.alreadyBilledCount || 0;
+            const alreadyBadge = document.getElementById('pmPreviewAlreadyBadge');
+            if (alreadyCount > 0) {
+                alreadyBadge.classList.remove('hidden');
+                document.getElementById('pmPreviewAlreadyCount').textContent = alreadyCount;
+            } else {
+                alreadyBadge.classList.add('hidden');
+            }
+
+            document.getElementById('pmPreviewTbody').innerHTML = candidates.map(c => {
+                return `<tr class="border-t border-slate-100">
+                    <td class="p-2">${c.branch_name || c.branch_code || ''}</td>
+                    <td class="p-2">${c.contractor_name || '-'}</td>
+                    <td class="p-2">${c.technician_name || '-'}</td>
+                    <td class="p-2">${pmQuarterLabel(c)}</td>
+                    <td class="p-2">${c.visit_date || '-'}</td>
+                    <td class="p-2">${formatMoneyTh(c.price)}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        // ขั้นที่ 2: ยืนยันจริง - เซิร์ฟเวอร์จะไปดึงข้อมูล PM สดอีกครั้งเองแล้วกรองซ้ำด้วยเงื่อนไขเดียวกับตอนดูตัวอย่าง
+        function confirmPmBillingRound() {
+            const confirmBtn = document.getElementById('btn_confirmPmBillingRound');
+            const textEl = document.getElementById('text_confirmPmBillingRound');
+
+            confirmBtn.disabled = true;
+            confirmBtn.classList.add('opacity-60', 'cursor-not-allowed');
+            textEl.textContent = 'กำลังบันทึกรอบบิล PM...';
+
+            runServerCall('confirmPmBillingRound', [currentSession.username, currentSession.token], function (res) {
+                confirmBtn.disabled = false;
+                confirmBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+                textEl.textContent = 'ยืนยันบันทึกรอบบิล PM';
+                if (res && res.success) {
+                    closePmBillingPreviewModal();
+                    showAlert('success', res.message);
+                    document.getElementById('pmBillingRoundFilter').value = '';
+                    loadPmBillingDocuments();
+                    refreshPmBillingRoundOptions();
+                } else {
+                    showAlert('error', (res && res.message) || 'บันทึกรอบบิล PM ล้มเหลว');
+                }
+            }, function (err) {
+                confirmBtn.disabled = false;
+                confirmBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+                textEl.textContent = 'ยืนยันบันทึกรอบบิล PM';
+                showAlert('error', 'เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : 'ไม่ทราบสาเหตุ'));
+            }, 60000);
+        }
+
+        function loadPmBillingDocuments() {
+            if (!currentSession) return;
+            const statusEl = document.getElementById('pmBillingStatus');
+            const roundFilter = document.getElementById('pmBillingRoundFilter').value || null;
+            statusEl.textContent = 'กำลังโหลดข้อมูล...';
+            statusEl.className = 'text-sm text-slate-400 mb-3';
+
+            runServerCall('getPmBillingDocuments', [currentSession.username, currentSession.token, roundFilter], function (res) {
+                if (Array.isArray(res)) {
+                    currentPmBillingData = res;
+                    renderPmBillingTable(res);
+                    statusEl.textContent = res.length === 0 ? 'ยังไม่มีข้อมูลรอบบิล PM' : ('พบ ' + res.length + ' รายการ');
+                    statusEl.className = 'text-sm text-slate-400 mb-3';
+                } else {
+                    statusEl.textContent = (res && res.message) || 'โหลดข้อมูลล้มเหลว';
+                    statusEl.className = 'text-sm text-red-500 mb-3';
+                }
+            }, function (err) {
+                statusEl.textContent = 'เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : '');
+                statusEl.className = 'text-sm text-red-500 mb-3';
+            });
+        }
+
+        function renderPmBillingTable(rows) {
+            document.getElementById('pmBillingBody').innerHTML = rows.map(r => {
+                return `<tr class="border-t border-slate-100">
+                    <td class="p-2 whitespace-nowrap">${r.round_no !== null && r.round_no !== undefined ? r.round_no : '-'}</td>
+                    <td class="p-2 whitespace-nowrap">${r.branch_name || r.branch_code || ''}</td>
+                    <td class="p-2 whitespace-nowrap">${r.contractor || '-'}</td>
+                    <td class="p-2 whitespace-nowrap">${r.technician || '-'}</td>
+                    <td class="p-2 whitespace-nowrap">${pmQuarterLabel(r)}</td>
+                    <td class="p-2 whitespace-nowrap">${r.visit_date || '-'}</td>
+                    <td class="p-2 whitespace-nowrap">${formatMoneyTh(r.price)}</td>
+                    <td class="p-2 whitespace-nowrap">${r.remark || ''}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        function refreshPmBillingRoundOptions() {
+            if (!currentSession) return;
+            runServerCall('getPmBillingRoundOptions', [currentSession.username, currentSession.token], function (res) {
+                if (!Array.isArray(res)) return;
+                const select = document.getElementById('pmBillingRoundFilter');
+                if (!select) return;
+                const currentVal = select.value;
+                select.innerHTML = '<option value="">-- งานล่าสุดทั้งหมด --</option>' +
+                    res.map(r => {
+                        const label = 'รอบที่ ' + r.round_no + (r.round_period ? ' (' + r.round_period + ')' : '');
+                        return `<option value="${r.round_no}">${label}</option>`;
+                    }).join('');
                 if (res.some(r => String(r.round_no) === currentVal)) select.value = currentVal;
             }, function () {});
         }
