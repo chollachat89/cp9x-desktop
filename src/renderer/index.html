@@ -868,15 +868,18 @@
                         <button type="button" onclick="downloadPmBillingRoundPdf_()" id="btn_downloadPmBillingPdf" class="bg-slate-800 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-900 transition-colors">
                             <i class="fa-solid fa-file-pdf mr-1"></i> ดาวน์โหลดใบเสนอราคา (PDF)
                         </button>
+                        <button type="button" onclick="openPmAddLineItemModal()" id="btn_openPmAddLineItem" class="bg-emerald-600 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-emerald-700 transition-colors">
+                            <i class="fa-solid fa-plus mr-1"></i> เพิ่มรายการเอง
+                        </button>
                     </div>
                 </div>
                 <p class="text-xs text-slate-400 mb-3">
-                    ดึงข้อมูลงาน PM ที่ "เสร็จเรียบร้อย + แอดมินยืนยันแล้ว" มาจากระบบ PM โดยตรงแบบสดๆ ทุกครั้งที่กดดูตัวอย่าง — งานที่เคยบันทึกรอบบิลไปแล้วจะไม่ถูกดึงมาซ้ำ (แยกรอบบิล/ตารางจากระบบวางบิล CJ โดยสิ้นเชิง)
+                    ดึงข้อมูลงาน PM ที่ "เสร็จเรียบร้อย + แอดมินยืนยันแล้ว" มาจากระบบ PM โดยตรงแบบสดๆ ทุกครั้งที่กดดูตัวอย่าง — งานที่เคยบันทึกรอบบิลไปแล้วจะไม่ถูกดึงมาซ้ำ (แยกรอบบิล/ตารางจากระบบวางบิล CJ โดยสิ้นเชิง) — <b>ต้องเลือกช่วงวันที่ปิดงานก่อนเสมอ ไม่งั้นจะไม่แสดงรายการอะไรเลย</b>
                 </p>
 
                 <div class="flex flex-wrap items-end gap-3 mb-3 p-3 bg-blood-50 border border-blood-200 border-dashed rounded-xl">
                     <div>
-                        <label class="block text-slate-700 text-xs font-semibold mb-1">วันที่เข้างาน ตั้งแต่ (เว้นว่างทั้งคู่ = ทั้งหมด)</label>
+                        <label class="block text-slate-700 text-xs font-semibold mb-1">วันที่ปิดงาน ตั้งแต่ (ต้องเลือกก่อนถึงจะดูตัวอย่างได้)</label>
                         <div class="relative inline-block">
                             <input type="text" id="pmBillingRangeStartDisplay" readonly placeholder="dd/mm/yyyy" onclick="openCustomDatePicker('pmBillingRangeStart')" class="px-3 py-2 pr-8 rounded-lg border border-slate-300 text-sm w-36 date-picker-trigger cursor-pointer bg-white hover:border-blood-400">
                             <input type="hidden" id="pmBillingRangeStart" value="">
@@ -916,6 +919,7 @@
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">ราคา</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap min-w-[220px]">Description ในใบเสนอราคา (แก้ไขได้)</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">หมายเหตุ</th>
+                                <th class="p-2 text-left font-semibold whitespace-nowrap">จัดการ</th>
                             </tr>
                         </thead>
                         <tbody id="pmBillingBody"></tbody>
@@ -968,6 +972,51 @@
                     </button>
                     <button type="button" id="btn_confirmPmBillingRound" onclick="confirmPmBillingRound()" class="bg-blood-700 text-white font-semibold py-2.5 px-6 rounded-xl hover:bg-blood-800 transition-colors flex items-center gap-2">
                         <i class="fa-solid fa-check"></i> <span id="text_confirmPmBillingRound">ยืนยันบันทึกรอบบิล PM</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal "เพิ่มรายการเอง" ในรอบบิล PM ที่เลือกอยู่ (สำหรับค่าใช้จ่ายอื่นๆ ที่ไม่ได้มาจากระบบ PM โดยตรง) -->
+        <div id="pmAddLineItemModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+                <div class="flex items-center justify-between p-5 border-b border-slate-200">
+                    <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-plus mr-2 text-blood-600"></i>เพิ่มรายการเองในรอบบิล PM</h3>
+                    <button type="button" onclick="closePmAddLineItemModal()" class="text-slate-400 hover:text-slate-700 text-xl leading-none">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+                <div class="p-5 space-y-3">
+                    <p id="pmAddLineItemRoundLabel" class="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-2"></p>
+                    <div>
+                        <label class="block text-slate-700 text-xs font-semibold mb-1">Description ในใบเสนอราคา (บังคับกรอก)</label>
+                        <input type="text" id="pmAddItemDesc" placeholder="เช่น ค่าอะไหล่เพิ่มเติม สาขาบางนา" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-slate-700 text-xs font-semibold mb-1">รหัสสาขา (ถ้ามี)</label>
+                            <input type="text" id="pmAddItemBranchCode" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-slate-700 text-xs font-semibold mb-1">ชื่อสาขา (ถ้ามี)</label>
+                            <input type="text" id="pmAddItemBranchName" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-slate-700 text-xs font-semibold mb-1">ราคา</label>
+                        <input type="number" step="0.01" id="pmAddItemPrice" placeholder="0.00" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-slate-700 text-xs font-semibold mb-1">หมายเหตุ (ถ้ามี)</label>
+                        <input type="text" id="pmAddItemRemark" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                    </div>
+                </div>
+                <div class="flex justify-end gap-3 p-5 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
+                    <button type="button" onclick="closePmAddLineItemModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2 px-5 rounded-xl hover:bg-slate-100 transition-colors">
+                        ยกเลิก
+                    </button>
+                    <button type="button" id="btn_submitPmAddLineItem" onclick="submitPmAddLineItem()" class="bg-blood-700 text-white font-semibold py-2 px-5 rounded-xl hover:bg-blood-800 transition-colors">
+                        เพิ่มรายการ
                     </button>
                 </div>
             </div>
@@ -1557,7 +1606,7 @@
         // ซ่อน/แสดงแท็บและปุ่มต่าง ๆ ตามสิทธิ์ - ผู้รับเหมาเห็นแค่ตารางวางบิล (ดูอย่างเดียว)
         function applyRoleBasedUI() {
             const isAdmin = currentSession.role === 'admin';
-            const adminOnlyTabIds = ['tabOpen', 'tabClose', 'tabPause', 'tabOpenList', 'tabCloseList', 'tabStatusReport', 'tabSubmissions', 'tabCompleted'];
+            const adminOnlyTabIds = ['tabOpen', 'tabClose', 'tabPause', 'tabOpenList', 'tabCloseList', 'tabStatusReport', 'tabSubmissions', 'tabCompleted', 'tabPM'];
             adminOnlyTabIds.forEach(function (id) {
                 const el = document.getElementById(id);
                 if (el) el.style.display = isAdmin ? '' : 'none';
@@ -2737,8 +2786,8 @@
             if (!currentSession) return;
             const startDate = document.getElementById('pmBillingRangeStart').value || null;
             const endDate = document.getElementById('pmBillingRangeEnd').value || null;
-            if ((startDate && !endDate) || (!startDate && endDate)) {
-                showAlert('error', 'กรุณาเลือกช่วงวันที่ให้ครบทั้ง 2 ช่อง หรือกด "ล้างช่วงวันที่" เพื่อดูงานทั้งหมด');
+            if (!startDate || !endDate) {
+                showAlert('error', 'กรุณาเลือกช่วงวันที่ปิดงานให้ครบทั้ง 2 ช่อง ("ตั้งแต่วันที่" และ "ถึงวันที่") ก่อนถึงจะดูตัวอย่างได้');
                 return;
             }
             pmBillingPreviewParams = { startDate, endDate };
@@ -2865,7 +2914,8 @@
 
         // ค่าเริ่มต้นของ Description ในใบเสนอราคา (ถ้ายังไม่เคยแก้ desc_override เอง) — ต้องตรงกับฝั่งเซิร์ฟเวอร์ใน generatePmQuotationPdfBase64 เป๊ะๆ
         function pmDefaultDesc(r) {
-            return [r.branch_code, r.branch_name].filter(Boolean).join(' ').trim() || '-';
+            if (r.branch_code && r.branch_name) return r.branch_code + '-' + r.branch_name;
+            return r.branch_code || r.branch_name || '-';
         }
 
         function renderPmBillingTable(rows) {
@@ -2878,9 +2928,15 @@
                 const descCell = isAdmin
                     ? `<input type="text" data-id="${r.id}" data-field="desc_override" data-original="${descValue}" value="${descValue}" placeholder="${pmDefaultDesc(r).replace(/"/g, '&quot;')} (ค่าเริ่มต้น)" onblur="savePmBillingField(this)" class="w-56 px-2 py-1 rounded border border-slate-200 text-xs">`
                     : (r.desc_override || pmDefaultDesc(r));
-                return `<tr class="border-t border-slate-100">
+                const branchCell = (r.branch_name || r.branch_code)
+                    ? (r.branch_name || r.branch_code)
+                    : (r.is_manual ? '<span class="text-slate-400 italic">(รายการเอง)</span>' : '');
+                const deleteCell = (isAdmin && r.is_manual)
+                    ? `<button type="button" onclick="deletePmBillingRow_(${r.id}, this)" class="text-red-500 hover:text-red-700 text-xs" title="ลบรายการนี้"><i class="fa-solid fa-trash"></i></button>`
+                    : '';
+                return `<tr class="border-t border-slate-100${r.is_manual ? ' bg-emerald-50/40' : ''}">
                     <td class="p-2 whitespace-nowrap">${r.round_no !== null && r.round_no !== undefined ? r.round_no : '-'}</td>
-                    <td class="p-2 whitespace-nowrap">${r.branch_name || r.branch_code || ''}</td>
+                    <td class="p-2 whitespace-nowrap">${branchCell}</td>
                     <td class="p-2 whitespace-nowrap">${r.contractor || '-'}</td>
                     <td class="p-2 whitespace-nowrap">${r.technician || '-'}</td>
                     <td class="p-2 whitespace-nowrap">${pmQuarterLabel(r)}</td>
@@ -2888,6 +2944,7 @@
                     <td class="p-2 whitespace-nowrap">${priceCell}</td>
                     <td class="p-2 whitespace-nowrap">${descCell}</td>
                     <td class="p-2 whitespace-nowrap">${r.remark || ''}</td>
+                    <td class="p-2 whitespace-nowrap">${deleteCell}</td>
                 </tr>`;
             }).join('');
         }
@@ -2989,6 +3046,78 @@
                 resetBtn();
                 showAlert('error', 'เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : 'ไม่ทราบสาเหตุ'));
             }, 60000);
+        }
+
+        // ==================== "เพิ่มรายการเอง" ในรอบบิล PM (สำหรับค่าใช้จ่ายอื่นๆ ที่ไม่ได้มาจากระบบ PM โดยตรง) ====================
+        // ต้องเลือกรอบบิลใดรอบหนึ่งในตัวกรอง "กรองตามรอบบิล PM" ก่อนเสมอ (แนบรายการเข้ารอบนั้น)
+        function openPmAddLineItemModal() {
+            if (!currentSession) return;
+            const roundNo = document.getElementById('pmBillingRoundFilter').value;
+            if (!roundNo) {
+                showAlert('error', 'กรุณาเลือก "กรองตามรอบบิล PM" เป็นรอบใดรอบหนึ่งก่อน แล้วจึงเพิ่มรายการเข้ารอบนั้นได้');
+                return;
+            }
+            document.getElementById('pmAddLineItemRoundLabel').textContent = 'จะเพิ่มรายการนี้เข้ารอบบิล PM รอบที่ ' + roundNo;
+            document.getElementById('pmAddItemDesc').value = '';
+            document.getElementById('pmAddItemBranchCode').value = '';
+            document.getElementById('pmAddItemBranchName').value = '';
+            document.getElementById('pmAddItemPrice').value = '';
+            document.getElementById('pmAddItemRemark').value = '';
+            document.getElementById('pmAddLineItemModal').classList.remove('hidden');
+        }
+
+        function closePmAddLineItemModal() {
+            document.getElementById('pmAddLineItemModal').classList.add('hidden');
+        }
+
+        function submitPmAddLineItem() {
+            const roundNo = document.getElementById('pmBillingRoundFilter').value;
+            const desc = document.getElementById('pmAddItemDesc').value.trim();
+            if (!roundNo) { showAlert('error', 'ไม่พบรอบบิล PM ที่จะเพิ่มรายการ'); return; }
+            if (!desc) { showAlert('error', 'กรุณากรอก Description ก่อน'); return; }
+            const fields = {
+                desc_override: desc,
+                branch_code: document.getElementById('pmAddItemBranchCode').value.trim(),
+                branch_name: document.getElementById('pmAddItemBranchName').value.trim(),
+                price: document.getElementById('pmAddItemPrice').value,
+                remark: document.getElementById('pmAddItemRemark').value.trim(),
+            };
+            const btn = document.getElementById('btn_submitPmAddLineItem');
+            btn.disabled = true;
+            btn.classList.add('opacity-60', 'cursor-not-allowed');
+            runServerCall('addPmBillingLineItem', [currentSession.username, currentSession.token, roundNo, fields], function (res) {
+                btn.disabled = false;
+                btn.classList.remove('opacity-60', 'cursor-not-allowed');
+                if (res && res.success) {
+                    closePmAddLineItemModal();
+                    showAlert('success', res.message || 'เพิ่มรายการสำเร็จ');
+                    loadPmBillingDocuments();
+                } else {
+                    showAlert('error', (res && res.message) || 'เพิ่มรายการล้มเหลว');
+                }
+            }, function (err) {
+                btn.disabled = false;
+                btn.classList.remove('opacity-60', 'cursor-not-allowed');
+                showAlert('error', 'เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : ''));
+            });
+        }
+
+        // ลบรายการที่เพิ่มเอง (ปุ่มลบจะโชว์เฉพาะแถวที่ is_manual = true ในตาราง — ฝั่งเซิร์ฟเวอร์ก็เช็คซ้ำอีกชั้นไม่ให้ลบรายการจากระบบ PM จริง)
+        function deletePmBillingRow_(id, btnEl) {
+            if (!confirm('ยืนยันลบรายการนี้ออกจากรอบบิล PM?')) return;
+            btnEl.disabled = true;
+            runServerCall('deletePmBillingRow', [currentSession.username, currentSession.token, id], function (res) {
+                if (res && res.success) {
+                    showAlert('success', res.message || 'ลบรายการสำเร็จ');
+                    loadPmBillingDocuments();
+                } else {
+                    btnEl.disabled = false;
+                    showAlert('error', (res && res.message) || 'ลบรายการล้มเหลว');
+                }
+            }, function (err) {
+                btnEl.disabled = false;
+                showAlert('error', 'เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : ''));
+            });
         }
 
         // มุมมอง "บิลรวม" (แอดมิน ไม่ได้เลือกผู้รับเหมาคนใดคนหนึ่ง): เลขลำดับในฐานข้อมูลรีเซ็ตใหม่ทุกผู้รับเหมา

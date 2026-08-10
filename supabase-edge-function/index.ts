@@ -448,7 +448,7 @@ function thaiBahtText(amountInput: number): string {
 // สร้าง PDF "ใบเสนอราคา" 1 ฉบับต่อรอบบิล PM 1 รอบ โดยจำลองหน้าตาให้ตรงกับแบบฟอร์ม Excel ต้นฉบับที่บริษัทใช้ส่งลูกค้าอยู่แล้ว
 // (หัวกระดาษบริษัท / เรียน-สำเนาเรียน / ตารางรายการ Item-Description-Qty-Unit-Unit Price-Amount / สรุปยอด+VAT+จำนวนเงินตัวอักษร / เงื่อนไข+ลายเซ็น)
 // แต่ละแถวรายการ = งาน PM 1 สาขาที่บันทึกไว้ในรอบบิลนี้ — Description = รหัสสาขา + ชื่อสาขา ตามที่ตกลงกันไว้
-async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | string): Promise<any> {
+async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | string, docNo: string): Promise<any> {
   if (!rows || rows.length === 0) return { success: false, message: 'ไม่มีข้อมูลสำหรับสร้างใบเสนอราคา' };
   try {
     const [regularBytes, boldBytes] = await Promise.all([
@@ -489,7 +489,8 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
       const qty = 1;
       const unitPrice = parseFloat(r.price) || 0;
       const amount = qty * unitPrice;
-      const defaultDesc = [r.branch_code, r.branch_name].filter(Boolean).join(' ').trim() || '-';
+      const defaultDesc = (r.branch_code && r.branch_name) ? (r.branch_code + '-' + r.branch_name)
+        : (r.branch_code || r.branch_name || '-');
       const desc = (r.desc_override && r.desc_override.toString().trim()) ? r.desc_override.toString().trim() : defaultDesc;
       return { desc, qty, unit: 'Lot', unitPrice, amount };
     });
@@ -534,7 +535,7 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
       let y = yStart;
       const rightX = PAGE_W - MARGIN - 200;
       page.drawText('เรียน/Attention: คุณวศิน / ที่นับถือ', { x: MARGIN, y, size: 10, font, color: BLACK });
-      page.drawText('เลขที่/No. : PM-' + roundNo, { x: rightX, y, size: 10, font, color: BLACK });
+      page.drawText('เลขที่/No. : ' + docNo, { x: rightX, y, size: 10, font, color: BLACK });
       y -= 15;
       page.drawText('สำเนาเรียน/CC. คุณอาร์ม / ที่นับถือ', { x: MARGIN, y, size: 10, font, color: BLACK });
       page.drawText('วันที่ Date : ' + thaiDateString(), { x: rightX, y, size: 10, font, color: BLACK });
@@ -614,10 +615,8 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
       rowCursor++;
     }
 
-    // ---- บรรทัดรายการเสริมท้ายตาราง (ตามต้นฉบับ) ----
+    // ---- บรรทัดรายการเสริมท้ายตาราง (ตามไฟล์ต้นฉบับฉบับสมบูรณ์ CRE-CJ-PM-6908-0001 — มีบรรทัดเดียว ไม่มีบรรทัดค่าน้ำ/ค่าไฟฟ้าแล้ว) ----
     y -= 4;
-    page.drawText(' - ค่าน้ำ , ค่าไฟฟ้าที่ใช้ในหน่วยงาน', { x: MARGIN, y, size: 9, font, color: BLACK });
-    y -= 13;
     page.drawText(' - รายการอื่น ๆ ที่มิได้ระบุไว้ข้างต้น', { x: MARGIN, y, size: 9, font, color: BLACK });
     y -= 18;
 
@@ -663,7 +662,7 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
     let binary = '';
     for (let i = 0; i < pdfBytes.length; i++) binary += String.fromCharCode(pdfBytes[i]);
     const base64 = btoa(binary);
-    return { success: true, base64, filename: 'ใบเสนอราคา_PM_รอบ' + roundNo + '.pdf' };
+    return { success: true, base64, filename: docNo + '.pdf' };
   } catch (error) {
     return { success: false, message: 'สร้างใบเสนอราคา PM ล้มเหลว: ' + String(error) };
   }
@@ -1006,10 +1005,12 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  // กรองงาน PM ตาม "วันที่เข้างาน" (visit_date) ช่วงที่เลือกไว้ตอนดูตัวอย่าง/ยืนยันบันทึกรอบบิล PM
-  // ใช้ร่วมกันทั้ง 2 ขั้นตอนเป๊ะๆ (เหมือน resolveBillingCandidateJobIds ของฝั่งบิล CJ) — ถ้าไม่ระบุช่วงวันที่มา ก็ไม่กรอง (คืนของเดิมทั้งหมด เหมือนพฤติกรรมเดิมก่อนมีตัวกรองนี้)
+  // กรองงาน PM ตาม "วันที่ปิดงาน" ช่วงที่เลือกไว้ตอนดูตัวอย่าง/ยืนยันบันทึกรอบบิล PM (บังคับต้องระบุเสมอ ไม่มี default "ทั้งหมด" แล้ว)
+  // ใช้ visit_date เป็นตัวแทน "วันที่ปิดงาน" เพราะงาน PM 1 รอบคือ 1 ครั้งที่ช่างเข้างาน+ปิดงานพร้อมกัน ไม่มีวันที่เปิด/ปิดแยกกันแบบงานซ่อม CJ
+  // (ตรวจสอบข้อมูลจริงในระบบ PM แล้ว — ไม่มีฟิลด์ "วันที่ปิด" แยกที่เชื่อถือได้ ฟิลด์ confirmed_at/updated_at เป็นค่าที่ backfill มาพร้อมกันทีเดียวตอนย้ายระบบ ไม่ใช่วันที่ปิดจริงรายตัว)
+  // ใช้ร่วมกันทั้ง 2 ขั้นตอนเป๊ะๆ (เหมือน resolveBillingCandidateJobIds ของฝั่งบิล CJ)
   function filterPmVisitsByDateRange(visits: any[], startDate: string | null, endDate: string | null): any[] {
-    if (!startDate || !endDate) return visits;
+    if (!startDate || !endDate) return [];
     const startD = new Date(startDate + 'T00:00:00');
     const endD = new Date(endDate + 'T23:59:59');
     if (isNaN(startD.getTime()) || isNaN(endD.getTime())) return visits;
@@ -1559,12 +1560,12 @@ Deno.serve(async (req: Request) => {
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ทำรายการนี้ได้' });
-        if ((startDate && !endDate) || (!startDate && endDate)) {
-          return jsonResponse({ success: false, message: 'กรุณาเลือกช่วงวันที่ให้ครบทั้ง 2 ช่อง (ตั้งแต่วันที่ และ ถึงวันที่) หรือเว้นว่างทั้งคู่เพื่อดูงานทั้งหมด' });
+        if (!startDate || !endDate) {
+          return jsonResponse({ success: false, message: 'กรุณาเลือกช่วงวันที่ปิดงานทั้ง 2 ช่อง (ตั้งแต่วันที่ และ ถึงวันที่) ก่อนถึงจะดูตัวอย่างได้' });
         }
         const { visits: rawVisits, error } = await fetchPmBillableVisits();
         if (error) return jsonResponse({ success: false, message: error });
-        const visits = filterPmVisitsByDateRange(rawVisits, startDate || null, endDate || null);
+        const visits = filterPmVisitsByDateRange(rawVisits, startDate, endDate);
         if (visits.length === 0) return jsonResponse({ success: true, roundPeriod: '', candidates: [], alreadyBilledCount: 0 });
         const { data: alreadyBilledData, error: alreadyBilledErr } = await supabase.from('pm_billing_documents').select('pm_visit_id');
         if (alreadyBilledErr) return jsonResponse({ success: false, message: 'ตรวจสอบรอบบิล PM เดิมล้มเหลว: ' + alreadyBilledErr.message });
@@ -1583,12 +1584,12 @@ Deno.serve(async (req: Request) => {
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ทำรายการนี้ได้' });
-        if ((startDate && !endDate) || (!startDate && endDate)) {
-          return jsonResponse({ success: false, message: 'กรุณาเลือกช่วงวันที่ให้ครบทั้ง 2 ช่อง (ตั้งแต่วันที่ และ ถึงวันที่) หรือเว้นว่างทั้งคู่เพื่อบันทึกงานทั้งหมด' });
+        if (!startDate || !endDate) {
+          return jsonResponse({ success: false, message: 'กรุณาเลือกช่วงวันที่ปิดงานทั้ง 2 ช่อง (ตั้งแต่วันที่ และ ถึงวันที่) ก่อนถึงจะบันทึกรอบบิลได้' });
         }
         const { visits: rawVisits, error } = await fetchPmBillableVisits();
         if (error) return jsonResponse({ success: false, message: error });
-        const visits = filterPmVisitsByDateRange(rawVisits, startDate || null, endDate || null);
+        const visits = filterPmVisitsByDateRange(rawVisits, startDate, endDate);
         if (visits.length === 0) return jsonResponse({ success: true, message: 'ไม่มีข้อมูลงาน PM ที่พร้อมวางบิลในช่วงที่เลือก', created: 0, skipped: 0 });
         const { data: alreadyBilledData, error: alreadyBilledErr } = await supabase.from('pm_billing_documents').select('pm_visit_id');
         if (alreadyBilledErr) return jsonResponse({ success: false, message: 'ตรวจสอบรอบบิล PM เดิมล้มเหลว: ' + alreadyBilledErr.message });
@@ -1624,6 +1625,7 @@ Deno.serve(async (req: Request) => {
         const [username, token, roundNo] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เมนู PM สำหรับแอดมินเท่านั้น' });
         let q = supabase.from('pm_billing_documents').select('*');
         if (roundNo !== null && roundNo !== undefined && roundNo !== '') {
           q = q.eq('round_no', roundNo).order('seq', { ascending: true });
@@ -1639,6 +1641,7 @@ Deno.serve(async (req: Request) => {
         const [username, token] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เมนู PM สำหรับแอดมินเท่านั้น' });
         const { data, error } = await supabase.from('pm_billing_documents').select('round_no,round_period').not('round_no', 'is', null);
         if (error) return jsonResponse({ success: false, message: error.message });
         const seen = new Set(); const options: any[] = [];
@@ -1666,6 +1669,51 @@ Deno.serve(async (req: Request) => {
         return jsonResponse({ success: true });
       }
 
+      // เพิ่มรายการเองในรอบบิล PM ที่มีอยู่แล้ว (เช่น ค่าใช้จ่ายอื่นๆ ที่ไม่ได้มาจากระบบ PM โดยตรง)
+      // ใช้เลข pm_visit_id ปลอมเป็นเลขติดลบ (จาก next_pm_manual_visit_id) กันชนกับเลขงานจริงจากระบบ PM ซึ่งเป็นบวกเสมอ
+      case 'addPmBillingLineItem': {
+        const [username, token, roundNo, fields] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่เพิ่มรายการได้' });
+        if (roundNo === undefined || roundNo === null || roundNo === '') return jsonResponse({ success: false, message: 'กรุณาเลือกรอบบิล PM ที่ต้องการเพิ่มรายการก่อน' });
+        const descOverride = (fields && fields.desc_override ? fields.desc_override.toString().trim() : '');
+        if (!descOverride) return jsonResponse({ success: false, message: 'กรุณากรอกรายละเอียดรายการ (Description) ก่อน' });
+        const { data: roundRows, error: roundErr } = await supabase.from('pm_billing_documents').select('round_period,seq').eq('round_no', roundNo).order('seq', { ascending: false }).limit(1);
+        if (roundErr) return jsonResponse({ success: false, message: 'ตรวจสอบรอบบิล PM ล้มเหลว: ' + roundErr.message });
+        if (!roundRows || roundRows.length === 0) return jsonResponse({ success: false, message: 'ไม่พบรอบบิล PM นี้' });
+        const roundPeriod = roundRows[0].round_period || '';
+        const nextSeq = (roundRows[0].seq || 0) + 1;
+        const { data: manualIdData, error: manualIdErr } = await supabase.rpc('next_pm_manual_visit_id');
+        if (manualIdErr) return jsonResponse({ success: false, message: 'ขอเลขรายการเองล้มเหลว: ' + manualIdErr.message + ' (ตรวจสอบว่ารัน add-pm-manual-line-item.sql แล้วหรือยัง)' });
+        const row = {
+          pm_visit_id: manualIdData as number, round_no: roundNo, round_period: roundPeriod, seq: nextSeq,
+          branch_code: (fields.branch_code || '').toString().trim() || null,
+          branch_name: (fields.branch_name || '').toString().trim() || null,
+          price: (fields.price === '' || fields.price === null || fields.price === undefined) ? null : parseFloat(fields.price),
+          remark: (fields.remark || '').toString().trim() || null,
+          desc_override: descOverride, is_manual: true, synced_to_sheet: false,
+        };
+        const { error: insertErr } = await supabase.from('pm_billing_documents').insert(row);
+        if (insertErr) return jsonResponse({ success: false, message: 'เพิ่มรายการล้มเหลว: ' + insertErr.message });
+        return jsonResponse({ success: true, message: 'เพิ่มรายการสำเร็จ' });
+      }
+
+      // ลบรายการที่เพิ่มเอง (เฉพาะรายการที่ is_manual = true เท่านั้น — กันลบข้อมูลที่ดึงมาจากระบบ PM จริงโดยไม่ตั้งใจ)
+      case 'deletePmBillingRow': {
+        const [username, token, id] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ลบรายการได้' });
+        const { data: rowData, error: rowErr } = await supabase.from('pm_billing_documents').select('is_manual').eq('id', id).limit(1);
+        if (rowErr) return jsonResponse({ success: false, message: rowErr.message });
+        if (!rowData || rowData.length === 0) return jsonResponse({ success: false, message: 'ไม่พบรายการนี้' });
+        if (!rowData[0].is_manual) return jsonResponse({ success: false, message: 'ลบได้เฉพาะรายการที่เพิ่มเองเท่านั้น (รายการจากระบบ PM ลบไม่ได้ เพื่อรักษาความถูกต้องของข้อมูล)' });
+        const { error: delErr } = await supabase.from('pm_billing_documents').delete().eq('id', id);
+        if (delErr) return jsonResponse({ success: false, message: delErr.message });
+        return jsonResponse({ success: true, message: 'ลบรายการสำเร็จ' });
+      }
+
       // ดาวน์โหลด "ใบเสนอราคา" PDF ของรอบบิล PM รอบใดรอบหนึ่ง (ตามแบบฟอร์ม Excel ต้นฉบับ) — เฉพาะแอดมิน เพราะเป็นเอกสารที่จะส่งให้ลูกค้าโดยตรง
       case 'downloadPmBillingRoundPdf': {
         const [username, token, roundNo] = args;
@@ -1676,7 +1724,32 @@ Deno.serve(async (req: Request) => {
         const { data, error } = await supabase.from('pm_billing_documents').select('*').eq('round_no', roundNo).order('seq', { ascending: true });
         if (error) return jsonResponse({ success: false, message: 'ดึงข้อมูลรอบบิล PM ล้มเหลว: ' + error.message });
         if (!data || data.length === 0) return jsonResponse({ success: false, message: 'ไม่พบข้อมูลของรอบบิล PM นี้' });
-        const pdfResult = await generatePmQuotationPdfBase64(data, roundNo);
+
+        // สร้างเลขที่เอกสารรูปแบบ CRE-CJ-PM-{ปี พ.ศ. 2 หลัก}{เดือน 2 หลัก}-{ลำดับ 4 หลัก} ตามต้นฉบับจริง (เช่น CRE-CJ-PM-6908-0001)
+        // ปี/เดือน อิงจากวันที่ "สร้างรอบบิลนี้" (created_at แถวแรกสุดของรอบ) ไม่ใช่วันที่กดดาวน์โหลด — กันเลขเปลี่ยนไปมาเวลาดาวน์โหลดซ้ำคนละวัน
+        // ลำดับ 4 หลัก = รอบบิล PM ลำดับที่เท่าไหร่ในเดือนนั้น (นับจากทุกรอบที่เคยสร้างในเดือน/ปีเดียวกัน เรียงตามเลขรอบบิล)
+        const { data: allRoundsData, error: allRoundsErr } = await supabase.from('pm_billing_documents').select('round_no,created_at').not('round_no', 'is', null);
+        if (allRoundsErr) return jsonResponse({ success: false, message: 'สร้างเลขที่เอกสารล้มเหลว: ' + allRoundsErr.message });
+        const roundMinCreated: Record<string, string> = {};
+        (allRoundsData || []).forEach((r: any) => {
+          const key = String(r.round_no);
+          if (!r.created_at) return;
+          if (!roundMinCreated[key] || r.created_at < roundMinCreated[key]) roundMinCreated[key] = r.created_at;
+        });
+        const refCreatedAt = roundMinCreated[String(roundNo)] || new Date().toISOString();
+        const refDate = new Date(refCreatedAt);
+        const buddhistYY = String((refDate.getFullYear() + 543) % 100).padStart(2, '0');
+        const mm = String(refDate.getMonth() + 1).padStart(2, '0');
+        const sameMonthRounds = Object.entries(roundMinCreated)
+          .filter(([, createdAt]) => {
+            const d = new Date(createdAt);
+            return d.getFullYear() === refDate.getFullYear() && d.getMonth() === refDate.getMonth();
+          })
+          .sort((a, b) => Number(a[0]) - Number(b[0]));
+        const seqIndex = Math.max(1, sameMonthRounds.findIndex(([rn]) => rn === String(roundNo)) + 1);
+        const docNo = 'CRE-CJ-PM-' + buddhistYY + mm + '-' + String(seqIndex).padStart(4, '0');
+
+        const pdfResult = await generatePmQuotationPdfBase64(data, roundNo, docNo);
         return jsonResponse(pdfResult);
       }
 
