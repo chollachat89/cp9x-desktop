@@ -1258,14 +1258,14 @@ async function incrementalSyncToSheetTab(
 const STATUS_REPORT_SHEET = {
   sheetName: 'รายงานสถานะดำเนินการ',
   color: '#dbeafe',
-  headers: ['เลขที่ใบแจ้งซ่อมบำรุง', 'สาขา', 'Service Type', 'ประเภทสัญญา', 'ผู้รับเหมา', 'รายละเอียดปัญหาที่พบ',
+  headers: ['เลขที่ใบแจ้งซ่อมบำรุง', 'สาขา', 'Service Type', 'งานบริการ', 'ประเภทสัญญา', 'ผู้รับเหมา', 'รายละเอียดปัญหาที่พบ',
     'วันที่ร้องขอ', 'วันที่เปิดงาน', 'เลขทรัพย์สิน', 'วันที่เข้าแก้ไข', 'วันที่ปิดงาน', 'ดำเนินการแก้ไขแล้ว',
     'ระยะเวลาดำเนินการ (ชม.)', 'จำนวนครั้งที่พัก', 'รวมชั่วโมงที่พัก', 'ส่งมอบงานให้ผู้รับเหมาแล้ว', 'เสร็จสิ้น (ตัดบิลแล้ว)', 'สถานะ'],
   // แท็บนี้คำนวณจากหลายตารางรวมกัน ไม่มี id ของตัวเอง - เดิมใช้ "เลขที่ใบแจ้งซ่อมบำรุง" เป็นคีย์เฉย ๆ (สมมติ 1 เลขงาน = 1 แถวเสมอ)
   // แต่ตอนนี้ 1 เลขงานอาจปิดงานได้หลายครั้ง (คนละเลขทรัพย์สิน) จึงออกได้หลายแถวต่อ 1 เลขงาน - ต้องรวมเลขทรัพย์สินเข้าไปในคีย์ด้วย กันคีย์ชนกัน
   keyOf: (r: any) => String(r.main_id) + '||' + String(r.asset_id || '-'),
   mapRow: (r: any) => [
-    r.main_id, r.branch, r.service_type, r.contract_type ?? '', r.contractor, r.details,
+    r.main_id, r.branch, r.service_type, r.service_work ?? '', r.contract_type ?? '', r.contractor, r.details,
     r.req_date, r.opened_at, r.asset_id, r.fix_date, r.closed_at, r.action_taken,
     r.duration_hours, r.pause_count, r.pause_hours_total,
     r.sent_to_contractor ? 'ใช่' : 'ยังไม่ส่ง', r.completed ? 'ใช่' : 'ยังไม่เสร็จ', r.status,
@@ -1426,7 +1426,7 @@ Deno.serve(async (req: Request) => {
   // คำนวณแถวรายงานสถานะดำเนินการ (ใช้ร่วมกันทั้ง fnName 'getJobStatusReport' และตอนซิงค์ลง Google Sheet
   // เพื่อให้ตรรกะสถานะ/ระยะเวลา/ข้อมูลพักงาน ตรงกันเป๊ะทั้งสองที่ ไม่มีวันเพี้ยนต่างกัน)
   async function computeJobStatusReportRows(startDate?: string | null, endDate?: string | null): Promise<any[]> {
-    let openQuery = supabase.from('open_issues').select('main_id,branch,service_type,contract_type,contractor,details,req_date,created_at').order('created_at', { ascending: false });
+    let openQuery = supabase.from('open_issues').select('main_id,branch,service_type,service_work,contract_type,contractor,details,req_date,created_at').order('created_at', { ascending: false });
     if (startDate) openQuery = openQuery.gte('created_at', startDate + 'T00:00:00');
     if (endDate) openQuery = openQuery.lte('created_at', endDate + 'T23:59:59');
     const [openRes, closeRes, billingRes, pauseRes] = await Promise.all([
@@ -1498,7 +1498,7 @@ Deno.serve(async (req: Request) => {
         else if (closeRec) status = 'ปิดงานแล้ว';
         else if (isCurrentlyPaused) status = 'พักงาน';
         rows.push({
-          main_id: o.main_id, branch: o.branch, service_type: o.service_type, contract_type: o.contract_type, contractor: o.contractor,
+          main_id: o.main_id, branch: o.branch, service_type: o.service_type, service_work: o.service_work, contract_type: o.contract_type, contractor: o.contractor,
           details: o.details, req_date: o.req_date, opened_at: o.created_at,
           asset_id: closeRec ? closeRec.asset_id : null,
           fix_date: closeRec ? closeRec.fix_date : null, closed_at: closeRec ? closeRec.created_at : null,
