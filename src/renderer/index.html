@@ -450,6 +450,8 @@
                             <i class="fa-solid fa-rotate mr-1"></i> โหลด/รีเฟรชข้อมูล
                         </button>
                     </div>
+                    <input type="text" id="pausedListFilter" oninput="debouncedFilterPausedList()" placeholder="พิมพ์เลขงาน/สาขา/สาเหตุ เพื่อกรองหางานที่พักอยู่"
+                        class="w-full px-4 py-2.5 mb-3 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
                     <p id="pauseListStatus" class="text-sm text-slate-400 mb-3">กดปุ่ม "โหลด/รีเฟรชข้อมูล" เพื่อดึงรายการงานที่พักอยู่</p>
                     <div id="pausedListContainer" class="space-y-3"></div>
                 </div>
@@ -1664,6 +1666,8 @@
             if (jobFormsPendingListEl) jobFormsPendingListEl.innerHTML = '<p class="text-sm text-slate-400">ไม่มีงานที่ต้องดำเนินการ</p>';
             const pausedListEl = document.getElementById('pausedListContainer');
             if (pausedListEl) pausedListEl.innerHTML = '';
+            const pausedListFilterEl = document.getElementById('pausedListFilter');
+            if (pausedListFilterEl) pausedListFilterEl.value = '';
 
             updateSubmissionsBadge(0);
             updateJobFormsBadge(0);
@@ -2055,6 +2059,7 @@
         const debouncedFilterStatusReport = debounce(function () { filterStatusReport(); }, 250);
         const debouncedFilterSubmissions = debounce(function () { filterSubmissions(); }, 250);
         const debouncedFilterCompletedJobs = debounce(function () { filterCompletedJobs(); }, 250);
+        const debouncedFilterPausedList = debounce(function () { filterPausedList(); }, 250);
 
         // 1. สลับหน้าจอ (Tab Switcher)
         // เปิด/ปิด sidebar บนมือถือ (จอเล็กกว่า md ของ Tailwind) - กดปุ่มแฮมเบอร์เกอร์ที่แถบด้านบน
@@ -5387,6 +5392,8 @@
                     return;
                 }
                 currentPausedListData = res || [];
+                const filterEl = document.getElementById('pausedListFilter');
+                if (filterEl) filterEl.value = ''; // ล้างคำค้นเดิมทุกครั้งที่โหลดใหม่ กันตัวกรองซ้อนกันจนไม่เห็นข้อมูล
                 renderPausedList(currentPausedListData);
                 statusEl.textContent = 'พบ ' + currentPausedListData.length + ' งานที่กำลังพักอยู่';
                 statusEl.className = 'text-sm text-emerald-600 mb-3';
@@ -5394,6 +5401,16 @@
                 statusEl.textContent = 'เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : '');
                 statusEl.className = 'text-sm text-red-500 mb-3';
             });
+        }
+
+        // กรองรายการ "งานที่พักอยู่" ด้วยคำค้น - ค้นได้ทุกฟิลด์ (เลขงาน สาขา สาเหตุ หมายเหตุ ผู้พักงาน ฯลฯ)
+        function filterPausedList() {
+            const term = document.getElementById('pausedListFilter').value.trim().toLowerCase();
+            if (!term) { renderPausedList(currentPausedListData); return; }
+            const filtered = currentPausedListData.filter(item =>
+                Object.values(item).some(v => v !== null && v !== undefined && String(v).toLowerCase().includes(term))
+            );
+            renderPausedList(filtered);
         }
 
         function renderPausedList(items) {
