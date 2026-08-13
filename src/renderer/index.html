@@ -110,6 +110,28 @@
         </div>
     </div>
 
+    <!-- ==================== แถบแจ้งเตือนอัปเดตเวอร์ชันใหม่ ====================
+         ลอยอยู่มุมขวาล่าง เห็นได้ทั้งตอนอยู่หน้าล็อกอินและตอนใช้งานอยู่ในแอป
+         โผล่อัตโนมัติเมื่อระบบเจอเวอร์ชันใหม่บนเซิร์ฟเวอร์ (ตรวจให้เองทุก 30 นาที) -->
+    <div id="updateToast" class="hidden fixed bottom-4 right-4 z-[110] max-w-sm w-[calc(100%-2rem)] sm:w-96 bg-slate-900 text-white rounded-xl shadow-2xl border border-slate-700 overflow-hidden">
+        <div class="flex items-start gap-3 p-4">
+            <i id="updateToastIcon" class="fa-solid fa-cloud-arrow-down text-lg mt-0.5 text-emerald-400"></i>
+            <div class="flex-1 min-w-0">
+                <div id="updateToastTitle" class="text-sm font-bold leading-snug">มีเวอร์ชันใหม่</div>
+                <div id="updateToastMessage" class="text-xs text-slate-300 mt-0.5 leading-snug"></div>
+                <div id="updateToastProgressWrap" class="hidden mt-2 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                    <div id="updateToastProgressBar" class="h-full bg-emerald-500 transition-all duration-200" style="width:0%"></div>
+                </div>
+                <button type="button" id="updateToastInstallBtn" onclick="installUpdateNow()" class="hidden mt-3 w-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 rounded-lg transition-colors">
+                    <i class="fa-solid fa-rotate-right mr-1"></i> รีสตาร์ทเพื่ออัปเดตตอนนี้
+                </button>
+            </div>
+            <button type="button" onclick="document.getElementById('updateToast').classList.add('hidden')" class="text-white/60 hover:text-white leading-none">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+    </div>
+
     <div id="appRoot" class="hidden w-full min-h-screen flex">
 
     <!-- ==================== Sidebar (เมนูหลัก) ==================== -->
@@ -163,9 +185,19 @@
                 <i class="fa-solid fa-circle-check w-5 text-center"></i> <span>งานที่เสร็จสิ้น</span>
             </button>
         </nav>
-        <div class="p-4 border-t border-slate-700/60 text-xs text-slate-400 flex items-center gap-2">
-            <i class="fa-solid fa-circle-user text-lg"></i>
-            <span id="currentUserName" class="truncate">-</span>
+        <div class="p-4 border-t border-slate-700/60 text-xs text-slate-400">
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-circle-user text-lg"></i>
+                <span id="currentUserName" class="truncate">-</span>
+            </div>
+            <!-- แสดงเวอร์ชันที่ติดตั้งอยู่จริงในเครื่องนี้ (อ่านจากตัวโปรแกรมโดยตรง ไม่ใช่ค่าที่พิมพ์ค้างไว้ในโค้ด)
+                 ใช้เทียบกับเวอร์ชันล่าสุดบน GitHub Releases ได้ทันทีว่าตรงกันหรือยัง -->
+            <div class="mt-2 pt-2 border-t border-slate-700/40 flex items-center justify-between gap-2">
+                <span class="text-[11px] text-slate-500">เวอร์ชัน <span id="appVersionLabel">-</span></span>
+                <button type="button" onclick="checkUpdateNow()" class="text-[11px] text-slate-400 hover:text-white transition-colors">
+                    <i class="fa-solid fa-rotate mr-1"></i>ตรวจอัปเดต
+                </button>
+            </div>
         </div>
     </aside>
 
@@ -339,8 +371,9 @@
                         <div class="space-y-4">
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">เลขงาน <span class="text-red-500">*</span></label>
-                                <input type="text" id="cl_kissflowId" required onblur="checkJobNumberExists(this.value.trim())" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                                <input type="text" id="cl_kissflowId" required onblur="checkJobNumberExists(this.value.trim(), document.getElementById('cl_assetId').value.trim())" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
                                 <p id="cl_kissflowStatus" class="text-xs mt-1 text-slate-400"></p>
+                                <p class="text-xs mt-1 text-slate-400">1 เลขงานปิดงานได้หลายครั้ง ถ้าเป็นทรัพย์สินคนละชิ้น (ระบุ "เลขทรัพย์สิน" ให้ต่างกันด้านล่าง)</p>
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">รหัสสาขา</label>
@@ -353,7 +386,8 @@
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">เลขทรัพย์สิน</label>
-                                <input type="text" id="cl_assetId" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                                <input type="text" id="cl_assetId" inputmode="numeric" maxlength="12" pattern="\d{12}" placeholder="ตัวเลข 12 หลัก" oninput="enforceAssetIdDigits(this)" onblur="checkJobNumberExists(document.getElementById('cl_kissflowId').value.trim(), this.value.trim())" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                                <p id="cl_assetIdStatus" class="text-xs mt-1 text-slate-400">ต้องเป็นตัวเลข 12 หลักเท่านั้น</p>
                             </div>
                         </div>
                         <div class="space-y-4">
@@ -841,6 +875,7 @@
                                 <th data-col="service_type" class="p-2 text-left font-semibold whitespace-nowrap">Service Type</th>
                                 <th data-col="contractor" class="p-2 text-left font-semibold whitespace-nowrap">ผู้รับเหมา</th>
                                 <th data-col="opened_at" class="p-2 text-left font-semibold whitespace-nowrap">วันที่เปิดงาน</th>
+                                <th data-col="asset_id" class="p-2 text-left font-semibold whitespace-nowrap">เลขทรัพย์สิน</th>
                                 <th data-col="fix_date" class="p-2 text-left font-semibold whitespace-nowrap">วันที่เข้าแก้ไข (ปิดงาน)</th>
                                 <th data-col="duration" class="p-2 text-left font-semibold whitespace-nowrap">ระยะเวลาดำเนินการ</th>
                                 <th data-col="status" class="p-2 text-left font-semibold whitespace-nowrap">สถานะ</th>
@@ -1360,14 +1395,15 @@
                 <div id="billingPreviewContent" class="hidden">
                     <div class="flex flex-wrap gap-3 mb-3 text-xs">
                         <span class="font-semibold px-3 py-1.5 rounded-full bg-blood-100 text-blood-700">ช่วงรอบบิล: <span id="billingPreviewRoundPeriod">-</span></span>
-                        <span class="font-semibold px-3 py-1.5 rounded-full bg-emerald-100 text-emerald-700">ข้อมูลใหม่ที่จะบันทึก: <span id="billingPreviewNewCount">0</span> เลขงาน</span>
-                        <span id="billingPreviewAlreadyBadge" class="hidden font-semibold px-3 py-1.5 rounded-full bg-slate-100 text-slate-500">บันทึกไปแล้วก่อนหน้านี้ (ข้ามอัตโนมัติ): <span id="billingPreviewAlreadyCount">0</span> เลขงาน</span>
+                        <span class="font-semibold px-3 py-1.5 rounded-full bg-emerald-100 text-emerald-700">ข้อมูลใหม่ที่จะบันทึก: <span id="billingPreviewNewCount">0</span> รายการ</span>
+                        <span id="billingPreviewAlreadyBadge" class="hidden font-semibold px-3 py-1.5 rounded-full bg-slate-100 text-slate-500">บันทึกไปแล้วก่อนหน้านี้ (ข้ามอัตโนมัติ): <span id="billingPreviewAlreadyCount">0</span> รายการ</span>
                     </div>
                     <div class="overflow-x-auto border border-slate-200 rounded-xl">
                         <table class="w-full text-xs border-collapse">
                             <thead>
                                 <tr class="bg-slate-100 text-slate-600">
                                     <th class="p-2 text-left border-b border-slate-200">เลขที่ใบแจ้งซ่อมบำรุง</th>
+                                    <th class="p-2 text-left border-b border-slate-200">เลขทรัพย์สิน</th>
                                     <th class="p-2 text-left border-b border-slate-200">สาขา</th>
                                     <th class="p-2 text-left border-b border-slate-200">Service Type</th>
                                     <th class="p-2 text-left border-b border-slate-200">ผู้รับเหมา</th>
@@ -1589,16 +1625,22 @@
 
         function doLogout() {
             if (!confirm('ต้องการออกจากระบบใช่หรือไม่?')) return;
-            if (currentSession) {
-                runServerCall('logoutUser', [currentSession.username, currentSession.token], function () {}, function () {});
-            }
+            const session = currentSession;
             clearSessionStorage();
             currentSession = null;
-            resetAllCachedClientData(); // กันข้อมูลของผู้ใช้คนนี้ค้างอยู่ในหน้าเว็บ ไปโชว์ให้คนถัดไปที่ login ในเบราว์เซอร์เดียวกันเห็นโดยไม่ตั้งใจ
-            document.getElementById('appRoot').classList.add('hidden');
-            document.getElementById('loginScreen').classList.remove('hidden');
-            document.getElementById('loginUsername').value = '';
-            document.getElementById('loginPassword').value = '';
+
+            // เดิมออกจากระบบแบบ "ซ่อน/โชว์หน้าจอ" เฉยๆ โดยไม่รีโหลดหน้าเว็บ ทำให้ตัวแปร/ตัวจับเวลาที่ค้างอยู่ในหน่วยความจำ
+            // (เช่น interval อัปเดตอัตโนมัติ, ตัวแปร cache ต่างๆ) บางครั้งไม่ถูกล้างสนิท ทำให้ล็อกอินรอบถัดไปในโปรแกรมเดิม
+            // มีปัญหา ต้องปิดเปิดแอปใหม่ถึงจะล็อกอินได้ปกติ - แก้ให้ "รีโหลดหน้าทั้งหมด" ทุกครั้งที่ออกจากระบบแทน
+            // ซึ่งเคลียร์ทุกอย่างในหน่วยความจำสะอาดเหมือนเปิดแอปใหม่จริงๆ แต่ไม่ต้องปิดโปรแกรมเอง
+            function finishLogout() {
+                location.reload();
+            }
+            if (session) {
+                runServerCall('logoutUser', [session.username, session.token], finishLogout, finishLogout, 5000);
+            } else {
+                finishLogout();
+            }
         }
 
         // เคลียร์ทุกอย่างที่แคชไว้ในตัวแปร JS + ล้างตารางที่เรนเดอร์ไว้บนหน้าเว็บทั้งหมด
@@ -1787,10 +1829,93 @@
             refreshBillingRoundOptions();
         }
 
+        // ==================== แจ้งเตือนอัปเดตเวอร์ชันใหม่ ====================
+        // ตัวโปรแกรมเช็คอัปเดตกับ GitHub Releases ให้เองอยู่แล้วเป็นระยะ (ดู src/main.js) และดาวน์โหลดให้อัตโนมัติ
+        // ส่วนนี้คือหน้าตาที่ผู้ใช้เห็น - เดิมทำงานอยู่เบื้องหลังเงียบ ๆ ผู้ใช้ไม่รู้ตัวเลยว่ามีเวอร์ชันใหม่แล้ว
+        // ต้องรอจนกว่าจะปิดโปรแกรมเองถึงจะได้อัปเดต (คนที่เปิดแอปค้างไว้ทั้งวันเลยไม่ได้อัปเดตสักที)
+        // ตอนนี้เพิ่มแถบแจ้งเตือน + ปุ่ม "รีสตาร์ทเพื่ออัปเดตตอนนี้" ให้กดอัปเดตได้ทันทีที่โหลดเสร็จ
+        function installUpdateNow() {
+            if (window.cp9x && window.cp9x.updater) window.cp9x.updater.install();
+        }
+
+        // ปุ่ม "ตรวจอัปเดต" ในแถบเมนูด้านซ้าย - สั่งเช็คกับ GitHub Releases ทันทีโดยไม่ต้องรอรอบอัตโนมัติ
+        function checkUpdateNow() {
+            if (window.cp9x && window.cp9x.updater) window.cp9x.updater.check();
+        }
+
+        // แสดงเวอร์ชันที่ติดตั้งอยู่จริงในเครื่องนี้ (ดึงจากตัวโปรแกรม ไม่ใช่ค่าที่พิมพ์ค้างไว้ในโค้ดหน้าเว็บ
+        // จึงตรงกับเวอร์ชันที่ build/ปล่อยขึ้น GitHub Releases เสมอ ไม่มีทางไม่ตรงกัน)
+        if (window.cp9x && window.cp9x.getVersion) {
+            window.cp9x.getVersion().then(function (v) {
+                const el = document.getElementById('appVersionLabel');
+                if (el) el.textContent = v || '-';
+            }).catch(function () {});
+        }
+
+        function renderUpdateState(state) {
+            if (!state) return;
+            const toast = document.getElementById('updateToast');
+            const icon = document.getElementById('updateToastIcon');
+            const title = document.getElementById('updateToastTitle');
+            const msg = document.getElementById('updateToastMessage');
+            const progWrap = document.getElementById('updateToastProgressWrap');
+            const progBar = document.getElementById('updateToastProgressBar');
+            const installBtn = document.getElementById('updateToastInstallBtn');
+            if (!toast) return;
+
+            progWrap.classList.add('hidden');
+            installBtn.classList.add('hidden');
+
+            if (state.status === 'available') {
+                icon.className = 'fa-solid fa-cloud-arrow-down text-lg mt-0.5 text-emerald-400';
+                title.textContent = 'พบเวอร์ชันใหม่ ' + (state.newVersion || '');
+                msg.textContent = 'กำลังดาวน์โหลดให้อัตโนมัติ กรุณาอย่าปิดโปรแกรม';
+                toast.classList.remove('hidden');
+            } else if (state.status === 'downloading') {
+                icon.className = 'fa-solid fa-cloud-arrow-down text-lg mt-0.5 text-emerald-400';
+                title.textContent = 'กำลังดาวน์โหลดอัปเดต';
+                msg.textContent = (state.percent || 0) + '% แล้ว (ใช้งานต่อได้ตามปกติระหว่างรอ)';
+                progWrap.classList.remove('hidden');
+                progBar.style.width = (state.percent || 0) + '%';
+                toast.classList.remove('hidden');
+            } else if (state.status === 'downloaded') {
+                icon.className = 'fa-solid fa-circle-check text-lg mt-0.5 text-emerald-400';
+                title.textContent = 'ดาวน์โหลดเวอร์ชันใหม่ ' + (state.newVersion || '') + ' เสร็จแล้ว';
+                msg.textContent = 'กดปุ่มด้านล่างเพื่ออัปเดตทันที (หรือจะอัปเดตให้เองอัตโนมัติตอนปิดโปรแกรมครั้งถัดไปก็ได้)';
+                installBtn.classList.remove('hidden');
+                toast.classList.remove('hidden');
+            } else if (state.status === 'error' && state.manual) {
+                icon.className = 'fa-solid fa-triangle-exclamation text-lg mt-0.5 text-amber-400';
+                title.textContent = 'ตรวจหาอัปเดตไม่สำเร็จ';
+                msg.textContent = state.message || '';
+                toast.classList.remove('hidden');
+            } else if (state.status === 'not-available' && state.manual) {
+                icon.className = 'fa-solid fa-circle-check text-lg mt-0.5 text-emerald-400';
+                title.textContent = 'ใช้เวอร์ชันล่าสุดอยู่แล้ว';
+                msg.textContent = 'เวอร์ชันปัจจุบัน ' + (state.version || '');
+                toast.classList.remove('hidden');
+                setTimeout(function () { toast.classList.add('hidden'); }, 5000);
+            }
+        }
+
+        if (window.cp9x && window.cp9x.updater) {
+            window.cp9x.updater.onState(renderUpdateState);
+            // เผื่อกรณีที่สถานะอัปเดตเปลี่ยนไปก่อนหน้าเว็บจะโหลดเสร็จ ให้ดึงสถานะล่าสุดมาแสดงตั้งแต่แรกด้วย
+            window.cp9x.updater.getState().then(renderUpdateState).catch(function () {});
+        }
+
         // ตอนเปิดหน้าเว็บ เช็คว่ามี session ที่ยังใช้ได้อยู่ในเครื่องหรือไม่ ถ้ามีเข้าแอปให้ทันทีไม่ต้อง login ซ้ำ
+        // เดิมถ้าไม่มี session เก่าค้างอยู่ (เช่น เพิ่งออกจากระบบมา) จะไม่ยิงอะไรไปเซิร์ฟเวอร์เลยจนกว่าจะกดปุ่ม "เข้าสู่ระบบ"
+        // ทำให้ไปเจอความช้าของ "cold start" (Supabase Edge Function พอไม่มีใครเรียกสักพักจะเย็นตัว เรียกครั้งแรกช้า)
+        // ตรงๆ ตอนกดล็อกอินจริง - แก้ให้ "อุ่นเครื่อง" เซิร์ฟเวอร์ไว้ล่วงหน้าตั้งแต่เปิดหน้าเว็บเสมอ แม้ไม่มี session เก่า
+        // ก็ยิงด้วยค่าว่างไปก่อน (เซิร์ฟเวอร์ตอบกลับทันทีแบบไม่แตะฐานข้อมูล แต่ทำให้ฟังก์ชัน "บูต" รอไว้ล่วงหน้าแล้ว
+        // ระหว่างที่ผู้ใช้กำลังพิมพ์ชื่อผู้ใช้/รหัสผ่านอยู่พอดี พอกดปุ่มจริงจะไวขึ้นมาก)
         (function checkExistingSession() {
             const saved = loadSessionFromStorage();
-            if (!saved) return;
+            if (!saved) {
+                runServerCall('verifySession', ['', ''], function () {}, function () {});
+                return;
+            }
             runServerCall('verifySession', [saved.username, saved.token], function (res) {
                 if (res && res.valid) {
                     currentSession = saved;
@@ -2010,6 +2135,26 @@
             if (statusEl) { statusEl.textContent = ''; statusEl.className = 'text-xs mt-1 text-slate-400'; }
         }
 
+        // บังคับให้ช่อง "เลขทรัพย์สิน" รับเฉพาะตัวเลข 12 หลักเท่านั้น
+        // ตัดอักขระที่ไม่ใช่ตัวเลขออกทันทีที่พิมพ์/วาง และแจ้งสถานะให้เห็นว่าครบ 12 หลักหรือยัง
+        function enforceAssetIdDigits(input) {
+            const digitsOnly = input.value.replace(/\D/g, '').slice(0, 12);
+            if (input.value !== digitsOnly) input.value = digitsOnly;
+
+            const statusEl = document.getElementById('cl_assetIdStatus');
+            if (!statusEl) return;
+            if (digitsOnly.length === 0) {
+                statusEl.textContent = 'ต้องเป็นตัวเลข 12 หลักเท่านั้น';
+                statusEl.className = 'text-xs mt-1 text-slate-400';
+            } else if (digitsOnly.length < 12) {
+                statusEl.textContent = 'ยังไม่ครบ (ตอนนี้ ' + digitsOnly.length + '/12 หลัก)';
+                statusEl.className = 'text-xs mt-1 text-amber-600';
+            } else {
+                statusEl.textContent = '✓ ครบ 12 หลัก';
+                statusEl.className = 'text-xs mt-1 text-emerald-600';
+            }
+        }
+
         // เช็คว่าเลขที่ใบแจ้งซ่อมบำรุงนี้ถูก "เปิดงาน" ไปแล้วหรือยัง (เช็คสดตอนกรอกเลขงานในฟอร์มเปิดงาน)
         // ถ้าพบว่ามีอยู่แล้ว = ห้ามเปิดซ้ำ (กันกรณีหลายคนกรอกเลขเดียวกัน)
         function checkOpenJobNumberDuplicate(jobId) {
@@ -2037,8 +2182,9 @@
             }).checkOpenIssueExists(jobId);
         }
 
-        // เช็คว่ามีการเปิดงานเลขนี้ไว้ก่อนหรือไม่ + เคยปิดงานไปแล้วหรือยัง (เช็คสดตอนกรอกเลขงานในฟอร์มปิดงาน)
-        function checkJobNumberExists(jobId) {
+        // เช็คว่ามีการเปิดงานเลขนี้ไว้ก่อนหรือไม่ + "เลขงาน+เลขทรัพย์สิน" คู่นี้เคยปิดงานไปแล้วหรือยัง
+        // (เช็คสดตอนกรอกเลขงาน หรือเลขทรัพย์สิน เสร็จในฟอร์มปิดงาน - 1 เลขงานปิดได้หลายครั้งถ้าเลขทรัพย์สินต่างกัน)
+        function checkJobNumberExists(jobId, assetId) {
             const statusEl = document.getElementById('cl_kissflowStatus');
             if (!jobId) { statusEl.textContent = ''; return; }
 
@@ -2051,10 +2197,12 @@
                         statusEl.textContent = 'ตรวจสอบล้มเหลว: ' + res.error;
                         statusEl.className = 'text-xs mt-1 text-red-500';
                     } else if (res && res.exists) {
-                        // เปิดงานไว้แล้ว - เช็คต่อว่าปิดงานไปแล้วหรือยัง (กันปิดซ้ำ)
+                        // เปิดงานไว้แล้ว - เช็คต่อว่า "เลขงาน+เลขทรัพย์สิน" คู่นี้เคยปิดไปแล้วหรือยัง (กันปิดซ้ำทรัพย์สินชิ้นเดิม)
                         google.script.run.withSuccessHandler(function (closeRes) {
                             if (closeRes && closeRes.exists) {
-                                statusEl.textContent = '✗ เลขงานนี้ถูกปิดงานไปแล้ว ห้ามปิดซ้ำ';
+                                statusEl.textContent = assetId
+                                    ? ('✗ เลขงานนี้ + เลขทรัพย์สิน "' + assetId + '" ถูกปิดงานไปแล้ว ห้ามปิดซ้ำ (ถ้าเป็นทรัพย์สินคนละชิ้น กรุณาระบุเลขทรัพย์สินให้ต่างกัน)')
+                                    : '✗ เลขงานนี้ถูกปิดงานไปแล้ว (ไม่ระบุเลขทรัพย์สิน) ห้ามปิดซ้ำ ถ้าเป็นทรัพย์สินคนละชิ้น กรุณาระบุเลขทรัพย์สิน';
                                 statusEl.className = 'text-xs mt-1 text-red-500 font-semibold';
                             } else {
                                 statusEl.textContent = '✓ พบการเปิดงานเลขนี้แล้ว บันทึกปิดงานได้';
@@ -2065,7 +2213,7 @@
                             // (เซิร์ฟเวอร์จะเช็คซ้ำอีกชั้นตอนกดบันทึกจริงอยู่ดี)
                             statusEl.textContent = '✓ พบการเปิดงานเลขนี้แล้ว';
                             statusEl.className = 'text-xs mt-1 text-emerald-600';
-                        }).checkCloseIssueExists(jobId);
+                        }).checkCloseIssueExists(jobId, assetId);
                     } else {
                         statusEl.textContent = '⚠ ยังไม่พบการเปิดงานเลขนี้ กรุณาบันทึก "เปิดงาน" ก่อน';
                         statusEl.className = 'text-xs mt-1 text-red-500';
@@ -2194,6 +2342,21 @@
                 if (data.mainId) checkOpenJobNumberDuplicate(data.mainId.trim());
             } else if (mode === 'close') {
                 const data = { kissflow: '', branch: '', date: '', partsList: [], asset: '', action: '' };
+
+                // ข้อความปิดงานที่ใช้จริงส่วนใหญ่ ไม่มีหัวข้อ "ดำเนินการ :" แต่เขียนสิ่งที่ทำไว้เป็นข้อความลอย ๆ
+                // "ด้านบนสุด" ก่อนบรรทัดเลขงาน (มักครอบด้วยเครื่องหมายคำพูด) เช่น:
+                //   "ตรวจเช็คพบขอบยางตู้แช่หลุด ทำการแก้ไขใส่ขอบยางให้เรียบร้อย"
+                //   เลขงาน Kissflow : CM20260801-0243
+                // จึงเก็บทุกบรรทัดที่อยู่ "ก่อน" บรรทัดเลขงาน มาเป็นช่อง "ดำเนินการ" ให้อัตโนมัติ
+                // (ถ้าข้อความมีหัวข้อ "ดำเนินการ :" ระบุมาชัดเจน จะใช้ค่าจากหัวข้อนั้นแทน เพราะตรงกว่า)
+                const jobLineIdx = lines.findIndex(l => l.includes('เลขงาน'));
+                if (jobLineIdx > 0) {
+                    data.action = lines.slice(0, jobLineIdx).join(' ')
+                        .replace(/^["'“”‘’\s]+/, '')   // ตัดเครื่องหมายคำพูดหน้า-หลังออก (รองรับทั้งอัญประกาศตรงและโค้ง)
+                        .replace(/["'“”‘’\s]+$/, '')
+                        .trim();
+                }
+
                 for (let i = 0; i < lines.length; i++) {
                     let line = lines[i];
                     let nextLine = (i + 1 < lines.length) ? lines[i + 1] : '';
@@ -2215,7 +2378,12 @@
                         }
                     }
                     else if (line.includes('เลขทรัพย์สิน')) data.asset = extractValue(line, nextLine);
-                    else if (line.includes('ดำเนินการ')) data.action = extractValue(line, nextLine);
+                    else if (line.includes('ดำเนินการ')) {
+                        // ถ้าข้อความมีหัวข้อ "ดำเนินการ :" ระบุมาชัดเจน ให้ใช้ค่านั้นแทนข้อความด้านบนที่เดาไว้
+                        // (แต่ถ้าหัวข้อนี้ว่างเปล่า ให้คงค่าที่เก็บจากข้อความด้านบนไว้เหมือนเดิม ไม่ล้างทิ้ง)
+                        const explicitAction = extractValue(line, nextLine);
+                        if (explicitAction) data.action = explicitAction;
+                    }
                 }
                 document.getElementById('cl_kissflowId').value = data.kissflow || '';
                 setBranchAndLookup('cl_branchCode', 'cl_branchName', 'cl_branchStatus', data.branch);
@@ -2226,7 +2394,10 @@
                 } else {
                     addPartRow();
                 }
-                document.getElementById('cl_assetId').value = data.asset || '';
+                // เลขทรัพย์สินต้องเป็นตัวเลข 12 หลักเท่านั้น - ตัดอักขระอื่นที่ติดมากับข้อความออกให้อัตโนมัติ
+                const assetInput = document.getElementById('cl_assetId');
+                assetInput.value = (data.asset || '').replace(/\D/g, '').slice(0, 12);
+                enforceAssetIdDigits(assetInput); // อัปเดตข้อความสถานะใต้ช่องให้ตรงกับค่าที่เพิ่งดูดมา
                 document.getElementById('cl_actionTaken').value = data.action || '';
                 // แยกข้อความแล้วได้เลขงานมา เช็คซ้ำให้ทันที ไม่ต้องรอผู้ใช้คลิกออกจากช่อง
                 if (data.kissflow) checkJobNumberExists(data.kissflow.trim());
@@ -2468,6 +2639,7 @@
             document.getElementById('billingPreviewTbody').innerHTML = candidates.map(c => {
                 return `<tr class="border-t border-slate-100">
                     <td class="p-2">${c.job_id || ''}</td>
+                    <td class="p-2">${(c.asset_id && c.asset_id !== '-') ? c.asset_id : ''}</td>
                     <td class="p-2">${c.branch_name || c.branch_code || ''}</td>
                     <td class="p-2">${c.service_type || ''}</td>
                     <td class="p-2">${c.contractor || ''}</td>
@@ -3512,6 +3684,7 @@
             { key: 'service_type', label: 'Service Type' },
             { key: 'contractor', label: 'ผู้รับเหมา' },
             { key: 'opened_at', label: 'วันที่เปิดงาน' },
+            { key: 'asset_id', label: 'เลขทรัพย์สิน' },
             { key: 'fix_date', label: 'วันที่เข้าแก้ไข (ปิดงาน)' },
             { key: 'duration', label: 'ระยะเวลาดำเนินการ' },
             { key: 'status', label: 'สถานะ' }
@@ -4121,6 +4294,7 @@
                     <td data-col="service_type" class="p-2 whitespace-nowrap${hc('service_type')}">${row.service_type || ''}</td>
                     <td data-col="contractor" class="p-2 whitespace-nowrap${hc('contractor')}">${row.contractor || ''}</td>
                     <td data-col="opened_at" class="p-2 whitespace-nowrap${hc('opened_at')}">${formatTimestamp(row.opened_at)}</td>
+                    <td data-col="asset_id" class="p-2 whitespace-nowrap${hc('asset_id')}">${(row.asset_id && row.asset_id !== '-') ? row.asset_id : ''}</td>
                     <td data-col="fix_date" class="p-2 whitespace-nowrap${hc('fix_date')}">${row.fix_date || ''}</td>
                     <td data-col="duration" class="p-2 whitespace-nowrap${hc('duration')}">${getRowDurationDisplay(row)}</td>
                     <td data-col="status" class="p-2 whitespace-nowrap${hc('status')}">${statusBadgeHtml(row.status)}</td>
@@ -4156,6 +4330,7 @@
                 ['รายละเอียดปัญหาที่พบ', row.details],
                 ['วันที่ร้องขอ', row.req_date],
                 ['วันที่เปิดงาน', formatTimestamp(row.opened_at)],
+                ['เลขทรัพย์สิน', (row.asset_id && row.asset_id !== '-') ? row.asset_id : null],
                 ['วันที่เข้าแก้ไข (ปิดงาน)', row.fix_date],
                 ['วันที่ปิดงาน', row.closed_at ? formatTimestamp(row.closed_at) : null],
                 ['ดำเนินการแก้ไขแล้ว', row.action_taken],
@@ -4195,7 +4370,7 @@
                 return s ? '="' + s.replace(/"/g, '""') + '"' : s;
             };
 
-            const headers = ['เลขที่ใบแจ้งซ่อมบำรุง','สาขา','Service Type','ประเภทสัญญา','ผู้รับเหมา','รายละเอียดปัญหาที่พบ','วันที่ร้องขอ','วันที่เปิดงาน','วันที่เข้าแก้ไข (ปิดงาน)','วันที่ปิดงาน','ดำเนินการแก้ไขแล้ว','ระยะเวลาดำเนินการ','ส่งมอบงานให้ผู้รับเหมาแล้ว','เสร็จสิ้น (ตัดบิลแล้ว)','สถานะปัจจุบัน'];
+            const headers = ['เลขที่ใบแจ้งซ่อมบำรุง','สาขา','Service Type','ประเภทสัญญา','ผู้รับเหมา','รายละเอียดปัญหาที่พบ','วันที่ร้องขอ','วันที่เปิดงาน','เลขทรัพย์สิน','วันที่เข้าแก้ไข (ปิดงาน)','วันที่ปิดงาน','ดำเนินการแก้ไขแล้ว','ระยะเวลาดำเนินการ','ส่งมอบงานให้ผู้รับเหมาแล้ว','เสร็จสิ้น (ตัดบิลแล้ว)','สถานะปัจจุบัน'];
             const values = [
                 forceTextForExcel(row.main_id),
                 row.branch,
@@ -4205,6 +4380,7 @@
                 row.details,
                 row.req_date,
                 formatTimestamp(row.opened_at),
+                (row.asset_id && row.asset_id !== '-') ? row.asset_id : '',
                 row.fix_date,
                 row.closed_at ? formatTimestamp(row.closed_at) : '',
                 row.action_taken,
@@ -4560,6 +4736,7 @@
                             statusSpan.className = 'jf-status text-xs text-red-500';
                             return;
                         }
+                        // 1 เลขงาน = 1 ไฟล์ Excel เสมอ (ถ้ามีหลายเลขทรัพย์สิน จะมีหลาย sheet อยู่ในไฟล์เดียวกัน แพทเทิร์นฟอร์มเดิม เปลี่ยนแค่เลขทรัพย์สิน)
                         const file = res.files[0];
                         try {
                             const byteCharacters = atob(file.base64);
@@ -5008,6 +5185,12 @@
                 };
                 scriptFunction = 'saveOpenIssue';
             } else if (mode === 'close') {
+                // เลขทรัพย์สินบังคับเป็นตัวเลข 12 หลักเท่านั้น (ถ้ากรอกมา) - กันข้อมูลผิดรูปแบบตั้งแต่ต้นทาง
+                const assetIdVal = document.getElementById('cl_assetId').value.trim();
+                if (assetIdVal && !/^\d{12}$/.test(assetIdVal)) {
+                    showAlert('error', 'เลขทรัพย์สินต้องเป็นตัวเลข 12 หลักเท่านั้น (ตอนนี้กรอกมา ' + assetIdVal.length + ' หลัก)');
+                    return; // ยังไม่ทันตั้งปุ่มเป็น disabled จึงไม่ต้อง resetButton
+                }
                 formData = {
                     kissflowId: document.getElementById('cl_kissflowId').value,
                     branch: combineBranchCodeName('cl_branchCode', 'cl_branchName'),
@@ -5074,9 +5257,10 @@
                         showAlert('error', 'เลขงาน "' + formData.kissflowId + '" กำลังถูกพักงานอยู่ ไม่สามารถปิดงานได้ กรุณากด "กลับมาทำงาน" ในแท็บพักงานก่อน');
                         return;
                     }
-                    runServerCall('checkCloseIssueExists', [formData.kissflowId], function (closeCheckRes) {
+                    runServerCall('checkCloseIssueExists', [formData.kissflowId, formData.assetId], function (closeCheckRes) {
                         if (closeCheckRes && closeCheckRes.exists) {
-                            showAlert('error', 'เลขที่ใบแจ้งซ่อมบำรุง "' + formData.kissflowId + '" ถูกปิดงานไปแล้ว ห้ามปิดซ้ำ');
+                            const assetMsg = formData.assetId ? ('เลขทรัพย์สิน "' + formData.assetId + '" ') : '';
+                            showAlert('error', 'เลขที่ใบแจ้งซ่อมบำรุง "' + formData.kissflowId + '" ' + assetMsg + 'ถูกปิดงานไปแล้ว ห้ามปิดซ้ำ (ถ้าเป็นทรัพย์สินคนละชิ้น กรุณาระบุเลขทรัพย์สินให้ต่างกัน)');
                             return;
                         }
                         doActualSubmit();

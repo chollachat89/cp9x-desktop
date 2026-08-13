@@ -220,9 +220,11 @@ app.whenReady().then(() => {
   buildMenu();
   createWindow();
 
-  // ตรวจอัปเดตครั้งแรกหลังเปิดแอป 5 วินาที แล้วทุก 4 ชั่วโมง
+  // ตรวจอัปเดตครั้งแรกหลังเปิดแอป 5 วินาที แล้วทุก 30 นาที
+  // (เดิมตรวจทุก 4 ชั่วโมง ทำให้เครื่องที่เปิดแอปค้างไว้ได้อัปเดตช้ากว่าเครื่องอื่นมาก
+  //  ลดเหลือ 30 นาที เพื่อให้ทุกเครื่องได้เวอร์ชันใหม่ไล่เลี่ยกันหลังปล่อยอัปเดต)
   setTimeout(() => checkForUpdates(false), 5000);
-  setInterval(() => checkForUpdates(false), 4 * 60 * 60 * 1000);
+  setInterval(() => checkForUpdates(false), 30 * 60 * 1000);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

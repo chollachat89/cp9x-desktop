@@ -82,11 +82,13 @@ function parseFixDateString(str: string | null): Date | null {
 }
 
 // ==================== สร้าง PDF ตารางวางบิล (แทน Google Docs) ====================
-// ใช้ pdf-lib + fontkit ฝังฟอนต์ไทย (Sarabun) รองรับข้อความไทยเต็มรูปแบบ
+// ใช้ pdf-lib + fontkit ฝังฟอนต์ไทย รองรับข้อความไทยเต็มรูปแบบ
 // ธีมสีเขียวเหมือนต้นฉบับ (นี่คือที่มาของคำว่า "ใบเขียว") พร้อมโลโก้บริษัท ฝังหัวกระดาษซ้ำทุกหน้า
-
-const THAI_FONT_REGULAR_URL = 'https://github.com/google/fonts/raw/main/ofl/sarabun/Sarabun-Regular.ttf';
-const THAI_FONT_BOLD_URL = 'https://github.com/google/fonts/raw/main/ofl/sarabun/Sarabun-Bold.ttf';
+//
+// เดิมใช้ฟอนต์ "Sarabun" (Google Fonts) เปลี่ยนเป็น "TH Sarabun New" ตามคำขอ - เป็นฟอนต์มาตรฐานที่ใช้ในเอกสารราชการ/ทางการของไทย
+// (หน้าตาใกล้เคียงกับ Sarabun แต่เส้นตัวอักษรคมชัด อ่านง่ายกว่าเมื่อพิมพ์ในเอกสารทางการ) ดึงจากคลังฟอนต์ไทยฟรีของหน่วยงานราชการ (DIP-SIPA)
+const THAI_FONT_REGULAR_URL = 'https://raw.githubusercontent.com/jeffmcneill/thai-font-collection/master/downloadable-free-thai-fonts/dip-sipa/TH-Sarabun-New-Regular.ttf';
+const THAI_FONT_BOLD_URL = 'https://raw.githubusercontent.com/jeffmcneill/thai-font-collection/master/downloadable-free-thai-fonts/dip-sipa/TH-Sarabun-New-Bold.ttf';
 
 // โลโก้บริษัท (PNG, 200x176) ดึงมาจากค่าคงที่เดิมในระบบ Apps Script (CR_LOGO_BASE64) ฝังตรงเป็น base64
 // แบ่งเป็นหลายส่วนเพื่อความสะดวกในการดูแลไฟล์เท่านั้น เนื้อหาจะถูกต่อกันตามลำดับ
@@ -492,9 +494,6 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
     const usableWidth = PAGE_W - MARGIN * 2;
     const BLACK = rgb(0.15, 0.15, 0.15);
     const BORDER = rgb(0.5, 0.5, 0.5);
-    const WHITE = rgb(1, 1, 1);
-    const GREEN = rgb(0.11, 0.76, 0.57); // โทนเขียวมิ้นท์ ตามแบบฟอร์มใหม่ที่ส่งมา (SME MOVE style) — ใช้เป็นสีหลักของเอกสารแทนโทนเทา/ดำ/ส้มเดิม
-    const GREEN_DARK = rgb(0.02, 0.55, 0.4);
 
     // เดา "เดือน/ปี" ที่จะโชว์ในบรรทัดหัวรายการ จากวันที่เข้างานแรกสุดของรอบนี้ (ถ้าไม่มีข้อมูลวันที่เลยใช้เดือนปัจจุบัน)
     const visitDates = rows.map((r: any) => r.visit_date).filter(Boolean).sort();
@@ -549,20 +548,12 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
       pdfCenterText(page, font, '557-557/1 ถนน ไทยรามัญ แขวงสามวาตะวันตก เขตคลองสามวา กรุงเทพมหานคร 10510', PAGE_W / 2, y, 10, BLACK);
       y -= 13;
       pdfCenterText(page, font, 'โทร 089-743-7111 : เลขประจำตัวผู้เสียภาษี 0105562019441', PAGE_W / 2, y, 10, BLACK);
-      y -= 18;
-
-      // แถบเขียว "ใบเสนอราคา / QUOTATION" + กล่อง "ต้นฉบับ/Original" + เลขที่เอกสาร ตามสไตล์แบบฟอร์มใหม่ (โทนเขียวมิ้นท์)
-      const titleBoxH = 28;
-      const titleBoxW = usableWidth * 0.6;
-      const docBoxX = MARGIN + titleBoxW + 8;
-      const docBoxW = usableWidth - titleBoxW - 8;
-      page.drawRectangle({ x: MARGIN, y: y - titleBoxH, width: titleBoxW, height: titleBoxH, color: GREEN });
-      pdfCenterText(page, boldFont, 'ใบเสนอราคา / QUOTATION', MARGIN + titleBoxW / 2, y - titleBoxH / 2 - 5, 14, WHITE);
-      page.drawRectangle({ x: docBoxX, y: y - titleBoxH, width: docBoxW, height: titleBoxH, borderColor: BORDER, borderWidth: 0.75 });
-      page.drawText('ต้นฉบับ / Original', { x: docBoxX + 8, y: y - 11, size: 7.5, font, color: rgb(0.45, 0.45, 0.45) });
-      page.drawText(docNo, { x: docBoxX + 8, y: y - 23, size: 11, font: boldFont, color: GREEN_DARK });
-      y -= titleBoxH + 8;
-      return y;
+      y -= 21;
+      // หัวข้อเอกสารหลัก ขยับขนาดขึ้นจากตัวบริษัท (16) เป็น 18 ให้เห็นลำดับความสำคัญชัดเจนขึ้น (เดิมเท่ากันทำให้ดูไม่เป็นหัวข้อ)
+      pdfCenterText(page, boldFont, 'ใบเสนอราคา / QUOTATION', PAGE_W / 2, y, 18, BLACK);
+      y -= 10;
+      page.drawLine({ start: { x: MARGIN, y: y - 4 }, end: { x: PAGE_W - MARGIN, y: y - 4 }, thickness: 1, color: BORDER });
+      return y - 16; // บล็อกข้อความหัวกระดาษ (~77pt) สูงกว่าโลโก้ (46pt) อยู่แล้ว จึงไม่มีทางชนกัน ไม่ต้องเผื่อเพิ่ม
     }
 
     // กล่องข้อมูลลูกค้า ตามแบบฟอร์ม Excel ต้นฉบับเป๊ะๆ (ตรวจสอบตำแหน่งเส้นจากภาพจริงแล้ว):
@@ -601,15 +592,16 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
     }
 
     const HEADER_H = 20;
+    const WHITE = rgb(1, 1, 1);
     function drawTableHeaderRow(page: any, y: number): number {
-      page.drawRectangle({ x: MARGIN, y: y - HEADER_H, width: usableWidth, height: HEADER_H, color: GREEN });
+      page.drawRectangle({ x: MARGIN, y: y - HEADER_H, width: usableWidth, height: HEADER_H, color: rgb(0, 0, 0) });
       pdfDrawCellText(page, boldFont, 'Item', colX_item, y - HEADER_H + 6, colW_item, 9, WHITE, 'center');
       pdfDrawCellText(page, boldFont, 'Description', colX_desc, y - HEADER_H + 6, colW_desc, 9, WHITE, 'center');
       pdfDrawCellText(page, boldFont, 'Qty', colX_qty, y - HEADER_H + 6, colW_qty, 9, WHITE, 'center');
       pdfDrawCellText(page, boldFont, 'Unit', colX_unit, y - HEADER_H + 6, colW_unit, 9, WHITE, 'center');
       pdfDrawCellText(page, boldFont, 'Unit Price', colX_price, y - HEADER_H + 6, colW_price, 9, WHITE, 'center');
       pdfDrawCellText(page, boldFont, 'Amount', colX_amount, y - HEADER_H + 6, colW_amount, 9, WHITE, 'center');
-      colStops.forEach((x) => { page.drawLine({ start: { x, y }, end: { x, y: y - HEADER_H }, thickness: 0.5, color: GREEN_DARK }); });
+      colStops.forEach((x) => { page.drawLine({ start: { x, y }, end: { x, y: y - HEADER_H }, thickness: 0.5, color: rgb(0.4, 0.4, 0.4) }); });
       page.drawLine({ start: { x: MARGIN, y: y - HEADER_H }, end: { x: MARGIN + usableWidth, y: y - HEADER_H }, thickness: 0.5, color: BORDER });
       return y - HEADER_H;
     }
@@ -643,15 +635,7 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
       page.drawLine({ start: { x: MARGIN, y: yTop - h }, end: { x: MARGIN + usableWidth, y: yTop - h }, thickness: 0.4, color: BORDER });
     }
 
-    // แถบเขียวท้ายกระดาษ ตรึงไว้ทุกหน้า (รวมหน้าต่อเนื่องที่มีแต่รายการ ยังไม่ถึงสรุปยอด) ให้ดูเป็นชุดเอกสารเดียวกัน
-    function drawFooterBar(pg: any): void {
-      const footerH = 20;
-      pg.drawRectangle({ x: MARGIN, y: MARGIN, width: usableWidth, height: footerH, color: GREEN });
-      pdfCenterText(pg, font, 'บริษัท ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด  557-557/1 ถนน ไทยรามัญ แขวงสามวาตะวันตก เขตคลองสามวา กรุงเทพมหานคร 10510  โทร 089-743-7111', PAGE_W / 2, MARGIN + 7, 8, WHITE);
-    }
-
-    const FOOTER_RESERVE = 310; // พื้นที่กันไว้ท้ายเอกสาร สำหรับสรุปยอด+VAT+เงื่อนไขชำระเงิน+กล่องลายเซ็น 3 ช่อง+แถบเขียวท้ายกระดาษ (เฉพาะหน้าสุดท้าย ต้องอยู่หน้าเดียวกันทั้งหมด ไม่ตัดข้ามหน้า)
-    const FOOTER_BAR_RESERVE = 30; // ทุกหน้า (รวมหน้าต่อเนื่องที่มีแต่รายการ) ต้องเผื่อพื้นที่แถบเขียวท้ายกระดาษที่ตรึงอยู่ขอบล่างเสมอ ไม่งั้นแถวสุดท้ายบนหน้าจะโดนแถบเขียวทับ
+    const FOOTER_RESERVE = 280; // พื้นที่กันไว้ท้ายเอกสาร สำหรับสรุปยอด+VAT+จำนวนเงินตัวอักษร+เงื่อนไขชำระเงิน+ลายเซ็น (ต้องอยู่หน้าเดียวกันทั้งหมด ไม่ตัดข้ามหน้า) — เผื่อเพิ่มจากเดิมให้ตรงกับช่องว่างที่ขยายด้านบน
     let page = pdfDoc.addPage([PAGE_W, PAGE_H]);
     let y = drawLetterhead(page);
     y = drawCustomerBlock(page, y);
@@ -662,9 +646,8 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
     while (rowCursor < rowRenderInfo.length) {
       const info = rowRenderInfo[rowCursor];
       const isLastRow = rowCursor === rowRenderInfo.length - 1;
-      const neededSpace = info.h + (isLastRow ? FOOTER_RESERVE : FOOTER_BAR_RESERVE);
+      const neededSpace = info.h + (isLastRow ? FOOTER_RESERVE : 0);
       if (y - neededSpace < MARGIN) {
-        drawFooterBar(page);
         page = pdfDoc.addPage([PAGE_W, PAGE_H]);
         y = drawLetterhead(page);
         y = drawTableHeaderRow(page, y);
@@ -680,6 +663,7 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
 
     // ---- สรุปยอด ----
     const summaryLabelX = colX_price - 90;
+    const ORANGE = rgb(0.969, 0.796, 0.588); // สีส้ม/พีชสำหรับไฮไลท์แถว Grand Total ตามแบบฟอร์ม Excel ต้นฉบับ
     function moneyOrDash(n: number): string { return n ? money(n) : '-'; }
     function drawSummaryLine(label: string, value: string, bold = false): void {
       const f = bold ? boldFont : font;
@@ -692,47 +676,36 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
     drawSummaryLine('Net Total', moneyOrDash(netTotal));
     drawSummaryLine('VAT 7%', moneyOrDash(vat));
 
-    // ---- แถว Grand Total: จำนวนเงินตัวอักษรอยู่ฝั่งซ้าย + Grand Total ฝั่งขวา อยู่แถวเดียวกัน ไฮไลท์สีเขียวเต็มความกว้าง ตัวอักษรขาว ตามแบบฟอร์มใหม่ ----
-    page.drawRectangle({ x: MARGIN, y: y - 4, width: usableWidth, height: 15, color: GREEN });
+    // ---- แถว Grand Total: จำนวนเงินตัวอักษรอยู่ฝั่งซ้าย + Grand Total ฝั่งขวา อยู่แถวเดียวกัน ไฮไลท์สีส้มเต็มความกว้าง ตามแบบฟอร์มล่าสุด ----
+    page.drawRectangle({ x: MARGIN, y: y - 4, width: usableWidth, height: 15, color: ORANGE });
     const bahtText = '(' + thaiBahtText(grandTotal) + ')';
     const bahtMaxWidth = summaryLabelX - MARGIN - 8;
     const bahtSize = font.widthOfTextAtSize(bahtText, 10) <= bahtMaxWidth ? 10 : 8;
-    page.drawText(bahtText, { x: MARGIN + 4, y: y + (bahtSize === 10 ? 0 : 1), size: bahtSize, font, color: WHITE });
-    page.drawText('Grand Total', { x: summaryLabelX, y, size: 10, font: boldFont, color: WHITE });
-    pdfDrawCellText(page, boldFont, moneyOrDash(grandTotal), colX_amount, y, colW_amount, 10, WHITE, 'right', 6);
+    page.drawText(bahtText, { x: MARGIN + 4, y: y + (bahtSize === 10 ? 0 : 1), size: bahtSize, font, color: BLACK });
+    page.drawText('Grand Total', { x: summaryLabelX, y, size: 10, font: boldFont, color: BLACK });
+    pdfDrawCellText(page, boldFont, moneyOrDash(grandTotal), colX_amount, y, colW_amount, 10, BLACK, 'right', 6);
     y -= 20;
 
-    // ---- เงื่อนไขชำระเงิน + ลายเซ็น (3 ช่อง: ผู้รับวางบิล / (พื้นที่ประทับตรา) / ผู้มีอำนาจลงนาม ตามสไตล์แบบฟอร์มใหม่) ----
+    // ---- เงื่อนไขชำระเงิน + ลายเซ็น ----
     page.drawText('เงื่อนไขชำระเงิน  1)  100% ชำระเมื่อส่งมอบงาน  (เครดิต 45 วัน)', { x: MARGIN, y, size: 9, font, color: BLACK });
+    const sigX = PAGE_W - MARGIN - 200;
+    page.drawText('ขอแสดงความนับถือ', { x: sigX, y, size: 9, font, color: BLACK });
     y -= 13;
     page.drawText('กำหนดยืนราคา :  45 วันหลังจากในใบเสนอราคานี้', { x: MARGIN, y, size: 9, font, color: BLACK });
-    y -= 14;
-
-    const sigBoxTop = y;
-    const sigBoxH = 62;
-    const sigColW = usableWidth / 3;
-    const sigCol1X = MARGIN, sigCol2X = MARGIN + sigColW, sigCol3X = MARGIN + sigColW * 2;
-    [sigCol1X, sigCol2X, sigCol3X, MARGIN + usableWidth].forEach((x) => {
-      page.drawLine({ start: { x, y: sigBoxTop }, end: { x, y: sigBoxTop - sigBoxH }, thickness: 0.75, color: BORDER });
-    });
-    page.drawLine({ start: { x: MARGIN, y: sigBoxTop }, end: { x: MARGIN + usableWidth, y: sigBoxTop }, thickness: 0.75, color: BORDER });
-    page.drawLine({ start: { x: MARGIN, y: sigBoxTop - sigBoxH }, end: { x: MARGIN + usableWidth, y: sigBoxTop - sigBoxH }, thickness: 0.75, color: BORDER });
-
-    // ช่องซ้าย: ผู้รับวางบิล (เส้นประว่างไว้ให้เซ็นรับเอง)
-    pdfCenterText(page, font, '........................................', sigCol1X + sigColW / 2, sigBoxTop - 34, 9, BLACK);
-    pdfCenterText(page, font, 'ผู้รับวางบิล / Receiver Signature', sigCol1X + sigColW / 2, sigBoxTop - 47, 8, BLACK);
-    pdfCenterText(page, font, 'วันที่ / Date ......................', sigCol1X + sigColW / 2, sigBoxTop - 58, 8, BLACK);
-
-    // ช่องขวา: ผู้มีอำนาจลงนาม พร้อมลายเซ็นจริง
-    const sigH = 30;
+    page.drawText('บริษัท  ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด', { x: sigX, y, size: 9, font, color: BLACK });
+    y -= 8;
+    // ลายเซ็นจริงวางทับเหนือเส้นประเลย (ไม่ต้องเซ็นสดเพิ่ม) — จัดกึ่งกลางบล็อกลายเซ็นเหมือนตำแหน่งในไฟล์ Excel ต้นฉบับ
+    const sigH = 34;
     const sigW = sigH / sigAspect;
-    page.drawImage(sigImage, { x: sigCol3X + sigColW / 2 - sigW / 2, y: sigBoxTop - 32, width: sigW, height: sigH });
-    pdfCenterText(page, font, '........................................', sigCol3X + sigColW / 2, sigBoxTop - 34, 9, BLACK);
-    pdfCenterText(page, boldFont, '( นายเจริญ พูนน้อย )', sigCol3X + sigColW / 2, sigBoxTop - 47, 8, BLACK);
-    pdfCenterText(page, font, 'ผู้มีอำนาจลงนาม / Authorized Signature', sigCol3X + sigColW / 2, sigBoxTop - 58, 7, BLACK);
-    y = sigBoxTop - sigBoxH - 14;
-
-    drawFooterBar(page);
+    page.drawImage(sigImage, { x: sigX + 70 - sigW / 2, y: y - sigH + 6, width: sigW, height: sigH });
+    y -= sigH;
+    page.drawText('........................................................................', { x: sigX, y, size: 9, font, color: BLACK });
+    y -= 13;
+    page.drawText('( นายเจริญ พูนน้อย )', { x: sigX + 30, y, size: 9, font, color: BLACK });
+    y -= 12;
+    page.drawText('Managing Director', { x: sigX + 30, y, size: 9, font, color: BLACK });
+    y -= 12;
+    page.drawText('089-743-7111', { x: sigX + 30, y, size: 9, font, color: BLACK });
 
     const pdfBytes = await pdfDoc.save();
     let binary = '';
@@ -761,11 +734,11 @@ async function generatePmQuotationXlsxBase64(rows: any[], roundNo: number | stri
     sheet.getColumn(6).width = 13;  // Amount
 
     const GRAY_BORDER = 'FF808080';
-    const GREEN_FILL = 'FF1CC291'; // โทนเขียวมิ้นท์เดียวกับ PDF (rgb 0.11, 0.76, 0.57)
-    const GREEN_DARK_FILL = 'FF058C66'; // rgb 0.02, 0.55, 0.4
-    function border(r: number, c: number, sides: { top?: boolean; bottom?: boolean; left?: boolean; right?: boolean }, color?: string): void {
+    const BLACK_FILL = 'FF000000';
+    const ORANGE_FILL = 'FFF7CB96';
+    function border(r: number, c: number, sides: { top?: boolean; bottom?: boolean; left?: boolean; right?: boolean }): void {
       const cell = sheet.getCell(r, c);
-      const line = { style: 'thin', color: { argb: color || GRAY_BORDER } };
+      const line = { style: 'thin', color: { argb: GRAY_BORDER } };
       cell.border = {
         top: sides.top ? line : undefined,
         bottom: sides.bottom ? line : undefined,
@@ -789,18 +762,9 @@ async function generatePmQuotationXlsxBase64(rows: any[], roundNo: number | stri
     sheet.mergeCells(1, 1, 1, 6); setCell(1, 1, 'บริษัท ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด', { bold: true, size: 16, align: 'center' });
     sheet.mergeCells(2, 1, 2, 6); setCell(2, 1, '557-557/1 ถนน ไทยรามัญ แขวงสามวาตะวันตก เขตคลองสามวา กรุงเทพมหานคร 10510', { size: 10, align: 'center' });
     sheet.mergeCells(3, 1, 3, 6); setCell(3, 1, 'โทร 089-743-7111 : เลขประจำตัวผู้เสียภาษี 0105562019441', { size: 10, align: 'center' });
-    sheet.mergeCells(4, 1, 4, 4);
-    setCell(4, 1, 'ใบเสนอราคา / QUOTATION', { bold: true, size: 14, align: 'center', color: 'FFFFFFFF', fill: GREEN_FILL });
-    sheet.mergeCells(4, 5, 4, 6);
-    sheet.getCell(4, 5).value = {
-      richText: [
-        { font: { name: 'Tahoma', size: 7.5, color: { argb: 'FF737373' } }, text: 'ต้นฉบับ / Original\n' },
-        { font: { name: 'Tahoma', size: 11, bold: true, color: { argb: GREEN_DARK_FILL } }, text: docNo },
-      ],
-    };
-    sheet.getCell(4, 5).alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
-    for (let c = 1; c <= 6; c++) border(4, c, { top: true, bottom: true, left: c === 1 || c === 5, right: c === 4 || c === 6 });
-    [1, 2, 3, 4].forEach((r) => { sheet.getRow(r).height = r === 1 ? 24 : r === 4 ? 34 : 16; });
+    sheet.mergeCells(4, 1, 4, 6); setCell(4, 1, 'ใบเสนอราคา / QUOTATION', { bold: true, size: 16, align: 'center' });
+    for (let c = 1; c <= 6; c++) border(4, c, { bottom: true });
+    [1, 2, 3, 4].forEach((r) => { sheet.getRow(r).height = r === 1 ? 24 : r === 4 ? 26 : 16; });
 
     // ---- กล่องข้อมูลลูกค้า (แถว 5-7): ฝั่งซ้าย A:D ไม่มีเส้นแบ่งภายใน ตัวหนา / ฝั่งขวา E:F มีเส้นแบ่งเป็น 3 แถว ตัวปกติ ----
     const custR1 = 5, custR2 = 7;
@@ -827,11 +791,11 @@ async function generatePmQuotationXlsxBase64(rows: any[], roundNo: number | stri
     sheet.mergeCells(r, 1, r, 6); setCell(r, 1, 'We are please to submit you the following described here in at price, items and terms stated :', { size: 9 }); r++;
     r++; // แถวว่างคั่นก่อนตาราง
 
-    // ---- หัวตารางรายการ (พื้นเขียว ตัวขาว) ----
+    // ---- หัวตารางรายการ (พื้นดำ ตัวขาว) ----
     const tableHeaderRow = r;
     ['Item', 'Description', 'Qty', 'Unit', 'Unit Price', 'Amount'].forEach((label, i) => {
-      setCell(tableHeaderRow, i + 1, label, { bold: true, align: 'center', color: 'FFFFFFFF', fill: GREEN_FILL });
-      border(tableHeaderRow, i + 1, { top: true, bottom: true, left: i === 0, right: true }, GREEN_DARK_FILL);
+      setCell(tableHeaderRow, i + 1, label, { bold: true, align: 'center', color: 'FFFFFFFF', fill: BLACK_FILL });
+      border(tableHeaderRow, i + 1, { top: true, bottom: true, left: i === 0, right: true });
     });
     sheet.getRow(tableHeaderRow).height = 18;
     r++;
@@ -892,52 +856,29 @@ async function generatePmQuotationXlsxBase64(rows: any[], roundNo: number | stri
     summaryLine('Net Total', netTotal);
     summaryLine('VAT 7%', vat);
 
-    // ---- แถว Grand Total: จำนวนเงินตัวอักษร (คอลัมน์ B) + Grand Total (คอลัมน์ E/F) อยู่แถวเดียวกัน ไฮไลท์สีเขียวเต็มความกว้าง ตัวขาว ----
-    setCell(r, 2, '(' + thaiBahtText(grandTotal) + ')', { size: 11, color: 'FFFFFFFF' });
-    setCell(r, 5, 'Grand Total', { bold: true, color: 'FFFFFFFF' });
-    setCell(r, 6, grandTotal, { bold: true, align: 'right', color: 'FFFFFFFF' }); sheet.getCell(r, 6).numFmt = numFmtDash;
-    for (let c = 1; c <= 6; c++) sheet.getCell(r, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GREEN_FILL } };
+    // ---- แถว Grand Total: จำนวนเงินตัวอักษร (คอลัมน์ B) + Grand Total (คอลัมน์ E/F) อยู่แถวเดียวกัน ไฮไลท์สีส้มเต็มความกว้าง ----
+    setCell(r, 2, '(' + thaiBahtText(grandTotal) + ')', { size: 11 });
+    setCell(r, 5, 'Grand Total', { bold: true });
+    setCell(r, 6, grandTotal, { bold: true, align: 'right' }); sheet.getCell(r, 6).numFmt = numFmtDash;
+    for (let c = 1; c <= 6; c++) sheet.getCell(r, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ORANGE_FILL } };
     r++;
     r++;
 
-    // ---- เงื่อนไขชำระเงิน ----
-    sheet.mergeCells(r, 1, r, 6); setCell(r, 1, 'เงื่อนไขชำระเงิน  1)  100% ชำระเมื่อส่งมอบงาน  (เครดิต 45 วัน)', { size: 9 }); r++;
-    sheet.mergeCells(r, 1, r, 6); setCell(r, 1, 'กำหนดยืนราคา :  45 วันหลังจากในใบเสนอราคานี้', { size: 9 }); r++;
-    r++; // แถวว่างคั่นก่อนกล่องลายเซ็น
+    // ---- เงื่อนไขชำระเงิน + ลายเซ็น ----
+    sheet.mergeCells(r, 1, r, 4); setCell(r, 1, 'เงื่อนไขชำระเงิน  1)  100% ชำระเมื่อส่งมอบงาน  (เครดิต 45 วัน)', { size: 9 });
+    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, 'ขอแสดงความนับถือ', { size: 9, align: 'center' }); r++;
+    sheet.mergeCells(r, 1, r, 4); setCell(r, 1, 'กำหนดยืนราคา :  45 วันหลังจากในใบเสนอราคานี้', { size: 9 });
+    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, 'บริษัท  ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด', { size: 9, align: 'center' }); r++;
 
-    // ---- กล่องลายเซ็น 3 ช่อง: ผู้รับวางบิล / พื้นที่ประทับตรา / ผู้มีอำนาจลงนาม (ตามแบบฟอร์มใหม่) ----
-    const sigBoxTop = r;
-    const sigRows = 4;
-    for (let i = 0; i < sigRows; i++) sheet.getRow(sigBoxTop + i).height = 16;
-
-    sheet.mergeCells(sigBoxTop, 1, sigBoxTop, 2);
-    sheet.mergeCells(sigBoxTop, 3, sigBoxTop, 4);
-    sheet.mergeCells(sigBoxTop, 5, sigBoxTop, 6);
-    sheet.mergeCells(sigBoxTop + 1, 1, sigBoxTop + 1, 2); setCell(sigBoxTop + 1, 1, '........................................', { align: 'center' });
-    sheet.mergeCells(sigBoxTop + 1, 5, sigBoxTop + 1, 6); setCell(sigBoxTop + 1, 5, '........................................', { align: 'center' });
-    sheet.mergeCells(sigBoxTop + 2, 1, sigBoxTop + 2, 2); setCell(sigBoxTop + 2, 1, 'ผู้รับวางบิล / Receiver Signature', { size: 8, align: 'center' });
-    sheet.mergeCells(sigBoxTop + 2, 5, sigBoxTop + 2, 6); setCell(sigBoxTop + 2, 5, '( นายเจริญ พูนน้อย )', { size: 8, align: 'center', bold: true });
-    sheet.mergeCells(sigBoxTop + 3, 1, sigBoxTop + 3, 2); setCell(sigBoxTop + 3, 1, 'วันที่ / Date ......................', { size: 8, align: 'center' });
-    sheet.mergeCells(sigBoxTop + 3, 5, sigBoxTop + 3, 6); setCell(sigBoxTop + 3, 5, 'ผู้มีอำนาจลงนาม / Authorized Signature', { size: 7, align: 'center' });
-
-    for (let i = 0; i < sigRows; i++) {
-      const rr = sigBoxTop + i;
-      for (let c = 1; c <= 6; c++) {
-        border(rr, c, { top: i === 0, bottom: i === sigRows - 1, left: c === 1 || c === 3 || c === 5, right: c === 6 });
-      }
-    }
-
+    const sigRowStart = r;
     const sigBuf = Uint8Array.from(atob(PM_QUOTATION_SIGNATURE_PNG_BASE64), (c) => c.charCodeAt(0));
     const sigImgId = workbook.addImage({ buffer: sigBuf, extension: 'png' });
-    sheet.addImage(sigImgId, { tl: { col: 4.3, row: sigBoxTop - 1 + 0.15 }, ext: { width: 80, height: 34 } });
-
-    r = sigBoxTop + sigRows;
-    r++; // แถวว่างคั่นก่อนแถบสีเขียวท้ายกระดาษ
-
-    // ---- แถบสีเขียวท้ายกระดาษ (ที่อยู่บริษัท ตัวขาว) ----
-    sheet.mergeCells(r, 1, r, 6);
-    setCell(r, 1, 'บริษัท ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด  557-557/1 ถนน ไทยรามัญ แขวงสามวาตะวันตก เขตคลองสามวา กรุงเทพมหานคร 10510  โทร 089-743-7111', { size: 8, align: 'center', color: 'FFFFFFFF', fill: GREEN_FILL });
-    sheet.getRow(r).height = 18;
+    sheet.addImage(sigImgId, { tl: { col: 4.3, row: sigRowStart - 1 + 0.1 }, ext: { width: 90, height: 40 } });
+    r += 2;
+    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, '........................................................', { size: 9, align: 'center' }); r++;
+    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, '( นายเจริญ พูนน้อย )', { size: 9, align: 'center' }); r++;
+    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, 'Managing Director', { size: 9, align: 'center' }); r++;
+    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, '089-743-7111', { size: 9, align: 'center' });
 
     const buffer: ArrayBuffer = await workbook.xlsx.writeBuffer();
     const bytes = new Uint8Array(buffer);
@@ -967,49 +908,76 @@ function xlsxApplyBoxStyle(ws: any, r1: number, c1: number, r2: number, c2: numb
   }
 }
 
+// วาดฟอร์ม 1 แผ่น (แพทเทิร์นเดิมทั้งหมด) ลงใน sheet ที่ส่งเข้ามา เปลี่ยนแค่ค่า "เลขทรัพย์สิน" ตาม job.assetId
+function drawJobFormSheet(sheet: any, job: any) {
+  const colWidthsPx = [70, 95, 95, 75, 95, 75, 95, 95, 65, 60];
+  colWidthsPx.forEach((w, i) => { sheet.getColumn(i + 1).width = w / 7; });
+
+  sheet.getRow(1).height = 30;
+  sheet.getRow(2).height = 30;
+  sheet.getRow(3).height = 20;
+  for (let r = 4; r <= 43; r++) sheet.getRow(r).height = 26;
+
+  function setText(addr: string, value: any) {
+    sheet.getCell(addr).value = (value === null || value === undefined) ? '' : String(value);
+  }
+
+  setText('A1', 'รหัสสาขา'); setText('B1', job.branchCode);
+  setText('C1', 'ชื่อสาขา'); sheet.mergeCells('D1:F1'); setText('D1', job.branchName);
+  setText('G1', 'ประเภทงาน'); sheet.mergeCells('H1:J1'); setText('H1', job.serviceType);
+
+  setText('A2', 'เลขที่งาน'); sheet.mergeCells('B2:C2'); setText('B2', job.customerCase);
+  setText('D2', 'เลขทรัพย์สิน'); sheet.mergeCells('E2:J2'); setText('E2', job.assetId);
+
+  sheet.mergeCells('A3:E3'); setText('A3', 'ก่อนทำ');
+  sheet.mergeCells('F3:J3'); setText('F3', 'หลังทำ');
+
+  const photoBlocks: [number, string, string][] = [
+    [4, 'รูปชื่อสาขา', 'รูปเลข Asset\n(ถ่ายให้อ่านตัวเลขได้ชัดเจน)'],
+    [12, 'รูปอะไหล่เก่าที่เปลี่ยน', 'รูปอะไหล่ใหม่ที่เปลี่ยน'],
+    [20, 'รูปเทียบอะไหล่เก่าและใหม่\n(ถอดอะไหล่เก่าออกมาวางถ่ายรูป)', 'รูปขณะปฏิบัติงานที่เกี่ยวข้อง'],
+    [28, 'รูปขณะปฏิบัติงานที่เกี่ยวข้อง', 'รูปขณะปฏิบัติงานที่เกี่ยวข้อง'],
+    [36, 'รูปขณะปฏิบัติงานที่เกี่ยวข้อง', 'รูปขณะปฏิบัติงานที่เกี่ยวข้อง'],
+  ];
+  photoBlocks.forEach(([startRow, leftLabel, rightLabel]) => {
+    sheet.mergeCells(startRow, 1, startRow + 7, 5);
+    sheet.getCell(startRow, 1).value = leftLabel;
+    sheet.mergeCells(startRow, 6, startRow + 7, 10);
+    sheet.getCell(startRow, 6).value = rightLabel;
+  });
+
+  xlsxApplyBoxStyle(sheet, 1, 1, 43, 10);
+}
+
+// ตั้งชื่อ sheet ให้ถูกกฎของ Excel (ห้ามอักขระ \ / ? * [ ] : ห้ามว่าง ยาวไม่เกิน 31 ตัวอักษร ห้ามชื่อซ้ำ)
+function safeSheetName(rawName: string, usedNames: Set<string>): string {
+  let base = (rawName || '').toString().trim().replace(/[\\/?*\[\]:]/g, '_');
+  if (!base) base = 'ฟอร์ม';
+  base = base.slice(0, 28);
+  let name = base;
+  let n = 2;
+  while (usedNames.has(name)) { name = base + '_' + n; n++; }
+  usedNames.add(name);
+  return name;
+}
+
+// job: { customerCase, branchCode, branchName, serviceType, assetIds: string[] }
+// 1 เลขงาน อาจมีหลายเลขทรัพย์สิน -> ออกไฟล์ Excel เดียว แต่เพิ่ม sheet แยกทีละเลขทรัพย์สิน (แพทเทิร์นฟอร์มเดิมทุกแผ่น เปลี่ยนแค่เลขทรัพย์สิน)
 async function generateJobFormXlsxBase64(job: any): Promise<any> {
   try {
     const ExcelJS = await loadExcelJS();
     const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet('Sheet1');
 
-    const colWidthsPx = [70, 95, 95, 75, 95, 75, 95, 95, 65, 60];
-    colWidthsPx.forEach((w, i) => { sheet.getColumn(i + 1).width = w / 7; });
+    const assetIdList: string[] = (Array.isArray(job.assetIds) && job.assetIds.length > 0)
+      ? job.assetIds
+      : [job.assetId];
 
-    sheet.getRow(1).height = 30;
-    sheet.getRow(2).height = 30;
-    sheet.getRow(3).height = 20;
-    for (let r = 4; r <= 43; r++) sheet.getRow(r).height = 26;
-
-    function setText(addr: string, value: any) {
-      sheet.getCell(addr).value = (value === null || value === undefined) ? '' : String(value);
-    }
-
-    setText('A1', 'รหัสสาขา'); setText('B1', job.branchCode);
-    setText('C1', 'ชื่อสาขา'); sheet.mergeCells('D1:F1'); setText('D1', job.branchName);
-    setText('G1', 'ประเภทงาน'); sheet.mergeCells('H1:J1'); setText('H1', job.serviceType);
-
-    setText('A2', 'เลขที่งาน'); sheet.mergeCells('B2:C2'); setText('B2', job.customerCase);
-    setText('D2', 'เลขทรัพย์สิน'); sheet.mergeCells('E2:J2'); setText('E2', job.assetId);
-
-    sheet.mergeCells('A3:E3'); setText('A3', 'ก่อนทำ');
-    sheet.mergeCells('F3:J3'); setText('F3', 'หลังทำ');
-
-    const photoBlocks: [number, string, string][] = [
-      [4, 'รูปชื่อสาขา', 'รูปเลข Asset\n(ถ่ายให้อ่านตัวเลขได้ชัดเจน)'],
-      [12, 'รูปอะไหล่เก่าที่เปลี่ยน', 'รูปอะไหล่ใหม่ที่เปลี่ยน'],
-      [20, 'รูปเทียบอะไหล่เก่าและใหม่\n(ถอดอะไหล่เก่าออกมาวางถ่ายรูป)', 'รูปขณะปฏิบัติงานที่เกี่ยวข้อง'],
-      [28, 'รูปขณะปฏิบัติงานที่เกี่ยวข้อง', 'รูปขณะปฏิบัติงานที่เกี่ยวข้อง'],
-      [36, 'รูปขณะปฏิบัติงานที่เกี่ยวข้อง', 'รูปขณะปฏิบัติงานที่เกี่ยวข้อง'],
-    ];
-    photoBlocks.forEach(([startRow, leftLabel, rightLabel]) => {
-      sheet.mergeCells(startRow, 1, startRow + 7, 5);
-      sheet.getCell(startRow, 1).value = leftLabel;
-      sheet.mergeCells(startRow, 6, startRow + 7, 10);
-      sheet.getCell(startRow, 6).value = rightLabel;
+    const usedSheetNames = new Set<string>();
+    assetIdList.forEach((assetId: string) => {
+      const sheetName = safeSheetName(assetId && assetId !== '-' ? assetId : 'ฟอร์ม', usedSheetNames);
+      const sheet = workbook.addWorksheet(sheetName);
+      drawJobFormSheet(sheet, { ...job, assetId });
     });
-
-    xlsxApplyBoxStyle(sheet, 1, 1, 43, 10);
 
     const buffer: ArrayBuffer = await workbook.xlsx.writeBuffer();
     const bytes = new Uint8Array(buffer);
@@ -1069,13 +1037,14 @@ async function getGoogleAccessToken(supabase: any): Promise<{ token: string | nu
   }
 }
 
-async function getSpreadsheetSheetNames(spreadsheetId: string, accessToken: string): Promise<string[]> {
+// คืนทั้งชื่อแท็บและ sheetId ตัวเลข (ต้องใช้ sheetId ตอนสั่งจัดรูปแบบ/ไฮไลท์สีเซลล์ ซึ่งเป็นคนละ endpoint กับการเขียนค่าข้อมูล)
+async function getSpreadsheetSheetInfo(spreadsheetId: string, accessToken: string): Promise<{ name: string; sheetId: number }[]> {
   const res = await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + '?fields=sheets.properties', {
     headers: { Authorization: 'Bearer ' + accessToken },
   });
   const json = await res.json();
   if (!res.ok) throw new Error(json.error?.message || 'ดึงข้อมูล spreadsheet ล้มเหลว');
-  return (json.sheets || []).map((s: any) => s.properties.title);
+  return (json.sheets || []).map((s: any) => ({ name: s.properties.title, sheetId: s.properties.sheetId }));
 }
 
 function hexToRgbFraction(hex: string) {
@@ -1083,7 +1052,21 @@ function hexToRgbFraction(hex: string) {
   return { red: parseInt(h.substring(0, 2), 16) / 255, green: parseInt(h.substring(2, 4), 16) / 255, blue: parseInt(h.substring(4, 6), 16) / 255 };
 }
 
-async function ensureSheetTab(spreadsheetId: string, sheetName: string, headers: string[], colorHex: string, accessToken: string) {
+// คอลัมน์สุดท้ายพิเศษ เก็บ "รหัสอ้างอิง" (record_key) ของแต่ละแถวไว้เทียบกลับ ห้ามผู้ใช้ไปแก้ไข/ลบคอลัมน์นี้เอง
+// (ใช้ระบุตัวตนแถวแทนตำแหน่ง เพื่อให้ทนต่อการที่ผู้ใช้ไปลบ/แทรก/ย้ายแถวเองใน Sheet ได้)
+const SHEET_KEY_COLUMN_HEADER = 'รหัสอ้างอิง (ห้ามแก้ไข/ลบคอลัมน์นี้)';
+
+function colIndexToLetter(idx: number): string {
+  let s = '';
+  while (idx > 0) {
+    const rem = (idx - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    idx = Math.floor((idx - 1) / 26);
+  }
+  return s;
+}
+
+async function ensureSheetTab(spreadsheetId: string, sheetName: string, headers: string[], colorHex: string, accessToken: string): Promise<number> {
   const addRes = await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + ':batchUpdate', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
@@ -1093,7 +1076,7 @@ async function ensureSheetTab(spreadsheetId: string, sheetName: string, headers:
   if (!addRes.ok) throw new Error('สร้างชีต ' + sheetName + ' ล้มเหลว: ' + (addJson.error?.message || ''));
   const sheetId = addJson.replies[0].addSheet.properties.sheetId;
 
-  const fullHeaders = ['Timestamp'].concat(headers);
+  const fullHeaders = ['Timestamp'].concat(headers).concat([SHEET_KEY_COLUMN_HEADER]);
   await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + '/values/' + encodeURIComponent(sheetName) + '!A1:append?valueInputOption=USER_ENTERED', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
@@ -1109,9 +1092,39 @@ async function ensureSheetTab(spreadsheetId: string, sheetName: string, headers:
       ],
     }),
   });
+  return sheetId;
 }
 
-async function appendRowsToSheetTab(spreadsheetId: string, sheetName: string, rows: any[][], accessToken: string) {
+// สำหรับแท็บที่เคยมีอยู่ก่อนแล้ว (สร้างไว้ตั้งแต่รุ่นก่อนที่จะมีคอลัมน์รหัสอ้างอิง) เติมหัวคอลัมน์นี้ให้อัตโนมัติถ้ายังไม่มี
+// เรียกทุกครั้งที่ซิงค์ - เขียนซ้ำได้อย่างปลอดภัย (ถ้ามีอยู่แล้วค่าจะเหมือนเดิม ไม่กระทบอะไร)
+async function ensureKeyColumnHeader(spreadsheetId: string, sheetName: string, keyColLetter: string, accessToken: string): Promise<void> {
+  const range = encodeURIComponent(sheetName) + '!' + keyColLetter + '1';
+  await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + '/values/' + range + '?valueInputOption=USER_ENTERED', {
+    method: 'PUT',
+    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ values: [[SHEET_KEY_COLUMN_HEADER]] }),
+  });
+}
+
+// อ่านคอลัมน์ "รหัสอ้างอิง" ทั้งคอลัมน์ (ตั้งแต่แถว 2 เป็นต้นไป) เพื่อรู้ว่าแต่ละ record_key ปัจจุบันอยู่แถวไหนในชีตจริง ๆ
+// อ่านสดทุกครั้งก่อนซิงค์ (ไม่ใช้ตำแหน่งที่จำไว้จากรอบก่อน) เพื่อให้ทนทานต่อการที่ผู้ใช้ไปลบ/แทรก/ย้ายแถวเองใน Sheet
+async function getSheetTabKeyPositions(spreadsheetId: string, sheetName: string, keyColLetter: string, accessToken: string): Promise<Record<string, number>> {
+  const range = encodeURIComponent(sheetName) + '!' + keyColLetter + '2:' + keyColLetter;
+  const res = await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + '/values/' + range, {
+    headers: { Authorization: 'Bearer ' + accessToken },
+  });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error?.message || 'อ่านข้อมูลจาก Sheet ล้มเหลว');
+  const map: Record<string, number> = {};
+  (json.values || []).forEach((row: any[], i: number) => {
+    const key = (row && row[0] !== undefined && row[0] !== null) ? String(row[0]).trim() : '';
+    if (key) map[key] = i + 2;
+  });
+  return map;
+}
+
+// เพิ่มแถวต่อท้ายชีต (Sheets API หาแถวว่างถัดไปให้เองอัตโนมัติ)
+async function appendRowsToSheetTab(spreadsheetId: string, sheetName: string, rows: any[][], accessToken: string): Promise<void> {
   const res = await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + '/values/' + encodeURIComponent(sheetName) + '!A1:append?valueInputOption=USER_ENTERED', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
@@ -1121,47 +1134,124 @@ async function appendRowsToSheetTab(spreadsheetId: string, sheetName: string, ro
   if (!res.ok) throw new Error(json.error?.message || 'เขียนข้อมูลลง Sheet ล้มเหลว');
 }
 
-// ล้างข้อมูลแถวเก่าทั้งหมดในแท็บ (เว้นแถวหัวตารางแถวที่ 1 ไว้) ก่อนเขียนทับใหม่ทุกครั้ง
-// ทำแบบนี้เพื่อให้ Sheet "ตรงกับฐานข้อมูลเป๊ะเสมอ" ไม่ว่าจะมีการแก้ไข/ลบข้อมูลใน DB ภายหลัง
-// หรือมีคนไปลบแถวใน Sheet เอง (รอบซิงค์ถัดไปจะคืนข้อมูลที่ถูกต้องกลับมาให้เองอัตโนมัติ)
-async function clearSheetTabBody(spreadsheetId: string, sheetName: string, accessToken: string) {
-  const range = encodeURIComponent(sheetName) + '!A2:ZZ200000';
-  const res = await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + '/values/' + range + ':clear', {
+// เขียนทับหลายแถวพร้อมกันในคำสั่งเดียว (แถวใครแถวมัน คนละตำแหน่งกัน) - ranges ที่ส่งเข้ามาต้องเป็นชื่อชีต "ดิบ" ไม่ผ่าน
+// encodeURIComponent เพราะเป็นค่าฟิลด์ในเนื้อหา JSON (ไม่ใช่ส่วนหนึ่งของ URL) การเข้ารหัส URL ตรงนี้จะทำให้ Google อ่านชื่อแท็บผิด
+async function batchUpdateSheetRanges(spreadsheetId: string, ranges: { range: string; values: any[][] }[], accessToken: string): Promise<void> {
+  if (ranges.length === 0) return;
+  const res = await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + '/values:batchUpdate', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
-    body: JSON.stringify({}),
+    body: JSON.stringify({ valueInputOption: 'USER_ENTERED', data: ranges.map((r) => ({ range: r.range, values: r.values })) }),
   });
   const json = await res.json();
-  if (!res.ok) throw new Error(json.error?.message || 'ล้างข้อมูลเก่าใน Sheet ล้มเหลว');
+  if (!res.ok) throw new Error(json.error?.message || 'อัปเดตแถวใน Sheet ล้มเหลว');
 }
 
-// เขียนข้อมูลทั้งหมดทับตั้งแต่แถวที่ 2 เป็นต้นไป (ต้องเรียก clearSheetTabBody ก่อนเสมอ เพื่อไม่ให้มีเศษแถวเก่าตกค้าง)
-async function writeRowsToSheetTab(spreadsheetId: string, sheetName: string, rows: any[][], accessToken: string) {
-  if (rows.length === 0) return;
-  const range = encodeURIComponent(sheetName) + '!A2';
-  const res = await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + '/values/' + range + '?valueInputOption=USER_ENTERED', {
-    method: 'PUT',
+const HIGHLIGHT_YELLOW = { red: 1, green: 0.937, blue: 0.545 }; // สีเหลืองอ่อน อ่านตัวหนังสือทับได้สบายตา
+const HIGHLIGHT_NONE = { red: 1, green: 1, blue: 1 }; // ล้างกลับเป็นพื้นขาว (กันกรณีเลขงานเคยถูกไฮไลท์แล้วภายหลังข้อมูลเปลี่ยนจนไม่เข้าเงื่อนไขแล้ว)
+
+// ทาสีพื้นหลังทั้งแถว (ตั้งแต่คอลัมน์ Timestamp ถึงคอลัมน์รหัสอ้างอิงตัวสุดท้าย) ตามเงื่อนไข highlightKeys ที่ส่งมา
+// อ่านตำแหน่งแถวสดจาก getSheetTabKeyPositions อีกครั้งหลังเขียนข้อมูลเสร็จแล้วเสมอ เพื่อให้ครอบคลุมแถวที่เพิ่งเพิ่มใหม่ในรอบนี้ด้วย
+async function applyRowHighlighting(
+  spreadsheetId: string, sheetId: number, sheetName: string, keyColLetter: string, dataColCount: number,
+  highlightKeys: Set<string>, accessToken: string
+): Promise<void> {
+  const positions = await getSheetTabKeyPositions(spreadsheetId, sheetName, keyColLetter, accessToken);
+  const requests = Object.keys(positions).map((key) => {
+    const rowIdx = positions[key] - 1; // repeatCell ใช้ index เริ่มที่ 0
+    const bg = highlightKeys.has(key) ? HIGHLIGHT_YELLOW : HIGHLIGHT_NONE;
+    return {
+      repeatCell: {
+        range: { sheetId, startRowIndex: rowIdx, endRowIndex: rowIdx + 1, startColumnIndex: 0, endColumnIndex: dataColCount + 2 },
+        cell: { userEnteredFormat: { backgroundColor: bg } },
+        fields: 'userEnteredFormat.backgroundColor',
+      },
+    };
+  });
+  if (requests.length === 0) return;
+  const res = await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + ':batchUpdate', {
+    method: 'POST',
     headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ values: rows }),
+    body: JSON.stringify({ requests }),
   });
   const json = await res.json();
-  if (!res.ok) throw new Error(json.error?.message || 'เขียนข้อมูลลง Sheet ล้มเหลว');
+  if (!res.ok) throw new Error(json.error?.message || 'ไฮไลท์สีแถวใน Sheet ล้มเหลว');
 }
 
-// ทำสำเนา "มิเรอร์เต็มรูปแบบ" ของตารางหนึ่งไปยังแท็บหนึ่งใน Google Sheet: สร้างแท็บถ้ายังไม่มี, ล้างของเก่าทิ้ง,
-// เขียนข้อมูลปัจจุบันทั้งหมดจาก DB ทับใหม่ - รับประกันว่า Sheet ตรงกับฐานข้อมูล ไม่มีข้อมูลซ้ำ ไม่มีข้อมูลเก่าค้าง
-async function mirrorRowsToSheetTab(
-  spreadsheetId: string, accessToken: string, existingNames: string[],
-  sheetName: string, color: string, headers: string[], rows: any[][]
+// ซิงค์แบบ "กระทบยอด" (reconcile) ทุกครั้ง: อ่านคอลัมน์รหัสอ้างอิงในชีตสด ๆ ก่อนเสมอ (ไม่พึ่งตำแหน่งที่จำไว้จากรอบก่อน)
+// - เลขงาน/แถวที่มีอยู่ใน DB แต่ไม่เจอรหัสอ้างอิงในชีต (ยังไม่เคยส่ง หรือถูกลบออกจากชีตไปแล้ว) -> เพิ่มต่อท้ายใหม่
+// - เลขงาน/แถวที่มีอยู่ใน DB และเจอในชีตแล้ว -> เขียนทับข้อมูลปัจจุบันลงตำแหน่งเดิม (รองรับกรณีแก้ไขข้อมูลภายหลัง)
+// - แถวที่มีอยู่ในชีตแต่ไม่มีต้นทางใน DB แล้ว (ถูกลบข้อมูลออกจากฐานข้อมูลจริง) -> ล้างเนื้อหาแถวนั้นทิ้ง
+// วิธีนี้ทนทานต่อการที่ผู้ใช้ไปลบ/แก้ไขอะไรในชีตเองด้วยมือ เพราะกระทบยอดใหม่จากเนื้อหาจริงทุกครั้ง ไม่ใช่จำสถานะไว้ในฐานข้อมูลแยกต่างหาก
+async function incrementalSyncToSheetTab(
+  spreadsheetId: string, accessToken: string, existingNames: string[], sheetIdByName: Record<string, number>,
+  sheetName: string, color: string, headers: string[], rows: any[], keyOf: (r: any) => string, mapRow: (r: any) => any[],
+  shouldHighlight?: (r: any) => boolean
 ): Promise<string> {
   if (existingNames.indexOf(sheetName) === -1) {
-    await ensureSheetTab(spreadsheetId, sheetName, headers, color, accessToken);
+    const newSheetId = await ensureSheetTab(spreadsheetId, sheetName, headers, color, accessToken);
     existingNames.push(sheetName);
+    sheetIdByName[sheetName] = newSheetId;
   }
-  await clearSheetTabBody(spreadsheetId, sheetName, accessToken);
-  if (rows.length === 0) return sheetName + ': ไม่มีข้อมูล (ล้างชีตให้ว่างตรงกับฐานข้อมูลแล้ว)';
-  await writeRowsToSheetTab(spreadsheetId, sheetName, rows, accessToken);
-  return sheetName + ': ซิงค์ครบ ' + rows.length + ' แถว (ตรงกับฐานข้อมูลล่าสุด)';
+  const keyColLetter = colIndexToLetter(headers.length + 2); // +1 คอลัมน์ Timestamp, +1 ขยับไปคอลัมน์ถัดจากคอลัมน์ข้อมูลตัวสุดท้าย
+  await ensureKeyColumnHeader(spreadsheetId, sheetName, keyColLetter, accessToken);
+  const sheetKeyToRow = await getSheetTabKeyPositions(spreadsheetId, sheetName, keyColLetter, accessToken);
+
+  if (rows.length === 0 && Object.keys(sheetKeyToRow).length === 0) return sheetName + ': ไม่มีข้อมูล';
+
+  const timestamp = new Date().toISOString();
+  const dbKeys = new Set<string>();
+  const newRowValues: any[][] = [];
+  const updateRanges: { range: string; values: any[][] }[] = [];
+  const highlightKeys = new Set<string>();
+
+  rows.forEach((r) => {
+    const key = keyOf(r);
+    dbKeys.add(key);
+    if (shouldHighlight && shouldHighlight(r)) highlightKeys.add(key);
+    const rowValues = [timestamp, ...mapRow(r), key];
+    const existingRowNum = sheetKeyToRow[key];
+    if (existingRowNum) {
+      updateRanges.push({ range: sheetName + '!A' + existingRowNum, values: [rowValues] });
+    } else {
+      newRowValues.push(rowValues);
+    }
+  });
+
+  let addedCount = 0;
+  if (newRowValues.length > 0) {
+    await appendRowsToSheetTab(spreadsheetId, sheetName, newRowValues, accessToken);
+    addedCount = newRowValues.length;
+  }
+
+  let updatedCount = 0;
+  if (updateRanges.length > 0) {
+    await batchUpdateSheetRanges(spreadsheetId, updateRanges, accessToken);
+    updatedCount = updateRanges.length;
+  }
+
+  // แถวที่เคยมีอยู่ในชีตแต่ตอนนี้ไม่มีข้อมูลต้นทางใน Supabase แล้ว (ถูกลบไปจริง) - เคลียร์เนื้อหาแถวนั้นทิ้ง (ไม่ลบแถวจริง ๆ
+  // เพื่อไม่ให้แถวอื่นเลื่อนตำแหน่งจนข้อมูลที่เพิ่งอัปเดตไปสับสน)
+  const orphanRanges: { range: string; values: any[][] }[] = [];
+  Object.keys(sheetKeyToRow).forEach((key) => {
+    if (!dbKeys.has(key)) {
+      const blankRow = new Array(headers.length + 2).fill('');
+      orphanRanges.push({ range: sheetName + '!A' + sheetKeyToRow[key], values: [blankRow] });
+    }
+  });
+  let clearedCount = 0;
+  if (orphanRanges.length > 0) {
+    await batchUpdateSheetRanges(spreadsheetId, orphanRanges, accessToken);
+    clearedCount = orphanRanges.length;
+  }
+
+  // ไฮไลท์สีพื้นหลังแถว (ถ้าแท็บนี้มีเงื่อนไข shouldHighlight) - อ่านตำแหน่งแถวสดอีกครั้งหลังเขียนเสร็จแล้ว เพื่อให้ครอบคลุม
+  // แถวที่เพิ่งเพิ่มใหม่ในรอบนี้ด้วย (ไม่ใช่แค่แถวเดิม) และรีเซ็ตสีของแถวที่ไม่เข้าเงื่อนไข (ไม่)ให้กลับเป็นพื้นขาวเสมอ
+  if (shouldHighlight && sheetIdByName[sheetName] !== undefined) {
+    await applyRowHighlighting(spreadsheetId, sheetIdByName[sheetName], sheetName, keyColLetter, headers.length, highlightKeys, accessToken);
+  }
+
+  return sheetName + ': เพิ่มใหม่ ' + addedCount + ' แถว, อัปเดต ' + updatedCount + ' แถว' + (clearedCount > 0 ? ', ล้างแถวที่ถูกลบจากฐานข้อมูลแล้ว ' + clearedCount + ' แถว' : '');
 }
 
 // แท็บพิเศษที่ไม่ได้มาจากตารางดิบตารางเดียว แต่เป็นรายงานที่รวมข้อมูลหลายตารางเข้าด้วยกัน (เหมือนหน้า "รายงานสถานะดำเนินการ" ในแอป)
@@ -1169,22 +1259,27 @@ const STATUS_REPORT_SHEET = {
   sheetName: 'รายงานสถานะดำเนินการ',
   color: '#dbeafe',
   headers: ['เลขที่ใบแจ้งซ่อมบำรุง', 'สาขา', 'Service Type', 'ประเภทสัญญา', 'ผู้รับเหมา', 'รายละเอียดปัญหาที่พบ',
-    'วันที่ร้องขอ', 'วันที่เปิดงาน', 'วันที่เข้าแก้ไข', 'วันที่ปิดงาน', 'ดำเนินการแก้ไขแล้ว',
+    'วันที่ร้องขอ', 'วันที่เปิดงาน', 'เลขทรัพย์สิน', 'วันที่เข้าแก้ไข', 'วันที่ปิดงาน', 'ดำเนินการแก้ไขแล้ว',
     'ระยะเวลาดำเนินการ (ชม.)', 'จำนวนครั้งที่พัก', 'รวมชั่วโมงที่พัก', 'ส่งมอบงานให้ผู้รับเหมาแล้ว', 'เสร็จสิ้น (ตัดบิลแล้ว)', 'สถานะ'],
+  // แท็บนี้คำนวณจากหลายตารางรวมกัน ไม่มี id ของตัวเอง - เดิมใช้ "เลขที่ใบแจ้งซ่อมบำรุง" เป็นคีย์เฉย ๆ (สมมติ 1 เลขงาน = 1 แถวเสมอ)
+  // แต่ตอนนี้ 1 เลขงานอาจปิดงานได้หลายครั้ง (คนละเลขทรัพย์สิน) จึงออกได้หลายแถวต่อ 1 เลขงาน - ต้องรวมเลขทรัพย์สินเข้าไปในคีย์ด้วย กันคีย์ชนกัน
+  keyOf: (r: any) => String(r.main_id) + '||' + String(r.asset_id || '-'),
   mapRow: (r: any) => [
     r.main_id, r.branch, r.service_type, r.contract_type ?? '', r.contractor, r.details,
-    r.req_date, r.opened_at, r.fix_date, r.closed_at, r.action_taken,
+    r.req_date, r.opened_at, r.asset_id, r.fix_date, r.closed_at, r.action_taken,
     r.duration_hours, r.pause_count, r.pause_hours_total,
     r.sent_to_contractor ? 'ใช่' : 'ยังไม่ส่ง', r.completed ? 'ใช่' : 'ยังไม่เสร็จ', r.status,
   ],
 };
 
-const SYNC_TABLE_REGISTRY: { table: string; sheetName: string; color: string; headers: string[]; mapRow: (r: any) => any[] }[] = [
-  { table: 'open_issues', sheetName: 'เปิดงาน', color: '#e0e7ff', headers: ['เลขที่ใบแจ้งซ่อมบำรุง', 'Service Type', 'ประเภทสัญญา', 'วันที่ร้องขอ', 'งานบริการ', 'รหัส-ชื่อสาขา', 'รายละเอียดปัญหาที่พบ'], mapRow: (r) => [r.main_id, r.service_type, r.contract_type ?? '', r.req_date, r.service_work, r.branch, r.details] },
-  { table: 'close_issues', sheetName: 'ปิดงาน', color: '#d1fae5', headers: ['เลขงาน', 'สาขา', 'วันที่เข้าแก้ไข', 'รายการอะไหล่ที่เปลี่ยน', 'เลขทรัพย์สิน', 'ดำเนินการ', 'ลิงก์แนบรูป'], mapRow: (r) => [r.job_id, r.branch, r.fix_date, r.parts, r.asset_id, r.action_taken, r.photo_form_link] },
-  { table: 'quotations', sheetName: 'ใบเสนอราคา', color: '#fef3c7', headers: ['ชุดที่', 'วันที่', 'Customer Case', 'Branch Code', 'Branch', 'Type', 'Asset No.', 'Part Code', 'Detail', 'ระยะเวลารับประกัน(เดือน)', 'จำนวน', 'หน่วย', 'ราคา/หน่วย', 'ราคา/รวม', 'วันที่รับแจ้งงาน', 'วันที่เข้างาน', 'Quotation', 'อะไหล่เก่าส่งคืน CJ', 'ผู้รับผิดชอบ', 'บริษัท'], mapRow: (r) => [r.set_no ?? null, r.quote_date ?? null, r.customer_case, r.branch_code, r.branch_name, r.work_type ?? null, r.asset_id, r.part_code, r.part_name, r.warranty_months, r.qty, r.unit, r.unit_price, r.total_price, r.req_date, r.visit_date, r.quotation_ref, r.return_old_part, r.responsible, r.company] },
-  { table: 'billing_documents', sheetName: 'ตารางวางบิล', color: '#fbecec', headers: ['ลำดับ', 'Customer Case', 'รหัสสาขา', 'ชื่อสาขา', 'งานบริการ', 'เลขทรัพย์สิน', 'Part Code', 'รายละเอียดอะไหล่', 'ระยะเวลาประกัน(เดือน)', 'จำนวน', 'หน่วย', 'ราคา/หน่วย (CJ)', 'ราคา/รวม (CJ)', 'ราคา/หน่วย (ผู้รับเหมา)', 'ราคา/รวม (ผู้รับเหมา)', 'วันที่รับแจ้ง', 'วันที่เข้างาน', 'Quotation', 'อะไหล่เก่าส่งคืน CJ', 'ผู้รับผิดชอบ', 'บริษัท', 'ผู้รับเหมา', 'รอบบิลที่', 'ช่วงรอบบิล'], mapRow: (r) => [r.seq, r.customer_case, r.branch_code, r.branch_name, r.service_type, r.asset_id, r.part_code, r.part_detail, r.warranty_months, r.qty, r.unit, r.unit_price, r.total_price, r.unit_price_contractor, r.total_price_contractor, r.req_date, r.visit_date, r.quotation_ref, r.return_old_part, r.responsible, r.company, r.contractor, r.round_no, r.round_period] },
-  { table: 'pause_records', sheetName: 'พักงาน', color: '#fde68a', headers: ['เลขที่ใบแจ้งซ่อมบำรุง', 'เหตุผลที่พัก', 'หมายเหตุ', 'วันเวลาที่พัก', 'ผู้พักงาน', 'วันเวลาที่กลับมาทำ', 'ผู้ทำรายการกลับมาทำ', 'สถานะ'], mapRow: (r) => [r.main_id, r.reason, r.note, r.paused_at, r.paused_by, r.resumed_at, r.resumed_by, r.status] },
+// keyOf ใช้ "id" (primary key ของแถวในฐานข้อมูล) เป็นค่าเริ่มต้นเสมอ เพราะเสถียรที่สุด ไม่มีวันเปลี่ยน/ซ้ำ
+// (ต่างจากการอ้างอิงด้วยเลขงาน/เลขทรัพย์สิน ที่ตอนนี้ 1 เลขงานมีได้หลายแถวแล้ว)
+const SYNC_TABLE_REGISTRY: { table: string; sheetName: string; color: string; headers: string[]; keyOf: (r: any) => string; mapRow: (r: any) => any[] }[] = [
+  { table: 'open_issues', sheetName: 'เปิดงาน', color: '#e0e7ff', headers: ['เลขที่ใบแจ้งซ่อมบำรุง', 'Service Type', 'ประเภทสัญญา', 'วันที่ร้องขอ', 'งานบริการ', 'รหัส-ชื่อสาขา', 'รายละเอียดปัญหาที่พบ'], keyOf: (r) => String(r.id), mapRow: (r) => [r.main_id, r.service_type, r.contract_type ?? '', r.req_date, r.service_work, r.branch, r.details] },
+  { table: 'close_issues', sheetName: 'ปิดงาน', color: '#d1fae5', headers: ['เลขงาน', 'สาขา', 'วันที่เข้าแก้ไข', 'รายการอะไหล่ที่เปลี่ยน', 'เลขทรัพย์สิน', 'ดำเนินการ', 'ลิงก์แนบรูป'], keyOf: (r) => String(r.id), mapRow: (r) => [r.job_id, r.branch, r.fix_date, r.parts, r.asset_id, r.action_taken, r.photo_form_link] },
+  { table: 'quotations', sheetName: 'ใบเสนอราคา', color: '#fef3c7', headers: ['ชุดที่', 'วันที่', 'Customer Case', 'Branch Code', 'Branch', 'Type', 'Asset No.', 'Part Code', 'Detail', 'ระยะเวลารับประกัน(เดือน)', 'จำนวน', 'หน่วย', 'ราคา/หน่วย', 'ราคา/รวม', 'วันที่รับแจ้งงาน', 'วันที่เข้างาน', 'Quotation', 'อะไหล่เก่าส่งคืน CJ', 'ผู้รับผิดชอบ', 'บริษัท'], keyOf: (r) => String(r.id), mapRow: (r) => [r.set_no ?? null, r.quote_date ?? null, r.customer_case, r.branch_code, r.branch_name, r.work_type ?? null, r.asset_id, r.part_code, r.part_name, r.warranty_months, r.qty, r.unit, r.unit_price, r.total_price, r.req_date, r.visit_date, r.quotation_ref, r.return_old_part, r.responsible, r.company] },
+  { table: 'billing_documents', sheetName: 'ตารางวางบิล', color: '#fbecec', headers: ['ลำดับ', 'Customer Case', 'รหัสสาขา', 'ชื่อสาขา', 'งานบริการ', 'เลขทรัพย์สิน', 'Part Code', 'รายละเอียดอะไหล่', 'ระยะเวลาประกัน(เดือน)', 'จำนวน', 'หน่วย', 'ราคา/หน่วย (CJ)', 'ราคา/รวม (CJ)', 'ราคา/หน่วย (ผู้รับเหมา)', 'ราคา/รวม (ผู้รับเหมา)', 'วันที่รับแจ้ง', 'วันที่เข้างาน', 'Quotation', 'อะไหล่เก่าส่งคืน CJ', 'ผู้รับผิดชอบ', 'บริษัท', 'ผู้รับเหมา', 'รอบบิลที่', 'ช่วงรอบบิล'], keyOf: (r) => String(r.id), mapRow: (r) => [r.seq, r.customer_case, r.branch_code, r.branch_name, r.service_type, r.asset_id, r.part_code, r.part_detail, r.warranty_months, r.qty, r.unit, r.unit_price, r.total_price, r.unit_price_contractor, r.total_price_contractor, r.req_date, r.visit_date, r.quotation_ref, r.return_old_part, r.responsible, r.company, r.contractor, r.round_no, r.round_period] },
+  { table: 'pause_records', sheetName: 'พักงาน', color: '#fde68a', headers: ['เลขที่ใบแจ้งซ่อมบำรุง', 'เหตุผลที่พัก', 'หมายเหตุ', 'วันเวลาที่พัก', 'ผู้พักงาน', 'วันเวลาที่กลับมาทำ', 'ผู้ทำรายการกลับมาทำ', 'สถานะ'], keyOf: (r) => String(r.id), mapRow: (r) => [r.main_id, r.reason, r.note, r.paused_at, r.paused_by, r.resumed_at, r.resumed_by, r.status] },
 ];
 
 Deno.serve(async (req: Request) => {
@@ -1220,10 +1315,14 @@ Deno.serve(async (req: Request) => {
     } catch (e) { return { error: String(e) }; }
   }
 
-  async function checkCloseIssueExists(jobId: string): Promise<any> {
+  // เช็คว่า "เลขงาน + เลขทรัพย์สิน" คู่นี้เคยถูกปิดงานไปแล้วหรือยัง (ไม่ใช่เช็คแค่เลขงานเฉย ๆ แล้ว)
+  // เพราะ 1 เลขงานตอนนี้ปิดงานได้หลายครั้ง ถ้าเป็นทรัพย์สินคนละชิ้น — กันซ้ำเฉพาะกรณีทรัพย์สินชิ้นเดิมจริง ๆ เท่านั้น
+  // assetId ที่ไม่ได้กรอก จะถูก normalize เป็น '-' เสมอ (ให้ตรงกับค่าที่บันทึกจริงใน saveCloseIssue) เพื่อให้เทียบตรงกัน
+  async function checkCloseIssueExists(jobId: string, assetId?: string): Promise<any> {
     try {
       if (!jobId) return { exists: false };
-      const { data, error } = await supabase.from('close_issues').select('id').eq('job_id', jobId).limit(1);
+      const normalizedAsset = (assetId || '').toString().trim() || '-';
+      const { data, error } = await supabase.from('close_issues').select('id').eq('job_id', jobId).eq('asset_id', normalizedAsset).limit(1);
       if (error) return { error: error.message };
       return { exists: !!(data && data.length > 0) };
     } catch (e) { return { error: String(e) }; }
@@ -1240,37 +1339,56 @@ Deno.serve(async (req: Request) => {
   }
 
   async function invalidateAdminBadgeCountsCache(): Promise<void> { /* ไม่มี shared cache ฝั่ง Edge Function - คำนวณสดทุกครั้งแทน (ดู getAdminBadgeCounts) */ }
-  // หาเลขงาน "ที่ตรงเงื่อนไข" สำหรับสร้างรอบบิล (ใช้ร่วมกันทั้งตอน "ดูตัวอย่าง" (previewBillingCandidates)
+  // หา "เลขงาน+เลขทรัพย์สิน" ทุกคู่ที่ตรงเงื่อนไข สำหรับสร้างรอบบิล (ใช้ร่วมกันทั้งตอน "ดูตัวอย่าง" (previewBillingCandidates)
   // และตอน "ยืนยันบันทึกรอบบิล" (generateBillingDocumentsForAllClosedJobs) เพื่อให้ผลลัพธ์ตรงกันเป๊ะทั้งสองขั้น)
-  async function resolveBillingCandidateJobIds(startDate: string | null, endDate: string | null, jobIds: string[] | null): Promise<{ candidateJobIds: string[]; roundPeriod: string; error?: string }> {
+  // เดิมฟังก์ชันนี้คืนแค่ "เลขงาน" (1 เลขงาน = 1 บิลเสมอ) แต่ตอนนี้ 1 เลขงานปิดงานได้หลายครั้ง (คนละเลขทรัพย์สิน)
+  // แต่ละครั้งที่ปิดงานควรนับเป็นข้อมูลที่ต้องจับคู่แยกกัน จึงเปลี่ยนมาคืนเป็นคู่ (เลขงาน, เลขทรัพย์สิน) แทน
+  async function resolveBillingCandidatePairs(startDate: string | null, endDate: string | null, jobIds: string[] | null): Promise<{ candidatePairs: { jobId: string; assetId: string }[]; roundPeriod: string; error?: string }> {
     if ((!jobIds || jobIds.length === 0) && (!startDate || !endDate)) {
-      return { candidateJobIds: [], roundPeriod: '', error: 'ต้องระบุช่วงวันที่ (ตั้งแต่วันที่ และ ถึงวันที่) หรือระบุเลขงานเจาะจง ก่อนถึงจะจับคู่ข้อมูลได้' };
+      return { candidatePairs: [], roundPeriod: '', error: 'ต้องระบุช่วงวันที่ (ตั้งแต่วันที่ และ ถึงวันที่) หรือระบุเลขงานเจาะจง ก่อนถึงจะจับคู่ข้อมูลได้' };
     }
     if (jobIds && jobIds.length > 0) {
-      const candidateJobIds = Array.from(new Set(jobIds.map((j: string) => (j || '').toString().trim()).filter(Boolean))) as string[];
+      const wantedJobIds = Array.from(new Set(jobIds.map((j: string) => (j || '').toString().trim()).filter(Boolean))) as string[];
       const roundPeriod = 'ระบุเลขงานเจาะจง (' + new Date().toISOString().slice(0, 10) + ')';
-      return { candidateJobIds, roundPeriod };
+      if (wantedJobIds.length === 0) return { candidatePairs: [], roundPeriod };
+      // ระบุเลขงานเจาะจง - เอาทุกครั้งที่ปิดงานของเลขงานนั้น ๆ มาเป็นตัวเลือกทั้งหมด (ไม่กรองวันที่)
+      const { data: closeData, error: closeErr } = await supabase.from('close_issues').select('job_id,asset_id').in('job_id', wantedJobIds);
+      if (closeErr) return { candidatePairs: [], roundPeriod: '', error: 'ดึงข้อมูล close_issues ล้มเหลว: ' + closeErr.message };
+      const seenPair = new Set<string>();
+      const candidatePairs: { jobId: string; assetId: string }[] = [];
+      (closeData || []).forEach((r: any) => {
+        if (!r.job_id) return;
+        const assetId = r.asset_id || '-';
+        const key = r.job_id + '||' + assetId;
+        if (seenPair.has(key)) return;
+        seenPair.add(key);
+        candidatePairs.push({ jobId: r.job_id, assetId });
+      });
+      return { candidatePairs, roundPeriod };
     }
     const roundPeriod = startDate + ' ถึง ' + endDate;
-    const { data: closeData, error: closeErr } = await supabase.from('close_issues').select('job_id,fix_date').order('created_at', { ascending: true });
-    if (closeErr) return { candidateJobIds: [], roundPeriod: '', error: 'ดึงข้อมูล close_issues ล้มเหลว: ' + closeErr.message };
+    const { data: closeData, error: closeErr } = await supabase.from('close_issues').select('job_id,asset_id,fix_date').order('created_at', { ascending: true });
+    if (closeErr) return { candidatePairs: [], roundPeriod: '', error: 'ดึงข้อมูล close_issues ล้มเหลว: ' + closeErr.message };
     const startD = new Date(startDate + 'T00:00:00');
     const endD = new Date(endDate + 'T23:59:59');
-    const seenJob = new Set();
-    const candidateJobIds: string[] = [];
+    const seenPair = new Set<string>();
+    const candidatePairs: { jobId: string; assetId: string }[] = [];
     (closeData || []).forEach((r: any) => {
-      if (!r.job_id || seenJob.has(r.job_id)) return;
+      if (!r.job_id) return;
       const fx = parseFixDateString(r.fix_date);
       if (!fx || fx < startD || fx > endD) return;
-      seenJob.add(r.job_id);
-      candidateJobIds.push(r.job_id);
+      const assetId = r.asset_id || '-';
+      const key = r.job_id + '||' + assetId;
+      if (seenPair.has(key)) return;
+      seenPair.add(key);
+      candidatePairs.push({ jobId: r.job_id, assetId });
     });
-    return { candidateJobIds, roundPeriod };
+    return { candidatePairs, roundPeriod };
   }
 
   // ดึงรายการงาน PM ที่ "พร้อมวางบิล" จากระบบ PM (คนละโปรเจกต์ Supabase) มาทั้งหมด
   // ใช้ร่วมกันทั้งตอน "ดูตัวอย่าง" (previewPmBillingCandidates) และตอน "ยืนยันบันทึกรอบบิล" (confirmPmBillingRound)
-  // เพื่อให้ผลลัพธ์ตรงกันเป๊ะทั้งสองขั้น (เหมือน resolveBillingCandidateJobIds ของฝั่งบิล CJ)
+  // เพื่อให้ผลลัพธ์ตรงกันเป๊ะทั้งสองขั้น (เหมือน resolveBillingCandidatePairs ของฝั่งบิล CJ)
   async function fetchPmBillableVisits(): Promise<{ visits: any[]; error?: string }> {
     try {
       const res = await fetch(PM_EXPORT_URL, {
@@ -1290,7 +1408,7 @@ Deno.serve(async (req: Request) => {
   // กรองงาน PM ตาม "วันที่ปิดงาน" ช่วงที่เลือกไว้ตอนดูตัวอย่าง/ยืนยันบันทึกรอบบิล PM (บังคับต้องระบุเสมอ ไม่มี default "ทั้งหมด" แล้ว)
   // ใช้ visit_date เป็นตัวแทน "วันที่ปิดงาน" เพราะงาน PM 1 รอบคือ 1 ครั้งที่ช่างเข้างาน+ปิดงานพร้อมกัน ไม่มีวันที่เปิด/ปิดแยกกันแบบงานซ่อม CJ
   // (ตรวจสอบข้อมูลจริงในระบบ PM แล้ว — ไม่มีฟิลด์ "วันที่ปิด" แยกที่เชื่อถือได้ ฟิลด์ confirmed_at/updated_at เป็นค่าที่ backfill มาพร้อมกันทีเดียวตอนย้ายระบบ ไม่ใช่วันที่ปิดจริงรายตัว)
-  // ใช้ร่วมกันทั้ง 2 ขั้นตอนเป๊ะๆ (เหมือน resolveBillingCandidateJobIds ของฝั่งบิล CJ)
+  // ใช้ร่วมกันทั้ง 2 ขั้นตอนเป๊ะๆ (เหมือน resolveBillingCandidatePairs ของฝั่งบิล CJ)
   function filterPmVisitsByDateRange(visits: any[], startDate: string | null, endDate: string | null): any[] {
     if (!startDate || !endDate) return [];
     const startD = new Date(startDate + 'T00:00:00');
@@ -1313,7 +1431,7 @@ Deno.serve(async (req: Request) => {
     if (endDate) openQuery = openQuery.lte('created_at', endDate + 'T23:59:59');
     const [openRes, closeRes, billingRes, pauseRes] = await Promise.all([
       openQuery,
-      supabase.from('close_issues').select('job_id,fix_date,created_at,action_taken').order('created_at', { ascending: true }),
+      supabase.from('close_issues').select('job_id,asset_id,fix_date,created_at,action_taken').order('created_at', { ascending: true }),
       supabase.from('billing_documents').select('customer_case,sent_to_contractor,completed_at'),
       supabase.from('pause_records').select('main_id,reason,note,status,paused_at,resumed_at,paused_by,resumed_by').order('paused_at', { ascending: true }),
     ]);
@@ -1321,8 +1439,15 @@ Deno.serve(async (req: Request) => {
     if (closeRes.error) throw new Error(closeRes.error.message);
     if (billingRes.error) throw new Error(billingRes.error.message);
     if (pauseRes.error) throw new Error(pauseRes.error.message);
-    const closeMap: Record<string, any> = {};
-    (closeRes.data || []).forEach((c: any) => { closeMap[c.job_id] = c; });
+    // เดิม closeMap เก็บได้แค่ "ครั้งล่าสุดที่ปิดงาน" ต่อ 1 เลขงาน (เขียนทับของเก่าทิ้ง) ทำให้ถ้าเลขงานเดียวกัน
+    // ถูกปิดงานหลายครั้ง (คนละเลขทรัพย์สิน) รายงานจะเหลือแสดงแค่ครั้งเดียว จำนวนแถวในรายงานเลย "น้อยกว่า"
+    // จำนวนแถวจริงใน close_issues ของ Supabase ทำให้ดูเหมือนข้อมูลไม่ตรงกัน
+    // แก้เป็นเก็บเป็น "รายการทั้งหมด" ต่อเลขงานแทน แล้วออกรายงาน 1 แถวต่อ 1 ครั้งที่ปิดงานจริง (เลขงานที่ยังไม่เคยปิดเลย ยังคงออก 1 แถวตามปกติ)
+    const closeListMap: Record<string, any[]> = {};
+    (closeRes.data || []).forEach((c: any) => {
+      if (!closeListMap[c.job_id]) closeListMap[c.job_id] = [];
+      closeListMap[c.job_id].push(c);
+    });
     const billingMap: Record<string, any> = {};
     (billingRes.data || []).forEach((b: any) => {
       if (!billingMap[b.customer_case]) billingMap[b.customer_case] = { sent: false, completed: false };
@@ -1336,19 +1461,11 @@ Deno.serve(async (req: Request) => {
       if (!pauseMap[p.main_id]) pauseMap[p.main_id] = [];
       pauseMap[p.main_id].push(p);
     });
-    return (openRes.data || []).map((o: any) => {
-      const closeRec = closeMap[o.main_id];
+    const rows: any[] = [];
+    (openRes.data || []).forEach((o: any) => {
       const billingInfo = billingMap[o.main_id];
       const pausePeriods = pauseMap[o.main_id] || [];
       const isCurrentlyPaused = pausePeriods.some((p: any) => p.status === 'paused');
-      let durationHours = null;
-      if (closeRec && closeRec.created_at && o.created_at) {
-        const openedMs = new Date(o.created_at).getTime();
-        const closedMs = new Date(closeRec.created_at).getTime();
-        if (!isNaN(openedMs) && !isNaN(closedMs) && closedMs >= openedMs) {
-          durationHours = Math.round(((closedMs - openedMs) / (1000 * 60 * 60)) * 100) / 100;
-        }
-      }
       let pauseHoursTotal = 0;
       pausePeriods.forEach((p: any) => {
         const startMs = p.paused_at ? new Date(p.paused_at).getTime() : null;
@@ -1357,27 +1474,44 @@ Deno.serve(async (req: Request) => {
           pauseHoursTotal += (endMs - startMs) / (1000 * 60 * 60);
         }
       });
-      // ลำดับความสำคัญของสถานะ: เสร็จสิ้น > ส่งมอบงาน > ปิดงานแล้ว > พักงาน (ถ้ายังไม่ปิด) > รอดำเนินการ
-      let status = 'รอดำเนินการ';
-      if (billingInfo && billingInfo.completed) status = 'เสร็จสิ้น';
-      else if (billingInfo && billingInfo.sent) status = 'ส่งมอบงาน';
-      else if (closeRec) status = 'ปิดงานแล้ว';
-      else if (isCurrentlyPaused) status = 'พักงาน';
-      return {
-        main_id: o.main_id, branch: o.branch, service_type: o.service_type, contract_type: o.contract_type, contractor: o.contractor,
-        details: o.details, req_date: o.req_date, opened_at: o.created_at,
-        fix_date: closeRec ? closeRec.fix_date : null, closed_at: closeRec ? closeRec.created_at : null,
-        action_taken: closeRec ? closeRec.action_taken : null, duration_hours: durationHours,
-        sent_to_contractor: !!(billingInfo && billingInfo.sent), completed: !!(billingInfo && billingInfo.completed), status,
-        is_paused: isCurrentlyPaused,
-        pause_periods: pausePeriods.map((p: any) => ({
-          paused_at: p.paused_at, resumed_at: p.resumed_at, reason: p.reason, note: p.note,
-          paused_by: p.paused_by, resumed_by: p.resumed_by, status: p.status,
-        })),
-        pause_count: pausePeriods.length,
-        pause_hours_total: Math.round(pauseHoursTotal * 100) / 100,
-      };
+      const pausePeriodsOut = pausePeriods.map((p: any) => ({
+        paused_at: p.paused_at, resumed_at: p.resumed_at, reason: p.reason, note: p.note,
+        paused_by: p.paused_by, resumed_by: p.resumed_by, status: p.status,
+      }));
+
+      // เลขงานนี้ปิดไปแล้วกี่ครั้ง (คนละเลขทรัพย์สิน) - ถ้ายังไม่เคยปิดเลย ใช้ [null] เพื่อให้ยังออก 1 แถวตามปกติ
+      const closeList: any[] = closeListMap[o.main_id] && closeListMap[o.main_id].length > 0 ? closeListMap[o.main_id] : [null];
+
+      closeList.forEach((closeRec: any) => {
+        let durationHours = null;
+        if (closeRec && closeRec.created_at && o.created_at) {
+          const openedMs = new Date(o.created_at).getTime();
+          const closedMs = new Date(closeRec.created_at).getTime();
+          if (!isNaN(openedMs) && !isNaN(closedMs) && closedMs >= openedMs) {
+            durationHours = Math.round(((closedMs - openedMs) / (1000 * 60 * 60)) * 100) / 100;
+          }
+        }
+        // ลำดับความสำคัญของสถานะ: เสร็จสิ้น > ส่งมอบงาน > ปิดงานแล้ว > พักงาน (ถ้ายังไม่ปิด) > รอดำเนินการ
+        let status = 'รอดำเนินการ';
+        if (billingInfo && billingInfo.completed) status = 'เสร็จสิ้น';
+        else if (billingInfo && billingInfo.sent) status = 'ส่งมอบงาน';
+        else if (closeRec) status = 'ปิดงานแล้ว';
+        else if (isCurrentlyPaused) status = 'พักงาน';
+        rows.push({
+          main_id: o.main_id, branch: o.branch, service_type: o.service_type, contract_type: o.contract_type, contractor: o.contractor,
+          details: o.details, req_date: o.req_date, opened_at: o.created_at,
+          asset_id: closeRec ? closeRec.asset_id : null,
+          fix_date: closeRec ? closeRec.fix_date : null, closed_at: closeRec ? closeRec.created_at : null,
+          action_taken: closeRec ? closeRec.action_taken : null, duration_hours: durationHours,
+          sent_to_contractor: !!(billingInfo && billingInfo.sent), completed: !!(billingInfo && billingInfo.completed), status,
+          is_paused: isCurrentlyPaused,
+          pause_periods: pausePeriodsOut,
+          pause_count: pausePeriods.length,
+          pause_hours_total: Math.round(pauseHoursTotal * 100) / 100,
+        });
+      });
     });
+    return rows;
   }
 
   let body: any = {};
@@ -1441,8 +1575,8 @@ Deno.serve(async (req: Request) => {
       }
 
       case 'checkCloseIssueExists': {
-        const [jobId] = args;
-        return jsonResponse(await checkCloseIssueExists(jobId));
+        const [jobId, assetId] = args;
+        return jsonResponse(await checkCloseIssueExists(jobId, assetId));
       }
 
       case 'lookupBranch': {
@@ -1513,18 +1647,24 @@ Deno.serve(async (req: Request) => {
         const openCheck = await checkOpenIssueExists(jobId);
         if (openCheck.error) return jsonResponse({ success: false, message: 'ตรวจสอบเลขงานล้มเหลว: ' + openCheck.error });
         if (!openCheck.exists) return jsonResponse({ success: false, message: 'ไม่พบการเปิดงานเลขที่ "' + jobId + '" ในระบบ กรุณาบันทึก "เปิดงาน" ก่อน แล้วค่อยปิดงาน' });
-        // กันปิดงานซ้ำ (คนละคนกดปิดเลขเดียวกัน) - เช็คก่อนบันทึกเป็นด่านแรก
+        // กันปิดงานซ้ำ - เดิมกันแค่ระดับ "เลขงาน" ทำให้ 1 เลขงานปิดได้แค่ครั้งเดียว
+        // ตอนนี้เปลี่ยนมากันซ้ำที่ระดับ "เลขงาน + เลขทรัพย์สิน" แทน เพราะ 1 เลขงานอาจมีหลายทรัพย์สินที่ต้องปิดงานแยกกัน
+        // (แบบฟอร์มเดียวกัน กรอกซ้ำได้เรื่อย ๆ แค่เปลี่ยนเลขทรัพย์สิน) ยังคงกันซ้ำถ้าเป็นทรัพย์สินชิ้นเดิม (หรือไม่กรอกเลขทรัพย์สินทั้งคู่)
         // ยังมีโอกาสชนกันได้ถ้ากดบันทึกพร้อมกันเป๊ะ ๆ จึงดักจับ error 23505 (unique_violation) จาก DB อีกชั้นด้านล่าง
-        // (ต้องสร้าง UNIQUE INDEX บนคอลัมน์ close_issues.job_id ไว้ก่อน ดู add-unique-constraints.sql)
-        const closeDupCheck = await checkCloseIssueExists(jobId);
+        // (ต้องสร้าง UNIQUE INDEX บน close_issues (job_id, asset_id) ไว้ก่อน ดู allow-multi-close-per-job.sql)
+        const assetId = (f.assetId || '').toString().trim() || '-';
+        const closeDupCheck = await checkCloseIssueExists(jobId, assetId);
         if (closeDupCheck.error) return jsonResponse({ success: false, message: 'ตรวจสอบสถานะปิดงานล้มเหลว: ' + closeDupCheck.error });
-        if (closeDupCheck.exists) return jsonResponse({ success: false, message: 'เลขที่ใบแจ้งซ่อมบำรุง "' + jobId + '" ถูกปิดงานไปแล้ว ห้ามปิดซ้ำ' });
+        if (closeDupCheck.exists) {
+          const assetMsg = assetId === '-' ? '' : ('เลขทรัพย์สิน "' + assetId + '" ');
+          return jsonResponse({ success: false, message: 'เลขที่ใบแจ้งซ่อมบำรุง "' + jobId + '" ' + assetMsg + 'ถูกปิดงานไปแล้ว ห้ามปิดซ้ำ (ถ้าเป็นทรัพย์สินคนละชิ้น กรุณาระบุเลขทรัพย์สินให้ต่างกัน)' });
+        }
         const pauseCheck = await checkIssuePausedStatus(jobId);
         if (pauseCheck.error) return jsonResponse({ success: false, message: 'ตรวจสอบสถานะพักงานล้มเหลว: ' + pauseCheck.error });
         if (pauseCheck.paused) return jsonResponse({ success: false, message: 'เลขงาน "' + jobId + '" กำลังถูกพักงานอยู่ ไม่สามารถปิดงานได้ กรุณากด "กลับมาทำงาน" ในแท็บพักงานก่อน' });
         const row: any = {
           job_id: jobId, branch: f.branch || '-', fix_date: f.fixDate || '-', parts: f.parts || '-',
-          asset_id: f.assetId || '-', action_taken: f.actionTaken || '-', synced_to_sheet: false,
+          asset_id: assetId, action_taken: f.actionTaken || '-', synced_to_sheet: false,
         };
         // เดิมระบบไม่เคยใช้ค่าวันเวลาที่ผู้ใช้เลือกในหน้าปิดงานเลย ทำให้เวลาปิดงานเป็น "เวลาที่กดบันทึก" เสมอ
         // (ย้อนหลังไม่ได้) ตอนนี้บันทึกตามที่ผู้ใช้เลือกจริง โดยตีความเป็นเวลาไทยเหมือนหน้าเปิดงาน
@@ -1533,7 +1673,8 @@ Deno.serve(async (req: Request) => {
         const { error } = await supabase.from('close_issues').insert(row);
         if (error) {
           if ((error as any).code === '23505') {
-            return jsonResponse({ success: false, message: 'เลขที่ใบแจ้งซ่อมบำรุง "' + jobId + '" ถูกปิดงานไปแล้ว (มีคนบันทึกซ้ำในเวลาไล่เลี่ยกัน) ห้ามปิดซ้ำ' });
+            const assetMsg = assetId === '-' ? '' : ('เลขทรัพย์สิน "' + assetId + '" ');
+            return jsonResponse({ success: false, message: 'เลขที่ใบแจ้งซ่อมบำรุง "' + jobId + '" ' + assetMsg + 'ถูกปิดงานไปแล้ว (มีคนบันทึกซ้ำในเวลาไล่เลี่ยกัน) ห้ามปิดซ้ำ' });
           }
           return jsonResponse({ success: false, message: 'บันทึกล้มเหลว: ' + error.message });
         }
@@ -1542,13 +1683,17 @@ Deno.serve(async (req: Request) => {
       }
 
       case 'getOpenIssuesList': {
-        const { data, error } = await supabase.from('open_issues').select('*').order('created_at', { ascending: false }).limit(1000);
+        // เดิม limit(1000) ทำให้พอข้อมูลเกิน 1000 แถว รายการเก่า ๆ จะหายไปจากหน้าเว็ป (แต่ยังอยู่ครบใน Supabase จริง)
+        // ทำให้ดูเหมือนข้อมูลไม่ตรงกัน แก้เป็น limit สูงขึ้นมากแทน (เหมือนที่ใช้กับ Sync ไป Sheet)
+        const { data, error } = await supabase.from('open_issues').select('*').order('created_at', { ascending: false }).limit(20000);
         if (error) return jsonResponse({ error: error.message });
         return jsonResponse(data);
       }
 
       case 'getCloseIssuesList': {
-        const { data, error } = await supabase.from('close_issues').select('*').order('created_at', { ascending: false }).limit(1000);
+        // เดิม limit(1000) ทำให้พอข้อมูลเกิน 1000 แถว รายการเก่า ๆ จะหายไปจากหน้าเว็ป (แต่ยังอยู่ครบใน Supabase จริง)
+        // ทำให้ดูเหมือนข้อมูลไม่ตรงกัน แก้เป็น limit สูงขึ้นมากแทน (เหมือนที่ใช้กับ Sync ไป Sheet)
+        const { data, error } = await supabase.from('close_issues').select('*').order('created_at', { ascending: false }).limit(20000);
         if (error) return jsonResponse({ error: error.message });
         return jsonResponse(data);
       }
@@ -1712,59 +1857,63 @@ Deno.serve(async (req: Request) => {
       }
 
       // ดูตัวอย่างก่อนบันทึกรอบบิลจริง (ไม่เขียนอะไรลงฐานข้อมูลเลย - อ่านอย่างเดียว)
-      // ใช้เงื่อนไขจับคู่แบบเดียวกับตอนบันทึกจริงเป๊ะ (resolveBillingCandidateJobIds) เพื่อให้สิ่งที่เห็นตรงกับสิ่งที่จะถูกบันทึก
+      // ใช้เงื่อนไขจับคู่แบบเดียวกับตอนบันทึกจริงเป๊ะ (resolveBillingCandidatePairs) เพื่อให้สิ่งที่เห็นตรงกับสิ่งที่จะถูกบันทึก
       case 'previewBillingCandidates': {
         const [username, token, startDate, endDate, jobIds] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ทำรายการนี้ได้' });
-        const candResult = await resolveBillingCandidateJobIds(startDate, endDate, jobIds);
+        const candResult = await resolveBillingCandidatePairs(startDate, endDate, jobIds);
         if (candResult.error) return jsonResponse({ success: false, message: candResult.error });
-        const candidateJobIds = candResult.candidateJobIds;
+        const candidatePairs = candResult.candidatePairs;
         const roundPeriod = candResult.roundPeriod;
-        if (candidateJobIds.length === 0) {
+        if (candidatePairs.length === 0) {
           return jsonResponse({ success: true, roundPeriod, candidates: [], alreadyBilledCount: 0 });
         }
-        // เลขงานที่มีรอบบิลอยู่แล้ว (ถูกจับคู่ไปก่อนหน้า) ไม่นับเป็นตัวอย่างซ้ำ - ให้เห็นแต่ของใหม่จริง ๆ
-        const { data: alreadyBilledData, error: alreadyBilledErr } = await supabase.from('billing_documents').select('customer_case').in('customer_case', candidateJobIds);
+        const candidateJobIds = Array.from(new Set(candidatePairs.map((p) => p.jobId)));
+        // "เลขงาน+เลขทรัพย์สิน" คู่ไหนที่มีรอบบิลอยู่แล้ว (ถูกจับคู่ไปก่อนหน้า) ไม่นับเป็นตัวอย่างซ้ำ - ให้เห็นแต่ของใหม่จริง ๆ
+        // (เดิมเช็คแค่ระดับเลขงาน ทำให้เลขงานที่เคยมีบิลจากการปิดครั้งแรกแล้ว จะไม่มีทางเห็นการปิดครั้งใหม่ ๆ อีกเลย)
+        const { data: alreadyBilledData, error: alreadyBilledErr } = await supabase.from('billing_documents').select('customer_case,asset_id').in('customer_case', candidateJobIds);
         if (alreadyBilledErr) return jsonResponse({ success: false, message: 'ตรวจสอบรอบบิลเดิมล้มเหลว: ' + alreadyBilledErr.message });
-        const alreadyBilledSet = new Set((alreadyBilledData || []).map((r: any) => r.customer_case));
-        const newJobIds = candidateJobIds.filter((id) => !alreadyBilledSet.has(id));
-        if (newJobIds.length === 0) {
-          return jsonResponse({ success: true, roundPeriod, candidates: [], alreadyBilledCount: alreadyBilledSet.size });
+        const alreadyBilledSet = new Set((alreadyBilledData || []).map((r: any) => r.customer_case + '||' + (r.asset_id || '-')));
+        const newPairs = candidatePairs.filter((p) => !alreadyBilledSet.has(p.jobId + '||' + p.assetId));
+        const alreadyBilledCount = candidatePairs.length - newPairs.length;
+        if (newPairs.length === 0) {
+          return jsonResponse({ success: true, roundPeriod, candidates: [], alreadyBilledCount });
         }
+        const newJobIds = Array.from(new Set(newPairs.map((p) => p.jobId)));
         const [openRes, closeRes, branchesRes] = await Promise.all([
           supabase.from('open_issues').select('main_id,branch,service_work,service_type,req_date,contractor').in('main_id', newJobIds),
-          supabase.from('close_issues').select('job_id,branch,asset_id,fix_date').in('job_id', newJobIds).order('created_at', { ascending: false }),
+          supabase.from('close_issues').select('job_id,branch,asset_id,fix_date').in('job_id', newJobIds),
           supabase.from('branches').select('branch_code,branch_name'),
         ]);
         if (openRes.error) return jsonResponse({ success: false, message: openRes.error.message });
         if (closeRes.error) return jsonResponse({ success: false, message: closeRes.error.message });
         const openByJob: Record<string, any> = {};
         (openRes.data || []).forEach((o: any) => { if (!openByJob[o.main_id]) openByJob[o.main_id] = o; });
-        const closeByJob: Record<string, any> = {};
-        (closeRes.data || []).forEach((c: any) => { if (!closeByJob[c.job_id]) closeByJob[c.job_id] = c; });
+        const closeByPair: Record<string, any> = {};
+        (closeRes.data || []).forEach((c: any) => { closeByPair[c.job_id + '||' + (c.asset_id || '-')] = c; });
         const branchMap: Record<string, string> = {};
         (branchesRes.data || []).forEach((b: any) => { if (b.branch_code) branchMap[b.branch_code] = b.branch_name; });
-        const candidates = newJobIds.map((jobId) => {
-          const openRecord = openByJob[jobId] || null;
-          const closeRecord = closeByJob[jobId] || null;
+        const candidates = newPairs.map((p) => {
+          const openRecord = openByJob[p.jobId] || null;
+          const closeRecord = closeByPair[p.jobId + '||' + p.assetId] || null;
           const rawBranchText = (closeRecord && closeRecord.branch) || (openRecord && openRecord.branch) || '';
           let branchCode: string | null = null; let branchName: string | null = null;
           const codeMatch = rawBranchText.toString().match(/^\d+/);
           if (codeMatch) { branchCode = codeMatch[0]; branchName = branchMap[branchCode] || rawBranchText; }
           else if (rawBranchText) { branchName = rawBranchText; }
           return {
-            job_id: jobId, branch_code: branchCode, branch_name: branchName,
+            job_id: p.jobId, branch_code: branchCode, branch_name: branchName,
             service_type: openRecord ? (openRecord.service_work || openRecord.service_type || '-') : '-',
-            asset_id: closeRecord ? (closeRecord.asset_id || '-') : '-',
+            asset_id: p.assetId,
             req_date: openRecord ? (openRecord.req_date || '-') : '-',
             visit_date: closeRecord ? (closeRecord.fix_date || '-') : '-',
             contractor: openRecord ? (openRecord.contractor || null) : null,
             has_open_record: !!openRecord, has_close_record: !!closeRecord,
           };
         });
-        return jsonResponse({ success: true, roundPeriod, candidates, alreadyBilledCount: alreadyBilledSet.size });
+        return jsonResponse({ success: true, roundPeriod, candidates, alreadyBilledCount });
       }
 
       case 'generateBillingDocumentsForAllClosedJobs': {
@@ -1775,41 +1924,57 @@ Deno.serve(async (req: Request) => {
         if ((!jobIds || jobIds.length === 0) && (!startDate || !endDate)) {
           return jsonResponse({ success: false, message: 'ต้องระบุช่วงวันที่ (ตั้งแต่วันที่ และ ถึงวันที่) หรือระบุเลขงานเจาะจง ก่อนถึงจะจับคู่ข้อมูลได้' });
         }
-        const candResult = await resolveBillingCandidateJobIds(startDate, endDate, jobIds);
+        const candResult = await resolveBillingCandidatePairs(startDate, endDate, jobIds);
         if (candResult.error) return jsonResponse({ success: false, message: candResult.error });
-        const candidateJobIds = candResult.candidateJobIds;
+        const candidatePairs = candResult.candidatePairs;
         const roundPeriod = candResult.roundPeriod;
-        if (candidateJobIds.length === 0) {
+        if (candidatePairs.length === 0) {
           return jsonResponse({ success: true, message: 'ไม่มีข้อมูลรายการปิดงานในช่วงที่เลือก', created: 0, skipped: 0, matchedJobIds: [] });
         }
         const { data: roundNoData, error: roundNoErr } = await supabase.rpc('next_billing_round_no');
         if (roundNoErr) return jsonResponse({ success: false, message: 'ขอเลขรอบบิลล้มเหลว: ' + roundNoErr.message });
         const roundNo = roundNoData as number;
-        const { data: claimedRows, error: claimErr } = await supabase.rpc('claim_billing_jobs', { job_ids: candidateJobIds, p_round_no: roundNo });
+
+        // ระบบจองคิวกันชนกัน (claim_billing_jobs) เดิมออกแบบมาให้จอง "1 เลขงาน = 1 คีย์" เท่านั้น (ก่อนหน้านี้ 1 เลขงาน = 1 บิลเสมอ)
+        // ตอนนี้ 1 เลขงานอาจมีหลายครั้งปิดงาน (คนละเลขทรัพย์สิน) ต้องจองแยกกันเป็นคนละคิวคีย์ - แต่ไม่อยากไปแก้ตัวฟังก์ชัน/ตาราง
+        // จองคิวเดิมที่ไม่รู้โครงสร้างแน่ชัด (เสี่ยงพังระบบบิลทั้งหมด) จึงใช้วิธีสร้าง "คีย์จอง" สมมติแทน: ถ้าคู่ไหนไม่มีเลขทรัพย์สิน
+        // (หรือมีแค่ครั้งเดียว) คีย์จองยังเป็นเลขงานตรง ๆ เหมือนเดิมทุกอย่าง (ไม่กระทบของเก่าเลย) ส่วนคู่ที่มีเลขทรัพย์สินจริง
+        // จะได้คีย์จองที่ต่อท้ายด้วยเลขทรัพย์สิน ทำให้จองคิวแยกกันได้โดยไม่ต้องแก้ claim_billing_jobs เลย
+        function claimKeyOf(p: { jobId: string; assetId: string }): string {
+          return (p.assetId && p.assetId !== '-') ? (p.jobId + '__asset__' + p.assetId) : p.jobId;
+        }
+        const claimKeyToPair: Record<string, { jobId: string; assetId: string }> = {};
+        candidatePairs.forEach((p) => { claimKeyToPair[claimKeyOf(p)] = p; });
+        const candidateClaimKeys = Object.keys(claimKeyToPair);
+
+        const { data: claimedRows, error: claimErr } = await supabase.rpc('claim_billing_jobs', { job_ids: candidateClaimKeys, p_round_no: roundNo });
         if (claimErr) return jsonResponse({ success: false, message: 'จองเลขงานล้มเหลว: ' + claimErr.message });
-        const claimedJobIds: string[] = (claimedRows || []).map((r: any) => r.customer_case);
-        const skippedAlreadyClaimed = candidateJobIds.length - claimedJobIds.length;
-        if (claimedJobIds.length === 0) {
+        const claimedKeys: string[] = (claimedRows || []).map((r: any) => r.customer_case);
+        const skippedAlreadyClaimed = candidateClaimKeys.length - claimedKeys.length;
+        if (claimedKeys.length === 0) {
           return jsonResponse({ success: true, message: 'ไม่มีเลขงานใหม่ให้สร้าง (ทั้งหมดถูกสร้างบิลไปแล้ว/มีแอดมินคนอื่นเพิ่งสร้างไปพร้อมกัน)', created: 0, skipped: skippedAlreadyClaimed, matchedJobIds: [] });
         }
+        const claimedPairs = claimedKeys.map((k) => claimKeyToPair[k]).filter(Boolean);
+        const claimedJobIds = Array.from(new Set(claimedPairs.map((p) => p.jobId)));
+
         const [openRes, closeRes] = await Promise.all([
           supabase.from('open_issues').select('*').in('main_id', claimedJobIds),
-          supabase.from('close_issues').select('*').in('job_id', claimedJobIds).order('created_at', { ascending: false }),
+          supabase.from('close_issues').select('*').in('job_id', claimedJobIds),
         ]);
         if (openRes.error) return jsonResponse({ success: false, message: openRes.error.message });
         if (closeRes.error) return jsonResponse({ success: false, message: closeRes.error.message });
         const openByJob: Record<string, any> = {};
         (openRes.data || []).forEach((o: any) => { if (!openByJob[o.main_id]) openByJob[o.main_id] = o; });
-        const closeByJob: Record<string, any> = {};
-        (closeRes.data || []).forEach((c: any) => { if (!closeByJob[c.job_id]) closeByJob[c.job_id] = c; });
+        const closeByPair: Record<string, any> = {};
+        (closeRes.data || []).forEach((c: any) => { closeByPair[c.job_id + '||' + (c.asset_id || '-')] = c; });
         const { data: branchesData } = await supabase.from('branches').select('branch_code,branch_name');
         const branchMap: Record<string, string> = {};
         (branchesData || []).forEach((b: any) => { if (b.branch_code) branchMap[b.branch_code] = b.branch_name; });
         const contractorSeqCounters: Record<string, number> = {};
         const rowsToInsert: any[] = [];
-        claimedJobIds.forEach((jobId) => {
-          const openRecord = openByJob[jobId] || null;
-          const closeRecord = closeByJob[jobId] || null;
+        claimedPairs.forEach((p) => {
+          const openRecord = openByJob[p.jobId] || null;
+          const closeRecord = closeByPair[p.jobId + '||' + p.assetId] || null;
           const contractorKey = (openRecord && openRecord.contractor) || '__ไม่มีผู้รับเหมา__';
           contractorSeqCounters[contractorKey] = (contractorSeqCounters[contractorKey] || 0) + 1;
           const seq = contractorSeqCounters[contractorKey];
@@ -1819,19 +1984,19 @@ Deno.serve(async (req: Request) => {
           if (codeMatch) { branchCode = codeMatch[0]; branchName = branchMap[branchCode] || rawBranchText; }
           else if (rawBranchText) { branchName = rawBranchText; }
           rowsToInsert.push({
-            seq, round_no: roundNo, round_period: roundPeriod, customer_case: jobId, branch_code: branchCode, branch_name: branchName,
+            seq, round_no: roundNo, round_period: roundPeriod, customer_case: p.jobId, branch_code: branchCode, branch_name: branchName,
             service_type: openRecord ? (openRecord.service_work || openRecord.service_type || '-') : '-',
-            asset_id: closeRecord ? (closeRecord.asset_id || '-') : '-', req_date: openRecord ? (openRecord.req_date || '-') : '-',
+            asset_id: closeRecord ? (closeRecord.asset_id || '-') : p.assetId, req_date: openRecord ? (openRecord.req_date || '-') : '-',
             visit_date: closeRecord ? (closeRecord.fix_date || '-') : '-', contractor: openRecord ? (openRecord.contractor || null) : null, synced_to_sheet: false,
           });
         });
         const { error: insertErr } = await supabase.from('billing_documents').insert(rowsToInsert);
         if (insertErr) {
-          await supabase.from('billing_job_registry').delete().in('customer_case', claimedJobIds);
+          await supabase.from('billing_job_registry').delete().in('customer_case', claimedKeys);
           return jsonResponse({ success: false, message: 'สร้างแถวตารางวางบิลล้มเหลว: ' + insertErr.message });
         }
-        const message = 'สร้างสำเร็จ ' + claimedJobIds.length + ' เลขงาน (รอบบิลที่ ' + roundNo + ')' + (skippedAlreadyClaimed > 0 ? ' | ข้าม ' + skippedAlreadyClaimed + ' เลขงานที่มีบิลอยู่แล้ว' : '');
-        return jsonResponse({ success: true, message, created: claimedJobIds.length, skipped: skippedAlreadyClaimed, matchedJobIds: claimedJobIds, roundNo });
+        const message = 'สร้างสำเร็จ ' + claimedPairs.length + ' รายการ (รอบบิลที่ ' + roundNo + ')' + (skippedAlreadyClaimed > 0 ? ' | ข้าม ' + skippedAlreadyClaimed + ' รายการที่มีบิลอยู่แล้ว' : '');
+        return jsonResponse({ success: true, message, created: claimedPairs.length, skipped: skippedAlreadyClaimed, matchedJobIds: claimedJobIds, roundNo });
       }
 
       // ==================== เมนู "PM" — วางบิลงาน Preventive Maintenance (ดึงจากระบบ PM คนละโปรเจกต์ Supabase) ====================
@@ -2588,12 +2753,18 @@ Deno.serve(async (req: Request) => {
         if (session.role !== 'admin') q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true);
         const { data, error } = await q;
         if (error) return jsonResponse({ success: false, message: 'ดึงข้อมูลล้มเหลว: ' + error.message });
-        const seen = new Set(); const jobs: any[] = [];
+        // เดิม dedupe ด้วย customer_case อย่างเดียว ทำให้ 1 เลขงานที่มีหลายเลขทรัพย์สินได้ฟอร์มแค่ 1 ใบ (สูญข้อมูลเลขทรัพย์สินอื่น)
+        // เปลี่ยนเป็นรวมเลขทรัพย์สินทั้งหมดของแต่ละเลขงานไว้ด้วยกัน แล้วออกไฟล์เดียวต่อเลขงาน แต่เพิ่ม sheet แยกทีละเลขทรัพย์สินในไฟล์เดียวกัน (แพทเทิร์นฟอร์มเดิม เปลี่ยนแค่เลขทรัพย์สิน)
+        const jobMap: Record<string, any> = {};
         (data || []).forEach((r: any) => {
-          if (!r.customer_case || seen.has(r.customer_case)) return;
-          seen.add(r.customer_case);
-          jobs.push({ customerCase: r.customer_case, branchCode: r.branch_code, branchName: r.branch_name, serviceType: r.service_type, assetId: r.asset_id });
+          if (!r.customer_case) return;
+          const assetKey = (r.asset_id || '-').toString().trim() || '-';
+          if (!jobMap[r.customer_case]) {
+            jobMap[r.customer_case] = { customerCase: r.customer_case, branchCode: r.branch_code, branchName: r.branch_name, serviceType: r.service_type, assetIds: [] };
+          }
+          if (jobMap[r.customer_case].assetIds.indexOf(assetKey) === -1) jobMap[r.customer_case].assetIds.push(assetKey);
         });
+        const jobs: any[] = Object.values(jobMap);
         if (jobs.length === 0) return jsonResponse({ success: false, message: 'ไม่พบข้อมูลเลขงานที่ระบุ (หรือไม่ใช่งานของคุณ / ยังไม่ถูกส่งบิล)' });
         const files: any[] = []; const errors: string[] = [];
         for (const job of jobs) {
@@ -2627,28 +2798,37 @@ Deno.serve(async (req: Request) => {
         const sheetUrl = 'https://docs.google.com/spreadsheets/d/' + spreadsheetId + '/edit';
 
         let existingNames: string[];
+        let sheetIdByName: Record<string, number> = {};
         try {
-          existingNames = await getSpreadsheetSheetNames(spreadsheetId, accessToken);
+          const sheetInfos = await getSpreadsheetSheetInfo(spreadsheetId, accessToken);
+          existingNames = sheetInfos.map((s) => s.name);
+          sheetInfos.forEach((s) => { sheetIdByName[s.name] = s.sheetId; });
         } catch (e) {
           return jsonResponse({ success: false, message: 'เปิด Google Sheet ล้มเหลว: ' + String(e) + ' (ตรวจสอบว่าแชร์สิทธิ์ Editor ให้อีเมล ' + (tokenResult.email || '') + ' แล้วหรือยัง)' });
         }
 
-        // ซิงค์แบบ "มิเรอร์เต็มรูปแบบ" ทุกครั้ง: ดึงข้อมูลทั้งหมดจาก DB ปัจจุบัน แล้วเขียนทับ Sheet ทั้งแท็บใหม่เสมอ
-        // (ไม่ใช่ append เฉพาะแถวใหม่แบบเดิม) เพื่อให้ Sheet ตรงกับฐานข้อมูลเป๊ะทุกครั้งที่กดซิงค์:
-        // - ไม่มีข้อมูลซ้ำ (เขียนทับหมดทุกรอบ ไม่ใช่ต่อท้ายเรื่อย ๆ)
-        // - ถ้ามีคนไปลบแถวใน Sheet เอง รอบซิงค์ถัดไปจะคืนข้อมูลที่ถูกต้องกลับมาให้อัตโนมัติ
-        // - ถ้าข้อมูลใน DBถูกแก้ไข/ลบภายหลัง (เช่น แก้ราคาบิล, ลบเลขงานที่กรอกผิด) Sheet จะอัปเดตตามทันทีที่ซิงค์รอบถัดไป
+        // เลขงาน (main_id) ที่ปิดงานไปแล้ว (มีแถวใน close_issues อย่างน้อย 1 แถว) - ใช้ไฮไลท์สีเหลืองในแท็บ "เปิดงาน"
+        // ให้เห็นชัดว่าเลขงานไหนปิดไปแล้วบ้าง โดยไม่ต้องสลับไปดูแท็บ "ปิดงาน" เอง
+        const { data: closedJobRows } = await supabase.from('close_issues').select('job_id');
+        const closedJobIdSet = new Set<string>((closedJobRows || []).map((r: any) => r.job_id));
+
+        // ซิงค์แบบ "กระทบยอด" (ดู incrementalSyncToSheetTab ด้านบน) - อ่านคอลัมน์รหัสอ้างอิงในชีตสด ๆ ทุกครั้งก่อนเขียน
+        // - ไม่มีข้อมูลซ้ำ (เจอรหัสอ้างอิงเดิมในชีต = เขียนทับตำแหน่งเดิม ไม่ใช่เพิ่มต่อท้ายมั่ว ๆ)
+        // - แถวที่เคยซิงค์แล้วแต่ข้อมูลถูกแก้ไขภายหลัง (เช่น แก้ราคาบิล) จะถูกอัปเดตทับตำแหน่งเดิมให้ตรงกับฐานข้อมูลล่าสุดทุกครั้งที่ซิงค์
+        // - ถ้ามีคนไปลบแถวใน Sheet เอง (ไม่เจอรหัสอ้างอิงแล้ว) แต่ข้อมูลยังอยู่ใน Supabase -> จะถูกเพิ่มกลับเข้าไปใหม่อัตโนมัติ
+        // - ถ้าข้อมูลถูกลบออกจาก Supabase จริง (เจอรหัสอ้างอิงในชีต แต่ไม่มีในฐานข้อมูลแล้ว) -> ล้างเนื้อหาแถวนั้นในชีตทิ้งให้อัตโนมัติ
+        // - ไม่มีลิมิตจำนวนแถวเหมือนวิธีมิเรอร์เต็มรูปแบบเดิม (เคยจำกัดแค่ 5,000 แถว/ตาราง)
         const results: string[] = [];
         let totalSynced = 0;
         for (const t of SYNC_TABLE_REGISTRY) {
           try {
-            const { data: rows, error } = await supabase.from(t.table).select('*').order('created_at', { ascending: true }).limit(5000);
+            const { data: rows, error } = await supabase.from(t.table).select('*').order('created_at', { ascending: true }).limit(20000);
             if (error) { results.push(t.table + ': ดึงข้อมูลล้มเหลว (' + error.message + ')'); continue; }
-            const timestamp = new Date().toISOString();
-            const values = (rows || []).map((r: any) => [timestamp, ...t.mapRow(r)]);
-            const msg = await mirrorRowsToSheetTab(spreadsheetId, accessToken, existingNames, t.sheetName, t.color, t.headers, values);
+            // แท็บ "เปิดงาน" เท่านั้นที่ต้องไฮไลท์สีเหลืองตามสถานะปิดงาน
+            const shouldHighlight = t.table === 'open_issues' ? (r: any) => closedJobIdSet.has(r.main_id) : undefined;
+            const msg = await incrementalSyncToSheetTab(spreadsheetId, accessToken, existingNames, sheetIdByName, t.sheetName, t.color, t.headers, rows || [], t.keyOf, t.mapRow, shouldHighlight);
             totalSynced += (rows || []).length;
-            results.push(msg + (values.length === 5000 ? ' (ถึงลิมิต 5000 แถว อาจมีข้อมูลเก่ากว่านี้ตกหล่น)' : ''));
+            results.push(msg + ((rows || []).length === 20000 ? ' (ถึงลิมิต 20,000 แถวต่อรอบซิงค์ - แถวเก่ากว่านี้จะรออัปเดตรอบถัดไป ไม่ได้หายไปจาก Sheet)' : ''));
           } catch (e) {
             results.push(t.table + ': ล้มเหลว (' + String(e) + ')');
           }
@@ -2657,11 +2837,10 @@ Deno.serve(async (req: Request) => {
         // แท็บ "รายงานสถานะดำเนินการ" - เป็นรายงานรวมข้อมูล ไม่ใช่ตารางดิบตารางเดียว จึงคำนวณแยกต่างหาก
         try {
           const reportRows = await computeJobStatusReportRows(null, null);
-          const timestamp = new Date().toISOString();
-          const values = reportRows.map((r: any) => [timestamp, ...STATUS_REPORT_SHEET.mapRow(r)]);
-          const msg = await mirrorRowsToSheetTab(
-            spreadsheetId, accessToken, existingNames,
-            STATUS_REPORT_SHEET.sheetName, STATUS_REPORT_SHEET.color, STATUS_REPORT_SHEET.headers, values
+          const msg = await incrementalSyncToSheetTab(
+            spreadsheetId, accessToken, existingNames, sheetIdByName,
+            STATUS_REPORT_SHEET.sheetName, STATUS_REPORT_SHEET.color, STATUS_REPORT_SHEET.headers,
+            reportRows, STATUS_REPORT_SHEET.keyOf, STATUS_REPORT_SHEET.mapRow
           );
           totalSynced += reportRows.length;
           results.push(msg);
@@ -2669,7 +2848,7 @@ Deno.serve(async (req: Request) => {
           results.push(STATUS_REPORT_SHEET.sheetName + ': ล้มเหลว (' + String(e) + ')');
         }
 
-        return jsonResponse({ success: true, message: 'ซิงค์ข้อมูลไป Google Sheet เสร็จสิ้น (รวม ' + totalSynced + ' แถว)\n' + results.join(' | ') + '\nลิงก์ Google Sheet: ' + sheetUrl });
+        return jsonResponse({ success: true, message: 'ซิงค์ข้อมูลไป Google Sheet เสร็จสิ้น (รวม ' + totalSynced + ' แถวที่ตรวจสอบ)\n' + results.join(' | ') + '\nลิงก์ Google Sheet: ' + sheetUrl });
       }
 
       default:

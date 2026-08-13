@@ -26,6 +26,22 @@ jobs:
         with:
           node-version: 20
 
+      # กันเวอร์ชันเพี้ยน: tag ที่ push ขึ้นมา ต้องตรงกับ version ใน package.json เป๊ะ ๆ
+      # (ถ้าไม่ตรง ตัวโปรแกรมที่ผู้ใช้ติดตั้งจะโชว์เวอร์ชันคนละอย่างกับที่เห็นบนหน้า GitHub Releases
+      #  และระบบอัปเดตอัตโนมัติจะเทียบเวอร์ชันผิด จนบางเครื่องไม่ได้รับอัปเดตเลย)
+      - name: ตรวจสอบว่า tag ตรงกับ version ใน package.json
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          echo "tag = $TAG_VERSION | package.json = $PKG_VERSION"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::เวอร์ชันไม่ตรงกัน! tag คือ v$TAG_VERSION แต่ package.json คือ $PKG_VERSION"
+            echo "::error::วิธีแก้: แก้ version ใน package.json ให้เป็น $TAG_VERSION แล้ว commit + push ใหม่ ก่อนสร้าง tag"
+            exit 1
+          fi
+
       # ใช้ npm ci ถ้ามี package-lock.json  ไม่มีก็ fallback เป็น npm install
       - name: Install dependencies
         shell: bash
