@@ -1324,6 +1324,9 @@
                     <label class="flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50 cursor-pointer">
                         <input type="checkbox" class="syncTableCheckbox" value="pause_records" checked> <span class="text-sm text-slate-700">พักงาน</span>
                     </label>
+                    <label class="flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50 cursor-pointer">
+                        <input type="checkbox" class="syncTableCheckbox" value="__status_report__" checked> <span class="text-sm text-slate-700">รายงานสถานะดำเนินการ <span class="text-xs text-slate-400">(ช้าที่สุด - รวมข้อมูลหลายตาราง)</span></span>
+                    </label>
                 </div>
                 <div class="flex gap-3 mt-3 text-xs">
                     <button type="button" onclick="setSyncTablesChecked_(true)" class="text-blood-700 hover:underline">เลือกทั้งหมด</button>
@@ -1762,13 +1765,19 @@
 
         // เริ่มซิงค์เฉพาะตารางที่เลือกไว้ใน popup - วนเรียก manualSyncToSheets ฝั่งเซิร์ฟเวอร์จนกว่าจะครบ backlog
         // (ฝั่งเซิร์ฟเวอร์เองก็วนซิงค์ในตัวจนใกล้หมดเวลาสคริปต์ ~4.5 นาที ถ้ายังไม่ครบจะได้รับข้อความให้กดซิงค์ต่อ)
+        // แท็บ "รายงานสถานะดำเนินการ" ไม่ได้มาจากตารางดิบตารางเดียว (รวมข้อมูลหลายตาราง) จึงส่งเป็นค่าแยกต่างหาก
+        // ไม่ปนไปในรายชื่อตาราง ใช้ค่าพิเศษนี้เป็นตัวคั่นในฝั่งหน้าเว็บเท่านั้น
+        const STATUS_REPORT_SYNC_KEY = '__status_report__';
+
         function startSelectedSync_() {
-            const selected = Array.prototype.slice.call(document.querySelectorAll('.syncTableCheckbox:checked')).map(function (cb) { return cb.value; });
-            if (selected.length === 0) {
-                document.getElementById('syncTablesStatus').textContent = 'กรุณาเลือกอย่างน้อย 1 ตาราง';
+            const allChecked = Array.prototype.slice.call(document.querySelectorAll('.syncTableCheckbox:checked')).map(function (cb) { return cb.value; });
+            if (allChecked.length === 0) {
+                document.getElementById('syncTablesStatus').textContent = 'กรุณาเลือกอย่างน้อย 1 รายการ';
                 document.getElementById('syncTablesStatus').className = 'text-xs text-red-600 mt-3 min-h-[1rem]';
                 return;
             }
+            const includeStatusReport = allChecked.indexOf(STATUS_REPORT_SYNC_KEY) !== -1;
+            const selected = allChecked.filter(function (v) { return v !== STATUS_REPORT_SYNC_KEY; });
 
             const startBtn = document.getElementById('btnStartSync');
             const statusEl = document.getElementById('syncTablesStatus');
@@ -1792,7 +1801,7 @@
                 label.textContent = originalLabel;
             }
 
-            runServerCall('manualSyncToSheets', [currentSession.username, currentSession.token, selected], function (res) {
+            runServerCall('manualSyncToSheets', [currentSession.username, currentSession.token, selected, includeStatusReport], function (res) {
                 resetButtons();
                 if (res && res.success) {
                     statusEl.className = 'text-xs text-green-700 mt-3 min-h-[1rem]';

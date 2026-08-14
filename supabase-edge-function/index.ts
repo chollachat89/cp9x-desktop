@@ -1095,14 +1095,75 @@ async function ensureSheetTab(spreadsheetId: string, sheetName: string, headers:
   return sheetId;
 }
 
-// สำหรับแท็บที่เคยมีอยู่ก่อนแล้ว (สร้างไว้ตั้งแต่รุ่นก่อนที่จะมีคอลัมน์รหัสอ้างอิง) เติมหัวคอลัมน์นี้ให้อัตโนมัติถ้ายังไม่มี
-// เรียกทุกครั้งที่ซิงค์ - เขียนซ้ำได้อย่างปลอดภัย (ถ้ามีอยู่แล้วค่าจะเหมือนเดิม ไม่กระทบอะไร)
-async function ensureKeyColumnHeader(spreadsheetId: string, sheetName: string, keyColLetter: string, accessToken: string): Promise<void> {
-  const range = encodeURIComponent(sheetName) + '!' + keyColLetter + '1';
-  await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + '/values/' + range + '?valueInputOption=USER_ENTERED', {
+// อ่านหัวตาราง (แถวที่ 1) ของแท็บนั้นมาดูว่าตรงกับชุดคอลัมน์ที่ระบบใช้อยู่ตอนนี้หรือไม่
+async function getSheetTabHeaderRow(spreadsheetId: string, sheetName: string, accessToken: string): Promise<string[]> {
+  const range = encodeURIComponent(sheetName) + '!1:1';
+  const res = await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + '/values/' + range, {
+    headers: { Authorization: 'Bearer ' + accessToken },
+  });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error?.message || 'อ่านหัวตารางจาก Sheet ล้มเหลว');
+  const vals = (json.values && json.values[0]) ? json.values[0] : [];
+  return vals.map((v: any) => (v === null || v === undefined) ? '' : String(v).trim());
+}
+
+// ล้างค่าทั้งแท็บ (ทุกแถวทุกคอลัมน์) - ใช้ตอนต้องสร้างตารางใหม่เพราะชุดคอลัมน์เปลี่ยนไป
+async function clearSheetTabAllValues(spreadsheetId: string, sheetName: string, accessToken: string): Promise<void> {
+  const range = encodeURIComponent(sheetName) + '!A:ZZZ';
+  const res = await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + '/values/' + range + ':clear', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({}));
+    throw new Error(json.error?.message || 'ล้างข้อมูลเก่าในแท็บ ' + sheetName + ' ล้มเหลว');
+  }
+}
+
+// ล้าง "สีพื้นหลัง" ของแถวข้อมูลทั้งหมด (แถว 2 เป็นต้นไป) ให้กลับเป็นขาว
+// จำเป็นตอนสร้างตารางใหม่ เพราะการล้างค่า (values:clear) ล้างแค่ "ข้อความ" ไม่ได้ล้าง "รูปแบบเซลล์"
+// ถ้าไม่ล้าง ไฮไลท์สีเหลืองของแถวเดิม (แท็บ "เปิดงาน") จะค้างอยู่กับแถวที่ข้อมูลเปลี่ยนไปแล้ว ทำให้อ่านผิด
+async function resetSheetTabRowFormatting(spreadsheetId: string, sheetId: number | undefined, accessToken: string): Promise<void> {
+  if (sheetId === undefined) return;
+  await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + ':batchUpdate', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      requests: [{
+        repeatCell: {
+          range: { sheetId, startRowIndex: 1 }, // ตั้งแต่แถว 2 ลงไปจนสุดชีต (ไม่แตะแถวหัวตาราง)
+          cell: { userEnteredFormat: { backgroundColor: HIGHLIGHT_NONE } },
+          fields: 'userEnteredFormat.backgroundColor',
+        },
+      }],
+    }),
+  });
+}
+
+// เขียนหัวตารางชุดใหม่ลงแถวที่ 1 พร้อมจัดรูปแบบ (สีพื้น/ตัวหนา/ตรึงแถวหัว) ให้เหมือนตอนสร้างแท็บใหม่
+async function writeSheetTabHeaderRow(spreadsheetId: string, sheetName: string, sheetId: number | undefined, fullHeaders: string[], colorHex: string, accessToken: string): Promise<void> {
+  const endCol = colIndexToLetter(fullHeaders.length);
+  const range = encodeURIComponent(sheetName) + '!A1:' + endCol + '1';
+  const res = await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + '/values/' + range + '?valueInputOption=USER_ENTERED', {
     method: 'PUT',
     headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ values: [[SHEET_KEY_COLUMN_HEADER]] }),
+    body: JSON.stringify({ values: [fullHeaders] }),
+  });
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({}));
+    throw new Error(json.error?.message || 'เขียนหัวตารางของแท็บ ' + sheetName + ' ล้มเหลว');
+  }
+  if (sheetId === undefined) return;
+  await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + ':batchUpdate', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      requests: [
+        { repeatCell: { range: { sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: fullHeaders.length }, cell: { userEnteredFormat: { backgroundColor: hexToRgbFraction(colorHex), textFormat: { bold: true }, horizontalAlignment: 'CENTER' } }, fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)' } },
+        { updateSheetProperties: { properties: { sheetId, gridProperties: { frozenRowCount: 1 } }, fields: 'gridProperties.frozenRowCount' } },
+      ],
+    }),
   });
 }
 
@@ -1188,14 +1249,41 @@ async function incrementalSyncToSheetTab(
   sheetName: string, color: string, headers: string[], rows: any[], keyOf: (r: any) => string, mapRow: (r: any) => any[],
   shouldHighlight?: (r: any) => boolean
 ): Promise<string> {
+  const fullHeaders = ['Timestamp'].concat(headers).concat([SHEET_KEY_COLUMN_HEADER]);
+  const keyColLetter = colIndexToLetter(headers.length + 2); // +1 คอลัมน์ Timestamp, +1 ขยับไปคอลัมน์ถัดจากคอลัมน์ข้อมูลตัวสุดท้าย
+
+  // ตรวจว่าหัวตารางในชีตตรงกับชุดคอลัมน์ที่ระบบใช้อยู่ตอนนี้หรือไม่ ถ้าไม่ตรงต้อง "สร้างตารางใหม่ทั้งแท็บ"
+  //
+  // ทำไมต้องเช็ค: เดิมระบบเขียนหัวตารางแค่ตอน "สร้างแท็บใหม่" เท่านั้น แท็บที่มีอยู่แล้วจะใช้หัวตารางชุดเดิมตลอดไป
+  // พอมีการเพิ่ม/ลด/สลับคอลัมน์ในระบบ (เช่นเพิ่มคอลัมน์ "งานบริการ") จะเกิดปัญหา 2 อย่างพร้อมกัน:
+  //   1) ตำแหน่งคอลัมน์ "รหัสอ้างอิง" ขยับไป 1 ช่อง -> อ่านรหัสอ้างอิงไม่เจอสักแถว -> ระบบคิดว่าทุกแถวเป็นข้อมูลใหม่
+  //      แล้วเพิ่มซ้ำเข้าไปทั้งหมดอีกชุด (ข้อมูลบานเป็น 2 เท่า)
+  //   2) แถวเก่าที่เขียนตามคอลัมน์ชุดเดิม จะเหลื่อมกับหัวตารางชุดใหม่ -> ข้อมูลอยู่ผิดคอลัมน์ อ่านแล้วไม่ตรงกันทั้งตาราง
+  // แก้โดยตรวจหัวตารางทุกครั้งก่อนซิงค์ ถ้าไม่ตรง = ล้างทั้งแท็บแล้วเขียนใหม่หมดจากข้อมูลจริงใน Supabase
+  // (ไม่มีข้อมูลสูญหาย เพราะต้นทางจริงอยู่ที่ Supabase เสมอ ชีตเป็นแค่ปลายทางที่คัดลอกไปแสดง)
+  let sheetKeyToRow: Record<string, number> = {};
+  let rebuiltTab = false;
+
   if (existingNames.indexOf(sheetName) === -1) {
     const newSheetId = await ensureSheetTab(spreadsheetId, sheetName, headers, color, accessToken);
     existingNames.push(sheetName);
     sheetIdByName[sheetName] = newSheetId;
+    rebuiltTab = true; // แท็บสร้างใหม่ = ยังไม่มีข้อมูลเดิมอยู่แล้ว ถือว่าทุกแถวเป็นของใหม่
+  } else {
+    const actualHeaders = await getSheetTabHeaderRow(spreadsheetId, sheetName, accessToken);
+    const headersMatch = actualHeaders.length === fullHeaders.length
+      && fullHeaders.every((h, i) => actualHeaders[i] === h);
+    if (!headersMatch) {
+      await clearSheetTabAllValues(spreadsheetId, sheetName, accessToken);
+      // ล้างสีพื้นหลังแถวข้อมูลเก่าด้วย (values:clear ล้างแค่ข้อความ ไม่ได้ล้างรูปแบบเซลล์)
+      // ไม่งั้นไฮไลท์สีเหลืองของแถวเดิมจะค้างอยู่กับแถวที่ข้อมูลเปลี่ยนไปแล้ว
+      await resetSheetTabRowFormatting(spreadsheetId, sheetIdByName[sheetName], accessToken);
+      await writeSheetTabHeaderRow(spreadsheetId, sheetName, sheetIdByName[sheetName], fullHeaders, color, accessToken);
+      rebuiltTab = true;
+    } else {
+      sheetKeyToRow = await getSheetTabKeyPositions(spreadsheetId, sheetName, keyColLetter, accessToken);
+    }
   }
-  const keyColLetter = colIndexToLetter(headers.length + 2); // +1 คอลัมน์ Timestamp, +1 ขยับไปคอลัมน์ถัดจากคอลัมน์ข้อมูลตัวสุดท้าย
-  await ensureKeyColumnHeader(spreadsheetId, sheetName, keyColLetter, accessToken);
-  const sheetKeyToRow = await getSheetTabKeyPositions(spreadsheetId, sheetName, keyColLetter, accessToken);
 
   if (rows.length === 0 && Object.keys(sheetKeyToRow).length === 0) return sheetName + ': ไม่มีข้อมูล';
 
@@ -1251,7 +1339,9 @@ async function incrementalSyncToSheetTab(
     await applyRowHighlighting(spreadsheetId, sheetIdByName[sheetName], sheetName, keyColLetter, headers.length, highlightKeys, accessToken);
   }
 
-  return sheetName + ': เพิ่มใหม่ ' + addedCount + ' แถว, อัปเดต ' + updatedCount + ' แถว' + (clearedCount > 0 ? ', ล้างแถวที่ถูกลบจากฐานข้อมูลแล้ว ' + clearedCount + ' แถว' : '');
+  return sheetName + ': ' + (rebuiltTab ? '(สร้างตารางใหม่เพราะคอลัมน์เปลี่ยน) ' : '')
+    + 'เพิ่มใหม่ ' + addedCount + ' แถว, อัปเดต ' + updatedCount + ' แถว'
+    + (clearedCount > 0 ? ', ล้างแถวที่ถูกลบจากฐานข้อมูลแล้ว ' + clearedCount + ' แถว' : '');
 }
 
 // แท็บพิเศษที่ไม่ได้มาจากตารางดิบตารางเดียว แต่เป็นรายงานที่รวมข้อมูลหลายตารางเข้าด้วยกัน (เหมือนหน้า "รายงานสถานะดำเนินการ" ในแอป)
@@ -2780,10 +2870,23 @@ Deno.serve(async (req: Request) => {
 
       // ==================== Sync ไป Google Sheet จริง (ผ่าน Google Sheets API ด้วย Service Account) ====================
       case 'manualSyncToSheets': {
-        const [username, token] = args;
+        // args ตัวที่ 3-4 คือรายการที่ผู้ใช้ติ๊กเลือกไว้ในหน้าต่าง "เลือกตารางที่จะซิงค์"
+        // เดิมฝั่งนี้รับแค่ [username, token] แล้วซิงค์ทุกตารางเสมอ ทำให้ช่องติ๊กเลือกในแอป "ไม่มีผลจริง"
+        // (ติ๊กหรือไม่ติ๊กก็ซิงค์เท่ากันหมด ทั้งที่ข้อความในหน้าต่างบอกว่าเลือกน้อยลงแล้วจะเร็วขึ้น) - รอบนี้แก้ให้ทำตามที่เลือกจริง
+        const [username, token, wantedTables, includeStatusReport] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่สั่งซิงค์ข้อมูลได้' });
+
+        // ไคลเอนต์รุ่นเก่า (ก่อนเวอร์ชันนี้) ไม่ได้ส่ง 2 ค่านี้มา = ให้ซิงค์ทุกอย่างเหมือนพฤติกรรมเดิมเป๊ะ ๆ
+        // เช็คด้วย Array.isArray ไม่ใช่ความยาว เพราะ "ติ๊กเฉพาะแท็บรายงานสถานะอย่างเดียว" จะส่ง [] มาอย่างถูกต้อง
+        // ถ้าเผลอตีความ [] ว่า "ไม่ได้ระบุ" จะกลายเป็นซิงค์ทุกตารางสวนทางกับที่ผู้ใช้เลือก
+        const wanted: string[] | null = Array.isArray(wantedTables) ? wantedTables.map((s: any) => String(s)) : null;
+        const tablesToSync = wanted ? SYNC_TABLE_REGISTRY.filter((t) => wanted.indexOf(t.table) !== -1) : SYNC_TABLE_REGISTRY;
+        const syncStatusReport = (includeStatusReport === undefined || includeStatusReport === null) ? true : !!includeStatusReport;
+        if (tablesToSync.length === 0 && !syncStatusReport) {
+          return jsonResponse({ success: false, message: 'ยังไม่ได้เลือกตารางที่จะซิงค์ กรุณาเลือกอย่างน้อย 1 รายการ' });
+        }
 
         const { data: secretRows, error: secretErr } = await supabase.from('app_secrets').select('key,value');
         if (secretErr) return jsonResponse({ success: false, message: 'อ่านค่า secret ล้มเหลว: ' + secretErr.message });
@@ -2820,7 +2923,7 @@ Deno.serve(async (req: Request) => {
         // - ไม่มีลิมิตจำนวนแถวเหมือนวิธีมิเรอร์เต็มรูปแบบเดิม (เคยจำกัดแค่ 5,000 แถว/ตาราง)
         const results: string[] = [];
         let totalSynced = 0;
-        for (const t of SYNC_TABLE_REGISTRY) {
+        for (const t of tablesToSync) {
           try {
             const { data: rows, error } = await supabase.from(t.table).select('*').order('created_at', { ascending: true }).limit(20000);
             if (error) { results.push(t.table + ': ดึงข้อมูลล้มเหลว (' + error.message + ')'); continue; }
@@ -2835,7 +2938,8 @@ Deno.serve(async (req: Request) => {
         }
 
         // แท็บ "รายงานสถานะดำเนินการ" - เป็นรายงานรวมข้อมูล ไม่ใช่ตารางดิบตารางเดียว จึงคำนวณแยกต่างหาก
-        try {
+        // (แท็บนี้ช้าที่สุดเพราะต้องรวมข้อมูล 4 ตาราง จึงให้ติ๊กข้ามได้ถ้าต้องการซิงค์เฉพาะตารางอื่นเร็ว ๆ)
+        if (syncStatusReport) try {
           const reportRows = await computeJobStatusReportRows(null, null);
           const msg = await incrementalSyncToSheetTab(
             spreadsheetId, accessToken, existingNames, sheetIdByName,
