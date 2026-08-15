@@ -874,21 +874,21 @@
 
                 <p id="statusReportStatus" class="text-sm text-slate-400 mb-3">กดปุ่ม "โหลด/รีเฟรชข้อมูล" เพื่อดึงรายงานสถานะทั้งหมดมาแสดง</p>
                 <div class="overflow-x-auto border border-slate-200 rounded-xl">
-                    <table class="w-full text-xs">
-                        <thead class="bg-slate-100 text-slate-600">
+                    <table id="statusReportTable" class="w-full text-xs">
+                        <thead class="bg-slate-50 text-slate-500 sticky top-0 z-10 shadow-[0_1px_0_0_rgb(226,232,240)]">
                             <tr>
-                                <th class="p-2 text-left font-semibold whitespace-nowrap">เลขที่ใบแจ้งซ่อมบำรุง</th>
-                                <th data-col="branch" class="p-2 text-left font-semibold whitespace-nowrap">สาขา</th>
-                                <th data-col="service_type" class="p-2 text-left font-semibold whitespace-nowrap">Service Type</th>
-                                <th data-col="service_work" class="p-2 text-left font-semibold whitespace-nowrap">งานบริการ</th>
-                                <th data-col="service_issue" class="p-2 text-left font-semibold whitespace-nowrap">Service Issue</th>
-                                <th data-col="contractor" class="p-2 text-left font-semibold whitespace-nowrap">ผู้รับเหมา</th>
-                                <th data-col="opened_at" class="p-2 text-left font-semibold whitespace-nowrap">วันที่เปิดงาน</th>
-                                <th data-col="asset_id" class="p-2 text-left font-semibold whitespace-nowrap">เลขทรัพย์สิน</th>
-                                <th data-col="fix_date" class="p-2 text-left font-semibold whitespace-nowrap">วันที่เข้าแก้ไข (ปิดงาน)</th>
-                                <th data-col="duration" class="p-2 text-left font-semibold whitespace-nowrap">ระยะเวลาดำเนินการ</th>
-                                <th data-col="status" class="p-2 text-left font-semibold whitespace-nowrap">สถานะ</th>
-                                <th class="p-2 text-left font-semibold whitespace-nowrap">รายละเอียด</th>
+                                <th class="px-2 py-2 text-left text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap">เลขที่ใบแจ้งซ่อมบำรุง</th>
+                                <th data-col="branch" class="px-2 py-2 text-left text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap">สาขา</th>
+                                <th data-col="service_type" class="px-2 py-2 text-left text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap">Service Type</th>
+                                <th data-col="service_work" class="px-2 py-2 text-left text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap">งานบริการ</th>
+                                <th data-col="service_issue" class="px-2 py-2 text-left text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap">Service Issue</th>
+                                <th data-col="contractor" class="px-2 py-2 text-left text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap">ผู้รับเหมา</th>
+                                <th data-col="opened_at" class="px-2 py-2 text-left text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap">วันที่เปิดงาน</th>
+                                <th data-col="asset_id" class="px-2 py-2 text-left text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap">เลขทรัพย์สิน</th>
+                                <th data-col="fix_date" class="px-2 py-2 text-left text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap">วันที่เข้าแก้ไข (ปิดงาน)</th>
+                                <th data-col="duration" class="px-2 py-2 text-left text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap">ระยะเวลาดำเนินการ</th>
+                                <th data-col="status" class="px-2 py-2 text-left text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap">สถานะ</th>
+                                <th class="px-2 py-2 text-left text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap">รายละเอียด</th>
                             </tr>
                         </thead>
                         <tbody id="statusReportBody"></tbody>
@@ -3678,7 +3678,11 @@
         function setBillingColumnVisible(key, visible) {
             billingColumnPrefs[key] = visible;
             saveBillingColumnPrefs();
-            document.querySelectorAll('[data-col="' + key + '"]').forEach(el => {
+            // ต้องจำกัดขอบเขตให้อยู่ในตารางวางบิลเท่านั้น (#billingTable)
+            // เพราะชื่อคอลัมน์บางตัว (asset_id, contractor, service_type) ถูกใช้ในตารางรายงานสถานะด้วย
+            // ถ้าเลือกทั้งหน้าแบบเดิม การซ่อนคอลัมน์ที่นี่จะไปซ่อนหัวตารางของอีกตารางหนึ่งด้วย
+            // ทำให้หัวตารางกับข้อมูลของตารางนั้นเหลื่อมกันไปคนละช่อง (เช่น แบดจ์สถานะไปโผล่ใต้หัว "เลขทรัพย์สิน")
+            document.querySelectorAll('#billingTable [data-col="' + key + '"]').forEach(el => {
                 el.classList.toggle('hidden', !visible);
             });
         }
@@ -3687,7 +3691,7 @@
         function setAllBillingColumns(visible) {
             BILLING_COLUMN_DEFS.forEach(col => { billingColumnPrefs[col.key] = visible; });
             saveBillingColumnPrefs();
-            document.querySelectorAll('[data-col]').forEach(el => {
+            document.querySelectorAll('#billingTable [data-col]').forEach(el => {
                 const key = el.dataset.col;
                 if (BILLING_COLUMN_DEFS.some(c => c.key === key)) {
                     el.classList.toggle('hidden', !visible);
@@ -3699,7 +3703,7 @@
         // ใช้ preference ที่บันทึกไว้กับหัวตาราง (เรียกครั้งแรกตอนโหลดหน้าเว็บ ก่อนมีข้อมูลในตารางด้วยซ้ำ)
         function applyBillingColumnPrefsToHeaders() {
             BILLING_COLUMN_DEFS.forEach(col => {
-                const th = document.querySelector('th[data-col="' + col.key + '"]');
+                const th = document.querySelector('#billingTable th[data-col="' + col.key + '"]');
                 if (th) th.classList.toggle('hidden', isBillingColumnHidden(col.key));
             });
         }
@@ -3763,7 +3767,8 @@
         function setStatusReportColumnVisible(key, visible) {
             statusReportColumnPrefs[key] = visible;
             saveStatusReportColumnPrefs();
-            document.querySelectorAll('[data-col="' + key + '"]').forEach(el => {
+            // จำกัดขอบเขตให้อยู่ในตารางรายงานสถานะเท่านั้น (ดูเหตุผลเต็มที่ setBillingColumnVisible)
+            document.querySelectorAll('#statusReportTable [data-col="' + key + '"]').forEach(el => {
                 el.classList.toggle('hidden', !visible);
             });
         }
@@ -3771,7 +3776,7 @@
         function setAllStatusReportColumns(visible) {
             STATUS_REPORT_COLUMN_DEFS.forEach(col => { statusReportColumnPrefs[col.key] = visible; });
             saveStatusReportColumnPrefs();
-            document.querySelectorAll('[data-col]').forEach(el => {
+            document.querySelectorAll('#statusReportTable [data-col]').forEach(el => {
                 const key = el.dataset.col;
                 if (STATUS_REPORT_COLUMN_DEFS.some(c => c.key === key)) {
                     el.classList.toggle('hidden', !visible);
@@ -3782,7 +3787,7 @@
 
         function applyStatusReportColumnPrefsToHeaders() {
             STATUS_REPORT_COLUMN_DEFS.forEach(col => {
-                const th = document.querySelector('th[data-col="' + col.key + '"]');
+                const th = document.querySelector('#statusReportTable th[data-col="' + col.key + '"]');
                 if (th) th.classList.toggle('hidden', isStatusReportColumnHidden(col.key));
             });
         }
@@ -4233,16 +4238,19 @@
             });
         }
 
+        // แบดจ์สถานะ - ใช้จุดสีนำหน้าแทนการถมสีทั้งก้อน อ่านง่ายกว่าเวลามีหลายแถวเรียงกัน
+        // และไม่แย่งสายตาไปจากข้อมูลจริงในตาราง (พื้นอ่อน ตัวอักษรเข้ม ขอบบาง = ดูเป็นทางการกว่าพิลล์สีจัด)
         function statusBadgeHtml(status) {
             const map = {
-                'พักงาน': 'bg-orange-100 text-orange-700',
-                'รอดำเนินการ': 'bg-red-100 text-red-700',
-                'ปิดงานแล้ว': 'bg-amber-100 text-amber-700',
-                'ส่งมอบงาน': 'bg-blue-100 text-blue-700',
-                'เสร็จสิ้น': 'bg-emerald-100 text-emerald-700'
+                'พักงาน':       ['bg-orange-50 text-orange-800 ring-orange-200', 'bg-orange-500'],
+                'รอดำเนินการ':  ['bg-slate-50 text-slate-700 ring-slate-200', 'bg-slate-400'],
+                'ปิดงานแล้ว':   ['bg-amber-50 text-amber-800 ring-amber-200', 'bg-amber-500'],
+                'ส่งมอบงาน':    ['bg-blue-50 text-blue-800 ring-blue-200', 'bg-blue-500'],
+                'เสร็จสิ้น':     ['bg-emerald-50 text-emerald-800 ring-emerald-200', 'bg-emerald-500']
             };
-            const cls = map[status] || 'bg-slate-100 text-slate-600';
-            return `<span class="text-xs font-semibold px-2 py-1 rounded-full ${cls} whitespace-nowrap">${status}</span>`;
+            const [cls, dot] = map[status] || ['bg-slate-50 text-slate-600 ring-slate-200', 'bg-slate-300'];
+            return `<span class="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-md ring-1 ring-inset ${cls} whitespace-nowrap">
+                <span class="w-1.5 h-1.5 rounded-full ${dot}"></span>${status}</span>`;
         }
 
         // แปลงชั่วโมง (ทศนิยม) เป็นข้อความอ่านง่าย แยกเป็นชั่วโมง+นาทีตรงๆ ไม่มีทศนิยม เช่น "5 ชม. 30 นาที"
@@ -4317,20 +4325,24 @@
             const tbody = document.getElementById('statusReportBody');
             tbody.innerHTML = rows.map((row, i) => {
                 const hc = (key) => isStatusReportColumnHidden(key) ? ' hidden' : '';
-                return `<tr class="border-t border-slate-100">
-                    <td class="p-2 whitespace-nowrap">${row.main_id || ''}</td>
-                    <td data-col="branch" class="p-2 whitespace-nowrap${hc('branch')}">${row.branch || ''}</td>
-                    <td data-col="service_type" class="p-2 whitespace-nowrap${hc('service_type')}">${row.service_type || ''}</td>
-                    <td data-col="service_work" class="p-2 whitespace-nowrap${hc('service_work')}">${row.service_work || ''}</td>
-                    <td data-col="service_issue" class="p-2 whitespace-nowrap${hc('service_issue')}">${(row.service_issue && row.service_issue !== '-') ? row.service_issue : ''}</td>
-                    <td data-col="contractor" class="p-2 whitespace-nowrap${hc('contractor')}">${row.contractor || ''}</td>
-                    <td data-col="opened_at" class="p-2 whitespace-nowrap${hc('opened_at')}">${formatTimestamp(row.opened_at)}</td>
-                    <td data-col="asset_id" class="p-2 whitespace-nowrap${hc('asset_id')}">${(row.asset_id && row.asset_id !== '-') ? row.asset_id : ''}</td>
-                    <td data-col="fix_date" class="p-2 whitespace-nowrap${hc('fix_date')}">${row.fix_date || ''}</td>
-                    <td data-col="duration" class="p-2 whitespace-nowrap${hc('duration')}">${getRowDurationDisplay(row)}</td>
-                    <td data-col="status" class="p-2 whitespace-nowrap${hc('status')}">${statusBadgeHtml(row.status)}</td>
-                    <td class="p-2 whitespace-nowrap">
-                        <button type="button" onclick="showStatusReportDetail(${i})" class="text-blood-600 hover:text-blood-800 text-xs font-semibold" title="ดูรายละเอียด">
+                // แถวเตี้ยลง (py-1.5) + ไฮไลท์ตอนเอาเมาส์ชี้ ทำให้กวาดตาตามแถวยาว ๆ ไม่หลุด
+                // เลขงานใช้ฟอนต์ความกว้างคงที่ + ตัวเข้ม เพราะเป็นตัวที่คนใช้มองหาเป็นอย่างแรก
+                // ค่าที่ยังไม่มีข้อมูลใส่ขีดจาง ๆ แทนช่องว่าง จะได้รู้ว่า "ยังไม่มี" ไม่ใช่ "ระบบไม่แสดง"
+                const dash = '<span class="text-slate-300">—</span>';
+                return `<tr class="border-t border-slate-100 hover:bg-slate-50/70 transition-colors">
+                    <td class="px-2 py-1.5 whitespace-nowrap font-semibold text-slate-800 tabular-nums">${row.main_id || ''}</td>
+                    <td data-col="branch" class="px-2 py-1.5 whitespace-nowrap${hc('branch')}">${row.branch || dash}</td>
+                    <td data-col="service_type" class="px-2 py-1.5 whitespace-nowrap text-slate-600${hc('service_type')}">${row.service_type || dash}</td>
+                    <td data-col="service_work" class="px-2 py-1.5 whitespace-nowrap text-slate-600${hc('service_work')}">${row.service_work || dash}</td>
+                    <td data-col="service_issue" class="px-2 py-1.5 whitespace-nowrap text-slate-600${hc('service_issue')}">${(row.service_issue && row.service_issue !== '-') ? row.service_issue : dash}</td>
+                    <td data-col="contractor" class="px-2 py-1.5 whitespace-nowrap${hc('contractor')}">${row.contractor || dash}</td>
+                    <td data-col="opened_at" class="px-2 py-1.5 whitespace-nowrap text-slate-500 tabular-nums${hc('opened_at')}">${formatTimestamp(row.opened_at) || dash}</td>
+                    <td data-col="asset_id" class="px-2 py-1.5 whitespace-nowrap tabular-nums${hc('asset_id')}">${(row.asset_id && row.asset_id !== '-') ? row.asset_id : dash}</td>
+                    <td data-col="fix_date" class="px-2 py-1.5 whitespace-nowrap text-slate-500 tabular-nums${hc('fix_date')}">${row.fix_date || dash}</td>
+                    <td data-col="duration" class="px-2 py-1.5 whitespace-nowrap text-slate-600${hc('duration')}">${getRowDurationDisplay(row)}</td>
+                    <td data-col="status" class="px-2 py-1.5 whitespace-nowrap${hc('status')}">${statusBadgeHtml(row.status)}</td>
+                    <td class="px-2 py-1.5 whitespace-nowrap">
+                        <button type="button" onclick="showStatusReportDetail(${i})" class="text-blood-700 hover:text-blood-800 hover:underline text-xs font-semibold" title="ดูรายละเอียด">
                             <i class="fa-solid fa-eye mr-1"></i>ดูรายละเอียด
                         </button>
                     </td>
@@ -5368,11 +5380,16 @@
         function openDetailModal(title, fieldPairs, actions) {
             document.getElementById('detailModalTitle').textContent = title;
             const body = document.getElementById('detailModalBody');
+            // แถวข้อมูลในหน้ารายละเอียด - บีบให้กระชับขึ้นและใช้สองคอลัมน์ที่กว้างคงที่
+            // (ป้ายกำกับซ้ายกว้างเท่ากันทุกแถว ค่าชิดซ้าย) ทำให้กวาดสายตาลงมาอ่านได้เป็นแนวเดียว
+            // ค่าที่ว่างจะจางลงเพื่อไม่ให้ดึงความสนใจ ส่วนค่าที่มีจริงเป็นตัวเข้มอ่านชัด
             body.innerHTML = fieldPairs.map(function ([label, value]) {
-                const shown = (value === null || value === undefined || value === '') ? '-' : value;
-                return `<div class="flex flex-wrap justify-between gap-3 py-2.5 border-b border-slate-100 text-sm">
-                    <span class="text-slate-500 font-medium">${label}</span>
-                    <span class="text-slate-800 text-right break-words max-w-[65%]">${shown}</span>
+                const empty = (value === null || value === undefined || value === '' || value === '-');
+                const shown = empty ? '—' : value;
+                const valueCls = empty ? 'text-slate-300' : 'text-slate-800 font-medium';
+                return `<div class="flex items-start gap-4 py-2 border-b border-slate-100 last:border-0 text-[13px] leading-relaxed">
+                    <span class="text-slate-500 w-[42%] shrink-0">${label}</span>
+                    <span class="${valueCls} flex-1 break-words">${shown}</span>
                 </div>`;
             }).join('');
 
