@@ -27,6 +27,20 @@
                             800: '#166534',
                             900: '#14532d'
                         }
+                    },
+                    // ย่อสเกลตัวอักษรทั้งแอปที่ต้นทางทีเดียว แทนการไล่แก้คลาสทีละจุดเป็นพัน ๆ ที่
+                    // ทุกคลาส text-xs / text-sm / text-base ฯลฯ ที่ใช้อยู่เดิมทั้งไฟล์จะเล็กลงพร้อมกันทันที
+                    // และยังเล็กลงในสัดส่วนเดียวกันหมด ลำดับความสำคัญของหัวข้อ-เนื้อหาจึงไม่เพี้ยน
+                    // (ถ้าอยากปรับใหญ่/เล็กกว่านี้ทั้งแอป แก้แค่ตัวเลขในบล็อกนี้บล็อกเดียวพอ)
+                    fontSize: {
+                        'xs':   ['10.5px', { lineHeight: '15px' }],
+                        'sm':   ['12px',   { lineHeight: '17px' }],
+                        'base': ['13.5px', { lineHeight: '20px' }],
+                        'lg':   ['15px',   { lineHeight: '22px' }],
+                        'xl':   ['17px',   { lineHeight: '24px' }],
+                        '2xl':  ['19px',   { lineHeight: '27px' }],
+                        '3xl':  ['23px',   { lineHeight: '30px' }],
+                        '4xl':  ['28px',   { lineHeight: '34px' }]
                     }
                 }
             }
@@ -84,7 +98,7 @@
 
     <!-- ==================== หน้า Login ==================== -->
     <div id="loginScreen" class="fixed inset-0 bg-gradient-to-br from-blood-900 via-blood-800 to-blood-700 flex items-center justify-center p-4 z-50">
-        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm p-8">
             <div class="text-center mb-6">
                 <div class="cp9x-mark w-14 h-14 mx-auto mb-3">
                     <i class="fa-solid fa-bolt text-white text-2xl"></i>
@@ -96,14 +110,14 @@
             <div class="space-y-3">
                 <div>
                     <label class="block text-slate-700 text-sm font-semibold mb-1">ชื่อผู้ใช้</label>
-                    <input type="text" id="loginUsername" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm" onkeydown="if(event.key==='Enter') doLogin()">
+                    <input type="text" id="loginUsername" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm" onkeydown="if(event.key==='Enter') doLogin()">
                 </div>
                 <div>
                     <label class="block text-slate-700 text-sm font-semibold mb-1">รหัสผ่าน</label>
-                    <input type="password" id="loginPassword" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm" onkeydown="if(event.key==='Enter') doLogin()">
+                    <input type="password" id="loginPassword" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm" onkeydown="if(event.key==='Enter') doLogin()">
                 </div>
                 <p id="loginError" class="text-xs text-red-500 hidden"></p>
-                <button type="button" id="btnLogin" onclick="doLogin()" class="w-full bg-blood-700 text-white font-bold py-2.5 rounded-xl hover:bg-blood-800 transition-colors mt-2">
+                <button type="button" id="btnLogin" onclick="doLogin()" class="w-full bg-blood-700 text-white font-bold py-2 rounded-lg hover:bg-blood-800 transition-colors mt-2">
                     เข้าสู่ระบบ
                 </button>
             </div>
@@ -135,8 +149,8 @@
     <div id="appRoot" class="hidden w-full min-h-screen flex">
 
     <!-- ==================== Sidebar (เมนูหลัก) ==================== -->
-    <aside id="sidebar" class="fixed md:static inset-y-0 left-0 z-40 w-64 bg-slate-900 text-slate-300 flex flex-col shrink-0 transform -translate-x-full md:translate-x-0 transition-transform duration-200">
-        <div class="p-5 border-b border-slate-700/60 flex items-center gap-2.5">
+    <aside id="sidebar" class="fixed md:static inset-y-0 left-0 z-40 w-60 bg-blood-900 text-emerald-100/80 flex flex-col shrink-0 transform -translate-x-full md:translate-x-0 transition-transform duration-200">
+        <div class="px-4 py-4 border-b border-white/10 flex items-center gap-2.5">
             <div class="cp9x-mark w-9 h-9 shrink-0">
                 <i class="fa-solid fa-bolt text-white text-base"></i>
             </div>
@@ -145,54 +159,54 @@
                 <div class="text-[10px] text-slate-500 tracking-[0.18em] uppercase">Energy Consultant</div>
             </div>
         </div>
-        <nav class="flex-1 overflow-y-auto py-4 px-3 space-y-1">
-            <button id="tabOpen" onclick="switchMode('open')" class="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-left transition-colors">
+        <nav class="flex-1 overflow-y-auto py-3 px-2.5 space-y-0.5">
+            <button id="tabOpen" onclick="switchMode('open')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors">
                 <i class="fa-solid fa-folder-open w-5 text-center"></i> <span>เปิดงาน</span>
             </button>
-            <button id="tabClose" onclick="switchMode('close')" class="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-left transition-colors">
+            <button id="tabClose" onclick="switchMode('close')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors">
                 <i class="fa-solid fa-check-double w-5 text-center"></i> <span>ปิดงาน</span>
             </button>
-           <button id="tabPause" onclick="switchMode('pause')" class="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-left transition-colors relative">
+           <button id="tabPause" onclick="switchMode('pause')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors relative">
                 <i class="fa-solid fa-pause w-5 text-center"></i> <span>พักงาน</span>
                 <span id="pauseBadge" class="hidden absolute right-3 top-1/2 -translate-y-1/2 bg-amber-500 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">0</span>
             </button>
-            <button id="tabBilling" onclick="switchMode('billing')" class="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-left transition-colors">
+            <button id="tabBilling" onclick="switchMode('billing')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors">
                 <i class="fa-solid fa-receipt w-5 text-center"></i> <span>ตารางวางบิล</span>
             </button>
-            <button id="tabPM" onclick="switchMode('pm')" class="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-left transition-colors">
+            <button id="tabPM" onclick="switchMode('pm')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors">
                 <i class="fa-solid fa-screwdriver-wrench w-5 text-center"></i> <span>PM</span>
             </button>
-            <button id="tabJobForms" onclick="switchMode('jobforms')" class="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-left transition-colors relative">
+            <button id="tabJobForms" onclick="switchMode('jobforms')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors relative">
                 <i class="fa-solid fa-file-arrow-up w-5 text-center"></i> <span>ฟอร์มวางบิล</span>
                 <span id="jobFormsBadge" class="hidden absolute right-3 top-1/2 -translate-y-1/2 bg-red-600 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">0</span>
             </button>
-            <div class="pt-3 pb-1 px-4 text-[10px] font-bold uppercase tracking-wider text-slate-500">ตรวจสอบ / รายงาน</div>
-            <button id="tabOpenList" onclick="switchMode('openlist')" class="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-left transition-colors">
+            <div class="pt-3 pb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-emerald-100/45">ตรวจสอบ / รายงาน</div>
+            <button id="tabOpenList" onclick="switchMode('openlist')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors">
                 <i class="fa-solid fa-magnifying-glass w-5 text-center"></i> <span>ตรวจสอบเปิดงาน</span>
             </button>
-            <button id="tabCloseList" onclick="switchMode('closelist')" class="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-left transition-colors">
+            <button id="tabCloseList" onclick="switchMode('closelist')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors">
                 <i class="fa-solid fa-magnifying-glass w-5 text-center"></i> <span>ตรวจสอบปิดงาน</span>
             </button>
-            <button id="tabStatusReport" onclick="switchMode('statusreport')" class="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-left transition-colors relative">
+            <button id="tabStatusReport" onclick="switchMode('statusreport')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors relative">
                 <i class="fa-solid fa-chart-line w-5 text-center"></i> <span>รายงานสถานะดำเนินการ</span>
                 <span id="pendingBadge" class="hidden absolute right-3 top-1/2 -translate-y-1/2 bg-red-600 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">0</span>
             </button>
-            <button id="tabSubmissions" onclick="switchMode('submissions')" class="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-left transition-colors relative">
+            <button id="tabSubmissions" onclick="switchMode('submissions')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors relative">
                 <i class="fa-solid fa-inbox w-5 text-center"></i> <span>ไฟล์ผู้รับเหมาส่งกลับ</span>
                 <span id="submissionsBadge" class="hidden absolute right-3 top-1/2 -translate-y-1/2 bg-red-600 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">0</span>
             </button>
-            <button id="tabCompleted" onclick="switchMode('completed')" class="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-left transition-colors">
+            <button id="tabCompleted" onclick="switchMode('completed')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors">
                 <i class="fa-solid fa-circle-check w-5 text-center"></i> <span>งานที่เสร็จสิ้น</span>
             </button>
         </nav>
-        <div class="p-4 border-t border-slate-700/60 text-xs text-slate-400">
+        <div class="px-4 py-3 border-t border-white/10 text-xs text-emerald-100/60">
             <div class="flex items-center gap-2">
                 <i class="fa-solid fa-circle-user text-lg"></i>
                 <span id="currentUserName" class="truncate">-</span>
             </div>
             <!-- แสดงเวอร์ชันที่ติดตั้งอยู่จริงในเครื่องนี้ (อ่านจากตัวโปรแกรมโดยตรง ไม่ใช่ค่าที่พิมพ์ค้างไว้ในโค้ด)
                  ใช้เทียบกับเวอร์ชันล่าสุดบน GitHub Releases ได้ทันทีว่าตรงกันหรือยัง -->
-            <div class="mt-2 pt-2 border-t border-slate-700/40 flex items-center justify-between gap-2">
+            <div class="mt-2 pt-2 border-t border-white/10 flex items-center justify-between gap-2">
                 <span class="text-[11px] text-slate-500">เวอร์ชัน <span id="appVersionLabel">-</span></span>
                 <button type="button" onclick="checkUpdateNow()" class="text-[11px] text-slate-400 hover:text-white transition-colors">
                     <i class="fa-solid fa-rotate mr-1"></i>ตรวจอัปเดต
@@ -208,7 +222,7 @@
     <div id="mainArea" class="flex-1 min-h-screen flex flex-col bg-white min-w-0">
 
         <!-- แถบด้านบน -->
-        <div id="topBar" class="bg-gradient-to-r from-blood-900 via-blood-800 to-blood-700 px-4 md:px-6 py-4 flex items-center justify-between text-white gap-3">
+        <div id="topBar" class="bg-blood-900 px-4 md:px-6 py-2.5 flex items-center justify-between text-white gap-3">
             <div class="flex items-center gap-3">
                 <button type="button" onclick="toggleSidebar()" class="md:hidden text-white/90 hover:text-white text-lg px-1">
                     <i class="fa-solid fa-bars"></i>
@@ -253,10 +267,10 @@
                         class="w-full px-4 py-3 rounded-lg border border-blood-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-200 outline-none transition-all text-sm font-mono text-slate-700 resize-y"
                         placeholder="วางข้อความที่นี่ เช่น:&#10;(เลขที่ใบแจ้งซ่อมบำรุง)&#10;CM20260722-0119&#10;(Service Type)&#10;งานเครื่องเย็น..."></textarea>
                     <div class="flex gap-2">
-                        <button type="button" onclick="parseText('open')" class="flex-1 bg-blood-600 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-blood-700 transition-colors shadow-sm">
+                        <button type="button" onclick="parseText('open')" class="flex-1 bg-blood-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-blood-700 transition-colors shadow-sm">
                             แยกข้อมูลลงฟอร์ม
                         </button>
-                        <button type="button" onclick="document.getElementById('rawTextOpen').value=''" class="flex-1 bg-white text-slate-600 border border-slate-300 text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-50 hover:text-red-500 transition-colors">
+                        <button type="button" onclick="document.getElementById('rawTextOpen').value=''" class="flex-1 bg-white text-slate-600 border border-slate-300 text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-50 hover:text-red-500 transition-colors">
                             ล้างข้อความ
                         </button>
                     </div>
@@ -270,22 +284,22 @@
                         <div class="space-y-4">
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">ผู้รับเหมา <span class="text-red-500">*</span></label>
-                                <select id="op_contractor" required class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                                <select id="op_contractor" required class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
                                     <option value="">-- เลือกผู้รับเหมา --</option>
                                 </select>
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">เลขที่ใบแจ้งซ่อมบำรุง <span class="text-red-500">*</span></label>
-                                <input type="text" id="op_mainId" required onblur="checkOpenJobNumberDuplicate(this.value.trim())" oninput="clearOpenJobNumberStatus()" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                                <input type="text" id="op_mainId" required onblur="checkOpenJobNumberDuplicate(this.value.trim())" oninput="clearOpenJobNumberStatus()" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
                                 <p id="op_mainIdStatus" class="text-xs mt-1 text-slate-400"></p>
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">Service Type <span class="text-red-500">*</span></label>
-                                <input type="text" id="op_serviceType" required class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                                <input type="text" id="op_serviceType" required class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">ประเภทสัญญา</label>
-                                <select id="op_contractType" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                                <select id="op_contractType" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
                                     <option value="">-- เลือกประเภทสัญญา --</option>
                                     <option value="In Warranty">In Warranty</option>
                                     <option value="Service Turnkey">Service Turnkey</option>
@@ -294,7 +308,7 @@
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">วันที่ร้องขอ</label>
-                                <input type="text" id="op_reqDate" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                                <input type="text" id="op_reqDate" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">วันเวลาที่เปิดงาน <span class="font-normal text-slate-400">(เวลาไทย)</span></label>
@@ -316,24 +330,24 @@
                         <div class="space-y-4">
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">งานบริการ</label>
-                                <input type="text" id="op_serviceWork" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                                <input type="text" id="op_serviceWork" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">Service Issue</label>
-                                <input type="text" id="op_serviceIssue" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm" placeholder="เช่น F04_ไม่เย็น/อุณหภูมิไม่ได้มาตรฐาน">
+                                <input type="text" id="op_serviceIssue" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm" placeholder="เช่น F04_ไม่เย็น/อุณหภูมิไม่ได้มาตรฐาน">
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">รหัสสาขา</label>
-                                <input type="text" id="op_branchCode" onblur="doLookupBranchGeneric('op_branchCode','op_branchName','op_branchStatus')" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm" placeholder="เช่น 0002">
+                                <input type="text" id="op_branchCode" onblur="doLookupBranchGeneric('op_branchCode','op_branchName','op_branchStatus')" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm" placeholder="เช่น 0002">
                                 <p id="op_branchStatus" class="text-xs mt-1 text-slate-400"></p>
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">ชื่อสาขา (อัตโนมัติ)</label>
-                                <input type="text" id="op_branchName" readonly class="w-full px-4 py-2.5 rounded-lg border border-slate-200 bg-slate-100 text-sm text-slate-600">
+                                <input type="text" id="op_branchName" readonly class="w-full px-3 py-2 rounded-md border border-slate-200 bg-slate-100 text-sm text-slate-600">
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">รายละเอียดปัญหาที่พบ</label>
-                                <textarea id="op_details" rows="1" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm resize-none"></textarea>
+                                <textarea id="op_details" rows="1" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm resize-none"></textarea>
                             </div>
                         </div>
                     </div>
@@ -358,10 +372,10 @@
                         class="w-full px-4 py-3 rounded-lg border border-blood-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-200 outline-none transition-all text-sm font-mono text-slate-700 resize-y"
                         placeholder="วางข้อความที่นี่ เช่น:&#10;(เลขงาน)&#10;KF-9999&#10;(ดำเนินการ)&#10;เปลี่ยนอะไหล่..."></textarea>
                     <div class="flex gap-2">
-                        <button type="button" onclick="parseText('close')" class="flex-1 bg-blood-600 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-blood-700 transition-colors shadow-sm">
+                        <button type="button" onclick="parseText('close')" class="flex-1 bg-blood-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-blood-700 transition-colors shadow-sm">
                             แยกข้อมูลลงฟอร์ม
                         </button>
-                        <button type="button" onclick="document.getElementById('rawTextClose').value=''" class="flex-1 bg-white text-slate-600 border border-slate-300 text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-50 hover:text-red-500 transition-colors">
+                        <button type="button" onclick="document.getElementById('rawTextClose').value=''" class="flex-1 bg-white text-slate-600 border border-slate-300 text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-50 hover:text-red-500 transition-colors">
                             ล้างข้อความ
                         </button>
                     </div>
@@ -375,29 +389,29 @@
                         <div class="space-y-4">
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">เลขงาน <span class="text-red-500">*</span></label>
-                                <input type="text" id="cl_kissflowId" required onblur="checkJobNumberExists(this.value.trim(), document.getElementById('cl_assetId').value.trim())" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                                <input type="text" id="cl_kissflowId" required onblur="checkJobNumberExists(this.value.trim(), document.getElementById('cl_assetId').value.trim())" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
                                 <p id="cl_kissflowStatus" class="text-xs mt-1 text-slate-400"></p>
                                 <p class="text-xs mt-1 text-slate-400">1 เลขงานปิดงานได้หลายครั้ง ถ้าเป็นทรัพย์สินคนละชิ้น (ระบุ "เลขทรัพย์สิน" ให้ต่างกันด้านล่าง)</p>
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">รหัสสาขา</label>
-                                <input type="text" id="cl_branchCode" onblur="doLookupBranchGeneric('cl_branchCode','cl_branchName','cl_branchStatus')" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm" placeholder="เช่น 0002">
+                                <input type="text" id="cl_branchCode" onblur="doLookupBranchGeneric('cl_branchCode','cl_branchName','cl_branchStatus')" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm" placeholder="เช่น 0002">
                                 <p id="cl_branchStatus" class="text-xs mt-1 text-slate-400"></p>
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">ชื่อสาขา (อัตโนมัติ)</label>
-                                <input type="text" id="cl_branchName" readonly class="w-full px-4 py-2.5 rounded-lg border border-slate-200 bg-slate-100 text-sm text-slate-600">
+                                <input type="text" id="cl_branchName" readonly class="w-full px-3 py-2 rounded-md border border-slate-200 bg-slate-100 text-sm text-slate-600">
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">เลขทรัพย์สิน</label>
-                                <input type="text" id="cl_assetId" inputmode="numeric" maxlength="12" pattern="\d{12}" placeholder="ตัวเลข 12 หลัก" oninput="enforceAssetIdDigits(this)" onblur="checkJobNumberExists(document.getElementById('cl_kissflowId').value.trim(), this.value.trim())" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                                <input type="text" id="cl_assetId" inputmode="numeric" maxlength="12" pattern="\d{12}" placeholder="ตัวเลข 12 หลัก" oninput="enforceAssetIdDigits(this)" onblur="checkJobNumberExists(document.getElementById('cl_kissflowId').value.trim(), this.value.trim())" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
                                 <p id="cl_assetIdStatus" class="text-xs mt-1 text-slate-400">ต้องเป็นตัวเลข 12 หลักเท่านั้น</p>
                             </div>
                         </div>
                         <div class="space-y-4">
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">วันที่เข้าแก้ไข</label>
-                                <input type="text" id="cl_fixDate" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                                <input type="text" id="cl_fixDate" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">วันเวลาที่ปิดงาน <span class="font-normal text-slate-400">(เวลาไทย)</span></label>
@@ -424,7 +438,7 @@
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">ดำเนินการ</label>
-                                <textarea id="cl_actionTaken" rows="1" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm resize-none"></textarea>
+                                <textarea id="cl_actionTaken" rows="1" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm resize-none"></textarea>
                             </div>
                         </div>
                     </div>
@@ -450,7 +464,7 @@
                 <div id="pausePanelList" class="block">
                     <div class="flex justify-between items-center mb-3">
                         <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-pause mr-2"></i> งานที่พักอยู่ตอนนี้</h3>
-                        <button type="button" onclick="loadPausedList()" class="bg-slate-700 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-800 transition-colors">
+                        <button type="button" onclick="loadPausedList()" class="bg-slate-700 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-800 transition-colors">
                             <i class="fa-solid fa-rotate mr-1"></i> โหลด/รีเฟรชข้อมูล
                         </button>
                     </div>
@@ -471,10 +485,10 @@
                                 class="w-full px-4 py-3 rounded-lg border border-blood-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-200 outline-none transition-all text-sm font-mono text-slate-700 resize-y"
                                 placeholder="วางข้อความที่นี่ เช่น:&#10;ขออนุมัติแจ้งซ่อม&#10;1.เลขที่งาน:#CM20260715-0134&#10;2.ชื่อสาขา: CJ 0222 ...&#10;7.สถานะเลขงาน: พักงานรออะไหล่"></textarea>
                             <div class="flex gap-2">
-                                <button type="button" onclick="parseText('pause')" class="flex-1 bg-blood-600 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-blood-700 transition-colors shadow-sm">
+                                <button type="button" onclick="parseText('pause')" class="flex-1 bg-blood-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-blood-700 transition-colors shadow-sm">
                                     แยกข้อมูลลงฟอร์ม
                                 </button>
-                                <button type="button" onclick="document.getElementById('rawTextPause').value=''" class="flex-1 bg-white text-slate-600 border border-slate-300 text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-50 hover:text-red-500 transition-colors">
+                                <button type="button" onclick="document.getElementById('rawTextPause').value=''" class="flex-1 bg-white text-slate-600 border border-slate-300 text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-50 hover:text-red-500 transition-colors">
                                     ล้างข้อความ
                                 </button>
                             </div>
@@ -484,40 +498,40 @@
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-2xl">
                         <div>
                             <label class="block text-slate-700 text-sm font-semibold mb-1">เลขที่ใบแจ้งซ่อมบำรุง <span class="text-red-500">*</span></label>
-                            <input type="text" id="ps_mainId" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                            <input type="text" id="ps_mainId" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
                         </div>
                         <div>
                             <label class="block text-slate-700 text-sm font-semibold mb-1">ผู้ทำรายการพักงาน</label>
-                            <input type="text" id="ps_pausedBy" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                            <input type="text" id="ps_pausedBy" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
                         </div>
                         <div>
                             <label class="block text-slate-700 text-sm font-semibold mb-1">รหัสสาขา</label>
-                            <input type="text" id="ps_branchCode" onblur="doLookupBranchGeneric('ps_branchCode','ps_branchName','ps_branchStatus')" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm" placeholder="เช่น 0002">
+                            <input type="text" id="ps_branchCode" onblur="doLookupBranchGeneric('ps_branchCode','ps_branchName','ps_branchStatus')" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm" placeholder="เช่น 0002">
                             <p id="ps_branchStatus" class="text-xs mt-1 text-slate-400"></p>
                         </div>
                         <div>
                             <label class="block text-slate-700 text-sm font-semibold mb-1">ชื่อสาขา (อัตโนมัติ)</label>
-                            <input type="text" id="ps_branchName" readonly class="w-full px-4 py-2.5 rounded-lg border border-slate-200 bg-slate-100 text-sm text-slate-600">
+                            <input type="text" id="ps_branchName" readonly class="w-full px-3 py-2 rounded-md border border-slate-200 bg-slate-100 text-sm text-slate-600">
                         </div>
                         <div>
                             <label class="block text-slate-700 text-sm font-semibold mb-1">ประเภทงาน</label>
-                            <input type="text" id="ps_serviceType" placeholder="เช่น ตู้แช่หน้าปิดตัวที่ 2" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                            <input type="text" id="ps_serviceType" placeholder="เช่น ตู้แช่หน้าปิดตัวที่ 2" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
                         </div>
                         <div>
                             <label class="block text-slate-700 text-sm font-semibold mb-1">สาเหตุที่ตรวจพบ</label>
-                            <input type="text" id="ps_cause" placeholder="เช่น พบเบ้าแกนประตูแตก" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                            <input type="text" id="ps_cause" placeholder="เช่น พบเบ้าแกนประตูแตก" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
                         </div>
                         <div class="md:col-span-2">
                             <label class="block text-slate-700 text-sm font-semibold mb-1">รายการที่ขออนุมัติ</label>
-                            <input type="text" id="ps_request" placeholder="เช่น เปลี่ยน บานประตูตู้แช่ใหม่" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                            <input type="text" id="ps_request" placeholder="เช่น เปลี่ยน บานประตูตู้แช่ใหม่" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
                         </div>
                         <div class="md:col-span-2">
                             <label class="block text-slate-700 text-sm font-semibold mb-1">เหตุผลที่พักงาน <span class="text-red-500">*</span></label>
-                            <input type="text" id="ps_reason" placeholder="เช่น รออะไหล่, รอลูกค้ายืนยัน" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                            <input type="text" id="ps_reason" placeholder="เช่น รออะไหล่, รอลูกค้ายืนยัน" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
                         </div>
                         <div class="md:col-span-2">
                             <label class="block text-slate-700 text-sm font-semibold mb-1">หมายเหตุเพิ่มเติม</label>
-                            <textarea id="ps_note" rows="3" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm resize-none"></textarea>
+                            <textarea id="ps_note" rows="3" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm resize-none"></textarea>
                         </div>
                     </div>
                     <div class="mt-5">
@@ -532,8 +546,8 @@
                 <div id="pausePanelHistory" class="hidden">
                     <h3 class="text-lg font-bold text-slate-800 mb-4"><i class="fa-solid fa-clock-rotate-left mr-2"></i> ค้นหาประวัติการพักงาน</h3>
                     <div class="flex gap-2 mb-4 max-w-xl">
-                        <input type="text" id="ph_mainId" placeholder="เลขที่ใบแจ้งซ่อมบำรุง" class="flex-1 px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
-                        <button type="button" onclick="loadPauseHistory()" class="bg-blood-600 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-blood-700 transition-colors">ค้นหา</button>
+                        <input type="text" id="ph_mainId" placeholder="เลขที่ใบแจ้งซ่อมบำรุง" class="flex-1 px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
+                        <button type="button" onclick="loadPauseHistory()" class="bg-blood-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-blood-700 transition-colors">ค้นหา</button>
                     </div>
                     <div id="pauseHistoryContainer" class="space-y-3"></div>
                 </div>
@@ -588,23 +602,23 @@
                         <div class="text-slate-400 text-xs font-semibold pb-2">หรือ</div>
                         <div>
                             <label class="block text-slate-700 text-xs font-semibold mb-1">ระบุเลขงานเจาะจง (ไม่ต้องใส่ช่วงวันที่ — ใส่ได้หลายเลขงาน คั่นด้วย , หรือขึ้นบรรทัดใหม่)</label>
-                            <textarea id="billingJobIdFilter" rows="1" placeholder="เช่น IN2026-194261, IN2026-194262" class="px-3 py-2 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm w-64 resize-y"></textarea>
+                            <textarea id="billingJobIdFilter" rows="1" placeholder="เช่น IN2026-194261, IN2026-194262" class="px-3 py-1.5 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm w-64 resize-y"></textarea>
                         </div>
                         <p class="text-xs text-red-500 w-full mt-1">* เลือกอย่างใดอย่างหนึ่ง: ระบุช่วงวันที่ทั้ง 2 ช่อง (กรองด้วย "วันที่เข้าแก้ไข" ที่กรอกไว้ในฟอร์มปิดงาน) หรือระบุเลขงานเจาะจงช่องเดียว — ถ้าใส่เลขงานไว้ ระบบจะจับคู่แค่เลขงานนั้นและไม่สนช่วงวันที่</p>
                     </div>
 
                     <div class="flex flex-wrap justify-between items-center mb-4 gap-3">
                         <div class="flex gap-2 flex-wrap">
-                            <button type="button" onclick="previewBillingRound()" id="btn_generateBilling" class="bg-blood-600 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-blood-700 transition-colors">
+                            <button type="button" onclick="previewBillingRound()" id="btn_generateBilling" class="bg-blood-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-blood-700 transition-colors">
                                 <i class="fa-solid fa-magnifying-glass mr-1"></i> ดูตัวอย่างก่อนบันทึกรอบบิล
                             </button>
-                            <button type="button" onclick="saveAllBillingRows()" id="btn_saveAllBilling" class="bg-blood-500 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-blood-600 transition-colors">
+                            <button type="button" onclick="saveAllBillingRows()" id="btn_saveAllBilling" class="bg-blood-500 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-blood-600 transition-colors">
                                 <i class="fa-solid fa-floppy-disk mr-1"></i> บันทึกข้อมูลทั้งหมด
                             </button>
-                            <button type="button" onclick="sendBillToContractor()" id="btn_sendBill" class="bg-emerald-600 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-emerald-700 transition-colors">
+                            <button type="button" onclick="sendBillToContractor()" id="btn_sendBill" class="bg-emerald-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-emerald-700 transition-colors">
                                 <i class="fa-solid fa-paper-plane mr-1"></i> ส่งบิลให้ผู้รับเหมา
                             </button>
-                            <button type="button" onclick="fixSeqNumbers()" id="btn_fixSeq" class="bg-blood-400 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-blood-500 transition-colors">
+                            <button type="button" onclick="fixSeqNumbers()" id="btn_fixSeq" class="bg-blood-400 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-blood-500 transition-colors">
                                 <i class="fa-solid fa-list-ol mr-1"></i> จัดลำดับใหม่
                             </button>
                         </div>
@@ -613,39 +627,39 @@
 
                 <div class="flex flex-wrap justify-between items-center mb-4 gap-3">
                     <div class="flex gap-2 flex-wrap">
-                        <button type="button" onclick="loadBillingDocuments()" class="bg-slate-700 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-800 transition-colors">
+                        <button type="button" onclick="loadBillingDocuments()" class="bg-slate-700 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-800 transition-colors">
                             <i class="fa-solid fa-rotate mr-1"></i> โหลด/รีเฟรชข้อมูล
                         </button>
                         <!-- ผู้รับเหมา: ปุ่มเดียว (ใช้ราคาผู้รับเหมาของตัวเองอัตโนมัติ) - ซ่อนไว้สำหรับแอดมิน เพราะแอดมินใช้ปุ่มแยก CJ/ผู้รับเหมาด้านล่างแทน -->
-                        <button type="button" id="btn_exportCsvSingle" onclick="exportBillingCSV()" class="bg-blood-600 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-blood-700 transition-colors">
+                        <button type="button" id="btn_exportCsvSingle" onclick="exportBillingCSV()" class="bg-blood-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-blood-700 transition-colors">
                             <i class="fa-solid fa-file-csv mr-1"></i> Export CSV
                         </button>
-                        <button type="button" onclick="downloadBillingPdf()" id="btn_downloadPdfSingle" class="bg-slate-800 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-900 transition-colors">
+                        <button type="button" onclick="downloadBillingPdf()" id="btn_downloadPdfSingle" class="bg-slate-800 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-900 transition-colors">
                             <i class="fa-solid fa-file-pdf mr-1"></i> Save PDF
                         </button>
                         <!-- แอดมิน: แยกปุ่มดาวน์โหลดราคา CJ กับราคาผู้รับเหมาออกจากกันชัดเจน ทั้ง CSV และ PDF -->
                         <div id="billingAdminExportButtons" class="flex gap-2 flex-wrap">
-                            <button type="button" onclick="exportBillingCSV('cj')" class="bg-blood-600 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-blood-700 transition-colors">
+                            <button type="button" onclick="exportBillingCSV('cj')" class="bg-blood-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-blood-700 transition-colors">
                                 <i class="fa-solid fa-file-csv mr-1"></i> CSV (CJ)
                             </button>
-                            <button type="button" onclick="exportBillingCSV('contractor')" class="bg-blood-500 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-blood-600 transition-colors">
+                            <button type="button" onclick="exportBillingCSV('contractor')" class="bg-blood-500 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-blood-600 transition-colors">
                                 <i class="fa-solid fa-file-csv mr-1"></i> CSV (ผู้รับเหมา)
                             </button>
-                            <button type="button" onclick="downloadBillingPdf('cj', this)" class="bg-slate-800 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-900 transition-colors">
+                            <button type="button" onclick="downloadBillingPdf('cj', this)" class="bg-slate-800 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-900 transition-colors">
                                 <i class="fa-solid fa-file-pdf mr-1"></i> PDF (CJ)
                             </button>
-                            <button type="button" onclick="downloadBillingPdf('contractor', this)" class="bg-slate-600 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-700 transition-colors">
+                            <button type="button" onclick="downloadBillingPdf('contractor', this)" class="bg-slate-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-700 transition-colors">
                                 <i class="fa-solid fa-file-pdf mr-1"></i> PDF (ผู้รับเหมา)
                             </button>
                         </div>
-                        <button type="button" onclick="openBillingHistoryModal()" id="btn_billingHistory" class="bg-indigo-600 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-indigo-700 transition-colors">
+                        <button type="button" onclick="openBillingHistoryModal()" id="btn_billingHistory" class="bg-indigo-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-indigo-700 transition-colors">
                             <i class="fa-solid fa-clock-rotate-left mr-1"></i> ประวัติรอบบิล
                         </button>
-                        <button type="button" onclick="clearBillingTable()" class="bg-white text-slate-600 border border-slate-300 text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-50 transition-colors">
+                        <button type="button" onclick="clearBillingTable()" class="bg-white text-slate-600 border border-slate-300 text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-50 transition-colors">
                             <i class="fa-solid fa-eraser mr-1"></i> ล้างหน้าจอ
                         </button>
                         <div class="relative inline-block">
-                            <button type="button" onclick="toggleColumnManagerPanel()" class="bg-white text-slate-600 border border-slate-300 text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-50 transition-colors">
+                            <button type="button" onclick="toggleColumnManagerPanel()" class="bg-white text-slate-600 border border-slate-300 text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-50 transition-colors">
                                 <i class="fa-solid fa-table-columns mr-1"></i> จัดการคอลัมน์
                             </button>
                             <div id="columnManagerPanel" class="hidden absolute left-0 mt-2 z-40 bg-white border border-slate-300 rounded-xl shadow-2xl p-3 w-64 max-h-80 overflow-y-auto">
@@ -704,7 +718,7 @@
             <div class="p-6">
                 <div class="flex flex-wrap justify-between items-center mb-4 gap-3">
                     <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-file-arrow-up mr-2"></i> ฟอร์มวางบิล</h3>
-                    <button type="button" onclick="loadJobFormsTab()" class="bg-slate-700 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-800 transition-colors">
+                    <button type="button" onclick="loadJobFormsTab()" class="bg-slate-700 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-800 transition-colors">
                         <i class="fa-solid fa-rotate mr-1"></i> โหลด/รีเฟรชข้อมูล
                     </button>
                 </div>
@@ -740,7 +754,7 @@
             <div class="p-6">
                 <div class="flex flex-wrap justify-between items-center mb-4 gap-3">
                     <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-folder-open mr-2"></i> ตรวจสอบรายการเปิดงาน</h3>
-                    <button type="button" onclick="loadOpenIssuesList()" class="bg-slate-700 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-800 transition-colors">
+                    <button type="button" onclick="loadOpenIssuesList()" class="bg-slate-700 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-800 transition-colors">
                         <i class="fa-solid fa-rotate mr-1"></i> โหลด/รีเฟรชข้อมูล
                     </button>
                 </div>
@@ -772,7 +786,7 @@
             <div class="p-6">
                 <div class="flex flex-wrap justify-between items-center mb-4 gap-3">
                     <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-check-double mr-2"></i> ตรวจสอบรายการปิดงาน</h3>
-                    <button type="button" onclick="loadCloseIssuesList()" class="bg-slate-700 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-800 transition-colors">
+                    <button type="button" onclick="loadCloseIssuesList()" class="bg-slate-700 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-800 transition-colors">
                         <i class="fa-solid fa-rotate mr-1"></i> โหลด/รีเฟรชข้อมูล
                     </button>
                 </div>
@@ -805,11 +819,11 @@
                 <div class="flex flex-wrap justify-between items-center mb-4 gap-3">
                     <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-chart-line mr-2"></i> รายงานสถานะดำเนินการ</h3>
                     <div class="flex gap-2">
-                        <button type="button" onclick="loadStatusReport()" class="bg-slate-700 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-800 transition-colors">
+                        <button type="button" onclick="loadStatusReport()" class="bg-slate-700 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-800 transition-colors">
                             <i class="fa-solid fa-rotate mr-1"></i> โหลด/รีเฟรชข้อมูล
                         </button>
                         <div class="relative inline-block">
-                            <button type="button" onclick="toggleStatusReportColumnManagerPanel()" class="bg-white text-slate-600 border border-slate-300 text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-50 transition-colors">
+                            <button type="button" onclick="toggleStatusReportColumnManagerPanel()" class="bg-white text-slate-600 border border-slate-300 text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-50 transition-colors">
                                 <i class="fa-solid fa-table-columns mr-1"></i> จัดการคอลัมน์
                             </button>
                             <div id="statusReportColumnManagerPanel" class="hidden absolute right-0 mt-2 z-40 bg-white border border-slate-300 rounded-xl shadow-2xl p-3 w-64 max-h-80 overflow-y-auto">
@@ -841,7 +855,7 @@
                             <i class="fa-solid fa-calendar-days absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"></i>
                         </div>
                     </div>
-                    <button type="button" onclick="loadStatusReport()" class="bg-blood-600 text-white text-xs font-semibold py-2 px-3 rounded-lg hover:bg-blood-700 transition-colors">กรองตามวันที่</button>
+                    <button type="button" onclick="loadStatusReport()" class="bg-blood-600 text-white text-xs font-semibold py-1.5 px-3 rounded-md hover:bg-blood-700 transition-colors">กรองตามวันที่</button>
                     <div class="flex gap-1">
                         <button type="button" onclick="setStatusReportRangePreset('thisMonth')" class="text-xs bg-white border border-slate-300 text-slate-600 py-2 px-3 rounded-lg hover:bg-slate-50">เดือนนี้</button>
                         <button type="button" onclick="setStatusReportRangePreset('lastMonth')" class="text-xs bg-white border border-slate-300 text-slate-600 py-2 px-3 rounded-lg hover:bg-slate-50">เดือนก่อน</button>
@@ -852,8 +866,8 @@
 
                 <div class="flex flex-wrap gap-3 mb-3">
                     <input type="text" id="statusReportFilter" oninput="debouncedFilterStatusReport()" placeholder="พิมพ์คำค้น เพื่อกรองข้อมูลทุกคอลัมน์ (เลขที่ใบแจ้ง, สาขา, Service Type ฯลฯ)"
-                        class="flex-1 min-w-[240px] px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
-                    <select id="statusReportFilterStatus" onchange="filterStatusReport()" class="px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm bg-white">
+                        class="flex-1 min-w-[240px] px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
+                    <select id="statusReportFilterStatus" onchange="filterStatusReport()" class="px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm bg-white">
                         <option value="">ทุกสถานะ</option>
                         <option value="พักงาน">พักงาน (หยุดรอชั่วคราว)</option>
                         <option value="รอดำเนินการ">รอดำเนินการ (ยังไม่ปิดงาน)</option>
@@ -903,22 +917,22 @@
                 <div class="flex flex-wrap justify-between items-center mb-4 gap-3">
                     <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-screwdriver-wrench mr-2"></i> วางบิลงาน PM</h3>
                     <div class="flex gap-2 flex-wrap">
-                        <button type="button" onclick="previewPmBillingRound()" id="btn_previewPmBilling" class="bg-blood-600 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-blood-700 transition-colors">
+                        <button type="button" onclick="previewPmBillingRound()" id="btn_previewPmBilling" class="bg-blood-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-blood-700 transition-colors">
                             <i class="fa-solid fa-magnifying-glass mr-1"></i> ดูตัวอย่างก่อนบันทึกรอบบิล PM
                         </button>
-                        <button type="button" onclick="loadPmBillingDocuments()" class="bg-slate-700 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-800 transition-colors">
+                        <button type="button" onclick="loadPmBillingDocuments()" class="bg-slate-700 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-800 transition-colors">
                             <i class="fa-solid fa-rotate mr-1"></i> โหลด/รีเฟรชข้อมูล
                         </button>
-                        <button type="button" onclick="openPmBillingHistoryModal()" class="bg-indigo-600 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-indigo-700 transition-colors">
+                        <button type="button" onclick="openPmBillingHistoryModal()" class="bg-indigo-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-indigo-700 transition-colors">
                             <i class="fa-solid fa-clock-rotate-left mr-1"></i> ประวัติบิล PM
                         </button>
-                        <button type="button" onclick="downloadPmBillingRoundPdf_()" id="btn_downloadPmBillingPdf" class="bg-slate-800 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-900 transition-colors">
+                        <button type="button" onclick="downloadPmBillingRoundPdf_()" id="btn_downloadPmBillingPdf" class="bg-slate-800 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-900 transition-colors">
                             <i class="fa-solid fa-file-pdf mr-1"></i> ดาวน์โหลดใบเสนอราคา (PDF)
                         </button>
-                        <button type="button" onclick="downloadPmBillingRoundExcel_()" id="btn_downloadPmBillingExcel" class="bg-emerald-700 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-emerald-800 transition-colors">
+                        <button type="button" onclick="downloadPmBillingRoundExcel_()" id="btn_downloadPmBillingExcel" class="bg-emerald-700 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-emerald-800 transition-colors">
                             <i class="fa-solid fa-file-excel mr-1"></i> ดาวน์โหลดใบเสนอราคา (Excel)
                         </button>
-                        <button type="button" onclick="openPmAddLineItemModal()" id="btn_openPmAddLineItem" class="bg-emerald-600 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-emerald-700 transition-colors">
+                        <button type="button" onclick="openPmAddLineItemModal()" id="btn_openPmAddLineItem" class="bg-emerald-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-emerald-700 transition-colors">
                             <i class="fa-solid fa-plus mr-1"></i> เพิ่มรายการเอง
                         </button>
                     </div>
@@ -949,7 +963,7 @@
                     </button>
                     <div class="ml-auto">
                         <label class="block text-slate-700 text-xs font-semibold mb-1">กรองตามรอบบิล PM</label>
-                        <select id="pmBillingRoundFilter" onchange="loadPmBillingDocuments()" class="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white min-w-[220px]">
+                        <select id="pmBillingRoundFilter" onchange="loadPmBillingDocuments()" class="px-3 py-1.5 rounded-md border border-slate-300 text-sm bg-white min-w-[220px]">
                             <option value="">-- งานล่าสุดทั้งหมด --</option>
                         </select>
                     </div>
@@ -980,7 +994,7 @@
 
         <!-- Modal ประวัติบิล PM (สรุปทุกรอบที่เคยบันทึก + ดาวน์โหลด PDF ย้อนหลัง) - เฉพาะแอดมิน -->
         <div id="pmBillingHistoryModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] overflow-y-auto">
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[85vh] overflow-y-auto">
                 <div class="flex items-center justify-between p-5 border-b border-slate-200 sticky top-0 bg-white z-10">
                     <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-clock-rotate-left mr-2 text-indigo-600"></i>ประวัติบิล PM</h3>
                     <button type="button" onclick="closePmBillingHistoryModal()" class="text-slate-400 hover:text-slate-700 text-xl leading-none">
@@ -1008,7 +1022,7 @@
                     </div>
                 </div>
                 <div class="flex justify-end p-5 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
-                    <button type="button" onclick="closePmBillingHistoryModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2 px-6 rounded-xl hover:bg-slate-100 transition-colors">
+                    <button type="button" onclick="closePmBillingHistoryModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2 px-5 rounded-lg hover:bg-slate-100 transition-colors">
                         ปิด
                     </button>
                 </div>
@@ -1017,7 +1031,7 @@
 
         <!-- Modal ดูตัวอย่างก่อนบันทึกรอบบิล PM (ขั้นที่ 1: ดูอย่างเดียว ไม่บันทึกอะไรเข้าระบบ) -->
         <div id="pmBillingPreviewModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] overflow-y-auto">
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[85vh] overflow-y-auto">
                 <div class="flex items-center justify-between p-5 border-b border-slate-200 sticky top-0 bg-white z-10">
                     <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-magnifying-glass mr-2 text-blood-600"></i>ดูตัวอย่างก่อนบันทึกรอบบิล PM</h3>
                     <button type="button" onclick="closePmBillingPreviewModal()" class="text-slate-400 hover:text-slate-700 text-xl leading-none">
@@ -1054,10 +1068,10 @@
                     </div>
                 </div>
                 <div class="flex justify-end gap-3 p-5 border-t border-slate-200 bg-slate-50 rounded-b-2xl sticky bottom-0">
-                    <button type="button" onclick="closePmBillingPreviewModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2.5 px-6 rounded-xl hover:bg-slate-100 transition-colors">
+                    <button type="button" onclick="closePmBillingPreviewModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2 px-5 rounded-lg hover:bg-slate-100 transition-colors">
                         ยกเลิก
                     </button>
-                    <button type="button" id="btn_confirmPmBillingRound" onclick="confirmPmBillingRound()" class="bg-blood-700 text-white font-semibold py-2.5 px-6 rounded-xl hover:bg-blood-800 transition-colors flex items-center gap-2">
+                    <button type="button" id="btn_confirmPmBillingRound" onclick="confirmPmBillingRound()" class="bg-blood-700 text-white font-semibold py-2 px-5 rounded-lg hover:bg-blood-800 transition-colors flex items-center gap-2">
                         <i class="fa-solid fa-check"></i> <span id="text_confirmPmBillingRound">ยืนยันบันทึกรอบบิล PM</span>
                     </button>
                 </div>
@@ -1066,7 +1080,7 @@
 
         <!-- Modal "เพิ่มรายการเอง" ในรอบบิล PM ที่เลือกอยู่ (สำหรับค่าใช้จ่ายอื่นๆ ที่ไม่ได้มาจากระบบ PM โดยตรง) -->
         <div id="pmAddLineItemModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-md">
                 <div class="flex items-center justify-between p-5 border-b border-slate-200">
                     <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-plus mr-2 text-blood-600"></i>เพิ่มรายการเองในรอบบิล PM</h3>
                     <button type="button" onclick="closePmAddLineItemModal()" class="text-slate-400 hover:text-slate-700 text-xl leading-none">
@@ -1077,25 +1091,25 @@
                     <p id="pmAddLineItemRoundLabel" class="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-2"></p>
                     <div>
                         <label class="block text-slate-700 text-xs font-semibold mb-1">Description ในใบเสนอราคา (บังคับกรอก)</label>
-                        <input type="text" id="pmAddItemDesc" placeholder="เช่น ค่าอะไหล่เพิ่มเติม สาขาบางนา" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                        <input type="text" id="pmAddItemDesc" placeholder="เช่น ค่าอะไหล่เพิ่มเติม สาขาบางนา" class="w-full px-3 py-1.5 rounded-md border border-slate-300 text-sm">
                     </div>
                     <div class="grid grid-cols-2 gap-3">
                         <div>
                             <label class="block text-slate-700 text-xs font-semibold mb-1">รหัสสาขา (ถ้ามี)</label>
-                            <input type="text" id="pmAddItemBranchCode" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                            <input type="text" id="pmAddItemBranchCode" class="w-full px-3 py-1.5 rounded-md border border-slate-300 text-sm">
                         </div>
                         <div>
                             <label class="block text-slate-700 text-xs font-semibold mb-1">ชื่อสาขา (ถ้ามี)</label>
-                            <input type="text" id="pmAddItemBranchName" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                            <input type="text" id="pmAddItemBranchName" class="w-full px-3 py-1.5 rounded-md border border-slate-300 text-sm">
                         </div>
                     </div>
                     <div>
                         <label class="block text-slate-700 text-xs font-semibold mb-1">ราคา</label>
-                        <input type="number" step="0.01" id="pmAddItemPrice" placeholder="0.00" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                        <input type="number" step="0.01" id="pmAddItemPrice" placeholder="0.00" class="w-full px-3 py-1.5 rounded-md border border-slate-300 text-sm">
                     </div>
                     <div>
                         <label class="block text-slate-700 text-xs font-semibold mb-1">หมายเหตุ (ถ้ามี)</label>
-                        <input type="text" id="pmAddItemRemark" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm">
+                        <input type="text" id="pmAddItemRemark" class="w-full px-3 py-1.5 rounded-md border border-slate-300 text-sm">
                     </div>
                 </div>
                 <div class="flex justify-end gap-3 p-5 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
@@ -1114,15 +1128,15 @@
             <div class="p-6">
                 <div class="flex flex-wrap justify-between items-center mb-4 gap-3">
                     <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-inbox mr-2"></i> ไฟล์ผู้รับเหมาส่งกลับ</h3>
-                    <button type="button" onclick="loadJobFormSubmissions()" class="bg-slate-700 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-800 transition-colors">
+                    <button type="button" onclick="loadJobFormSubmissions()" class="bg-slate-700 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-800 transition-colors">
                         <i class="fa-solid fa-rotate mr-1"></i> โหลด/รีเฟรชข้อมูล
                     </button>
                 </div>
                 <p id="submissionsStatus" class="text-sm text-slate-400 mb-3">กดปุ่ม "โหลด/รีเฟรชข้อมูล" เพื่อดึงรายการไฟล์ที่ผู้รับเหมาส่งกลับมาทั้งหมด (ไฟล์จะยังอยู่ถาวรในเมนูนี้เสมอ ไม่ถูกลบ)</p>
                 <div class="flex flex-wrap gap-3 mb-3">
                     <input type="text" id="submissionsFilter" oninput="debouncedFilterSubmissions()" placeholder="พิมพ์คำค้น เพื่อกรองข้อมูลทุกคอลัมน์ (เลขที่งาน, ผู้รับเหมา, สาขา, ไฟล์ ฯลฯ)"
-                        class="flex-1 min-w-[240px] px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
-                    <select id="submissionsFilterStatus" onchange="filterSubmissions()" class="px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm bg-white">
+                        class="flex-1 min-w-[240px] px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
+                    <select id="submissionsFilterStatus" onchange="filterSubmissions()" class="px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm bg-white">
                         <option value="">ทุกสถานะ</option>
                         <option value="pending">รอตรวจสอบ</option>
                         <option value="approved">อนุมัติแล้ว</option>
@@ -1153,7 +1167,7 @@
             <div class="p-6">
                 <div class="flex flex-wrap justify-between items-center mb-4 gap-3">
                     <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-circle-check mr-2"></i> งานที่เสร็จสิ้น (ตัดบิลแล้ว) - แยกตามบิลรอบ</h3>
-                    <button type="button" onclick="loadCompletedJobs()" class="bg-slate-700 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-800 transition-colors">
+                    <button type="button" onclick="loadCompletedJobs()" class="bg-slate-700 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-800 transition-colors">
                         <i class="fa-solid fa-rotate mr-1"></i> โหลด/รีเฟรชข้อมูล
                     </button>
                 </div>
@@ -1183,7 +1197,7 @@
 
     <!-- Popup รายละเอียดบิลรอบที่เสร็จสิ้นแล้ว (กด "ดูรายละเอียด" จากแท็บ "งานที่เสร็จสิ้น") -->
     <div id="completedRoundDetailModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[90vh] overflow-y-auto">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[90vh] overflow-y-auto">
             <div class="flex items-center justify-between p-5 border-b border-slate-200 sticky top-0 bg-white z-10">
                 <h3 id="completedRoundDetailTitle" class="text-lg font-bold text-slate-800">รายละเอียดบิลรอบ</h3>
                 <button type="button" onclick="closeCompletedRoundDetailModal()" class="text-slate-400 hover:text-slate-700 text-xl leading-none">
@@ -1224,14 +1238,14 @@
             </div>
             <div class="flex flex-wrap items-center justify-end gap-2 p-5 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
                 <div class="flex flex-wrap gap-2 mr-auto">
-                    <button type="button" onclick="downloadCompletedRoundCsv('cj')" class="bg-blood-600 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-blood-700 transition-colors">
+                    <button type="button" onclick="downloadCompletedRoundCsv('cj')" class="bg-blood-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-blood-700 transition-colors">
                         <i class="fa-solid fa-file-csv mr-1"></i> CSV (CJ)
                     </button>
-                    <button type="button" onclick="downloadCompletedRoundCsv('contractor')" class="bg-blood-500 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-blood-600 transition-colors">
+                    <button type="button" onclick="downloadCompletedRoundCsv('contractor')" class="bg-blood-500 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-blood-600 transition-colors">
                         <i class="fa-solid fa-file-csv mr-1"></i> CSV (ผู้รับเหมา)
                     </button>
                 </div>
-                <button type="button" onclick="closeCompletedRoundDetailModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2 px-6 rounded-xl hover:bg-slate-100 transition-colors">
+                <button type="button" onclick="closeCompletedRoundDetailModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2 px-5 rounded-lg hover:bg-slate-100 transition-colors">
                     ปิด
                 </button>
             </div>
@@ -1255,7 +1269,7 @@
     </div>
 
     <div id="addProductModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div class="flex items-center justify-between p-5 border-b border-slate-200">
                 <h3 class="text-lg font-bold text-slate-800">
                     เพิ่มสินค้า — <span id="modalCustomerCase" class="text-blood-700"></span>
@@ -1274,10 +1288,10 @@
             </div>
 
             <div class="flex justify-end gap-3 p-5 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
-                <button type="button" onclick="closeAddProductModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2.5 px-6 rounded-xl hover:bg-slate-100 transition-colors">
+                <button type="button" onclick="closeAddProductModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2 px-5 rounded-lg hover:bg-slate-100 transition-colors">
                     ยกเลิก
                 </button>
-                <button type="button" id="btn_saveModal" onclick="saveAddProductModal()" class="bg-blood-700 text-white font-semibold py-2.5 px-6 rounded-xl hover:bg-blood-800 transition-colors flex items-center gap-2">
+                <button type="button" id="btn_saveModal" onclick="saveAddProductModal()" class="bg-blood-700 text-white font-semibold py-2 px-5 rounded-lg hover:bg-blood-800 transition-colors flex items-center gap-2">
                     <i class="fa-solid fa-floppy-disk"></i> <span id="text_saveModal">บันทึก</span>
                 </button>
             </div>
@@ -1286,7 +1300,7 @@
 
     <!-- Popup ดูรายละเอียดงาน (ใช้ได้ทั้งแท็บรายงานสถานะ และแท็บงานที่เสร็จสิ้น) -->
     <div id="detailModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
             <div class="flex items-center justify-between p-5 border-b border-slate-200 sticky top-0 bg-white">
                 <h3 id="detailModalTitle" class="text-lg font-bold text-slate-800">รายละเอียด</h3>
                 <button type="button" onclick="closeDetailModal()" class="text-slate-400 hover:text-slate-700 text-xl leading-none">
@@ -1296,7 +1310,7 @@
             <div id="detailModalBody" class="p-5"></div>
             <div class="flex flex-wrap items-center justify-end gap-2 p-5 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
                 <div id="detailModalActions" class="flex flex-wrap gap-2 mr-auto"></div>
-                <button type="button" onclick="closeDetailModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2 px-6 rounded-xl hover:bg-slate-100 transition-colors">
+                <button type="button" onclick="closeDetailModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2 px-5 rounded-lg hover:bg-slate-100 transition-colors">
                     ปิด
                 </button>
             </div>
@@ -1305,7 +1319,7 @@
 
     <!-- Modal เลือกตารางที่จะซิงค์ไป Google Sheet (แอดมินเท่านั้น) -->
     <div id="syncTablesModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[85vh] overflow-y-auto">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[85vh] overflow-y-auto">
             <div class="flex items-center justify-between p-5 border-b border-slate-200 sticky top-0 bg-white">
                 <h3 class="text-lg font-bold text-slate-800">ซิงค์ข้อมูลไป Google Sheet</h3>
                 <button type="button" onclick="closeSyncTablesModal()" class="text-slate-400 hover:text-slate-700 text-xl leading-none">
@@ -1341,10 +1355,10 @@
                 <p id="syncTablesStatus" class="text-xs text-slate-500 mt-3 min-h-[1rem]"></p>
             </div>
             <div class="flex justify-end gap-3 p-5 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
-                <button type="button" onclick="closeSyncTablesModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2 px-6 rounded-xl hover:bg-slate-100 transition-colors">
+                <button type="button" onclick="closeSyncTablesModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2 px-5 rounded-lg hover:bg-slate-100 transition-colors">
                     ยกเลิก
                 </button>
-                <button type="button" id="btnStartSync" onclick="startSelectedSync_()" class="bg-blood-700 text-white font-semibold py-2 px-6 rounded-xl hover:bg-blood-800 transition-colors">
+                <button type="button" id="btnStartSync" onclick="startSelectedSync_()" class="bg-blood-700 text-white font-semibold py-2 px-5 rounded-lg hover:bg-blood-800 transition-colors">
                     <i class="fa-solid fa-cloud-arrow-up mr-1"></i> เริ่มซิงค์
                 </button>
             </div>
@@ -1353,7 +1367,7 @@
 
     <!-- Modal ประวัติรอบบิล (ดู + ดาวน์โหลด PDF ย้อนหลัง) - ใช้ได้ทั้งแอดมินและผู้รับเหมา (คนละมุมมอง) -->
     <div id="billingHistoryModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] overflow-y-auto">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[85vh] overflow-y-auto">
             <div class="flex items-center justify-between p-5 border-b border-slate-200 sticky top-0 bg-white z-10">
                 <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-clock-rotate-left mr-2 text-indigo-600"></i>ประวัติรอบบิล</h3>
                 <button type="button" onclick="closeBillingHistoryModal()" class="text-slate-400 hover:text-slate-700 text-xl leading-none">
@@ -1382,7 +1396,7 @@
                 </div>
             </div>
             <div class="flex justify-end p-5 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
-                <button type="button" onclick="closeBillingHistoryModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2 px-6 rounded-xl hover:bg-slate-100 transition-colors">
+                <button type="button" onclick="closeBillingHistoryModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2 px-5 rounded-lg hover:bg-slate-100 transition-colors">
                     ปิด
                 </button>
             </div>
@@ -1391,7 +1405,7 @@
 
     <!-- Modal ดูตัวอย่างก่อนบันทึกรอบบิล (ขั้นที่ 1: ดูอย่างเดียว ไม่บันทึกอะไรเข้าระบบ - ต้องกดยืนยันอีกครั้งในขั้นที่ 2 ถึงจะสร้างรอบบิลจริง) -->
     <div id="billingPreviewModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] overflow-y-auto">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[85vh] overflow-y-auto">
             <div class="flex items-center justify-between p-5 border-b border-slate-200 sticky top-0 bg-white z-10">
                 <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-magnifying-glass mr-2 text-blood-600"></i>ดูตัวอย่างก่อนบันทึกรอบบิล</h3>
                 <button type="button" onclick="closeBillingPreviewModal()" class="text-slate-400 hover:text-slate-700 text-xl leading-none">
@@ -1429,10 +1443,10 @@
                 </div>
             </div>
             <div class="flex justify-end gap-3 p-5 border-t border-slate-200 bg-slate-50 rounded-b-2xl sticky bottom-0">
-                <button type="button" onclick="closeBillingPreviewModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2.5 px-6 rounded-xl hover:bg-slate-100 transition-colors">
+                <button type="button" onclick="closeBillingPreviewModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2 px-5 rounded-lg hover:bg-slate-100 transition-colors">
                     ยกเลิก
                 </button>
-                <button type="button" id="btn_confirmBillingRound" onclick="confirmBillingRound()" class="bg-blood-700 text-white font-semibold py-2.5 px-6 rounded-xl hover:bg-blood-800 transition-colors flex items-center gap-2">
+                <button type="button" id="btn_confirmBillingRound" onclick="confirmBillingRound()" class="bg-blood-700 text-white font-semibold py-2 px-5 rounded-lg hover:bg-blood-800 transition-colors flex items-center gap-2">
                     <i class="fa-solid fa-check"></i> <span id="text_confirmBillingRound">ยืนยันบันทึกรอบบิล</span>
                 </button>
             </div>
@@ -1441,7 +1455,7 @@
 
     <!-- Modal แก้ไขข้อมูลระหว่างพักงาน (แก้ได้ทั้งข้อมูลเปิดงาน + ข้อมูลบันทึกพักงาน) -->
     <div id="editPausedModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div class="flex items-center justify-between p-5 border-b border-slate-200 sticky top-0 bg-white">
                 <h3 class="text-lg font-bold text-slate-800">
                     แก้ไขข้อมูล (ระหว่างพักงาน) — <span id="epMainIdLabel" class="text-blood-700"></span>
@@ -1460,25 +1474,25 @@
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                             <label class="block text-slate-700 text-xs font-semibold mb-1">สาขา</label>
-                            <input type="text" id="ep_branch" class="w-full px-3 py-2 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
+                            <input type="text" id="ep_branch" class="w-full px-3 py-1.5 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
                         </div>
                         <div>
                             <label class="block text-slate-700 text-xs font-semibold mb-1">ผู้รับเหมา</label>
-                            <select id="ep_contractor" class="w-full px-3 py-2 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm bg-white">
+                            <select id="ep_contractor" class="w-full px-3 py-1.5 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm bg-white">
                                 <option value="">-- เลือกผู้รับเหมา --</option>
                             </select>
                         </div>
                         <div>
                             <label class="block text-slate-700 text-xs font-semibold mb-1">Service Type</label>
-                            <input type="text" id="ep_serviceType" class="w-full px-3 py-2 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
+                            <input type="text" id="ep_serviceType" class="w-full px-3 py-1.5 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
                         </div>
                         <div>
                             <label class="block text-slate-700 text-xs font-semibold mb-1">วันที่ร้องขอ</label>
-                            <input type="text" id="ep_reqDate" class="w-full px-3 py-2 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
+                            <input type="text" id="ep_reqDate" class="w-full px-3 py-1.5 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
                         </div>
                         <div class="md:col-span-2">
                             <label class="block text-slate-700 text-xs font-semibold mb-1">งานบริการ / รายละเอียดปัญหา</label>
-                            <textarea id="ep_details" rows="2" class="w-full px-3 py-2 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm"></textarea>
+                            <textarea id="ep_details" rows="2" class="w-full px-3 py-1.5 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm"></textarea>
                         </div>
                     </div>
                 </div>
@@ -1488,28 +1502,28 @@
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                             <label class="block text-slate-700 text-xs font-semibold mb-1">สาเหตุที่ตรวจพบ</label>
-                            <input type="text" id="ep_cause" class="w-full px-3 py-2 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
+                            <input type="text" id="ep_cause" class="w-full px-3 py-1.5 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
                         </div>
                         <div>
                             <label class="block text-slate-700 text-xs font-semibold mb-1">รายการที่ขออนุมัติ</label>
-                            <input type="text" id="ep_request" class="w-full px-3 py-2 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
+                            <input type="text" id="ep_request" class="w-full px-3 py-1.5 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
                         </div>
                         <div class="md:col-span-2">
                             <label class="block text-slate-700 text-xs font-semibold mb-1">เหตุผลที่พักงาน <span class="text-red-500">*</span></label>
-                            <input type="text" id="ep_reason" class="w-full px-3 py-2 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
+                            <input type="text" id="ep_reason" class="w-full px-3 py-1.5 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
                         </div>
                         <div class="md:col-span-2">
                             <label class="block text-slate-700 text-xs font-semibold mb-1">หมายเหตุ</label>
-                            <textarea id="ep_note" rows="2" class="w-full px-3 py-2 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm"></textarea>
+                            <textarea id="ep_note" rows="2" class="w-full px-3 py-1.5 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm"></textarea>
                         </div>
                     </div>
                 </div>
             </div>
             <div class="flex justify-end gap-3 p-5 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
-                <button type="button" onclick="closeEditPausedModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2.5 px-6 rounded-xl hover:bg-slate-100 transition-colors">
+                <button type="button" onclick="closeEditPausedModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2 px-5 rounded-lg hover:bg-slate-100 transition-colors">
                     ยกเลิก
                 </button>
-                <button type="button" id="btn_saveEditPaused" onclick="saveEditPausedModal()" class="bg-blood-700 text-white font-semibold py-2.5 px-6 rounded-xl hover:bg-blood-800 transition-colors flex items-center gap-2">
+                <button type="button" id="btn_saveEditPaused" onclick="saveEditPausedModal()" class="bg-blood-700 text-white font-semibold py-2 px-5 rounded-lg hover:bg-blood-800 transition-colors flex items-center gap-2">
                     <i class="fa-solid fa-floppy-disk"></i> <span id="text_saveEditPaused">บันทึกการแก้ไข</span>
                 </button>
             </div>
@@ -2103,10 +2117,10 @@
 
             Object.keys(tabs).forEach(key => {
                 if (key === mode) {
-                    tabs[key].className = 'w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-left transition-colors bg-blood-600 text-white relative';
+                    tabs[key].className = 'w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors bg-blood-700 text-white shadow-sm relative';
                     sections[key].style.display = 'block';
                 } else {
-                    tabs[key].className = 'w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-left transition-colors text-slate-400 hover:bg-slate-800 hover:text-white cursor-pointer relative';
+                    tabs[key].className = 'w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors text-emerald-100/70 hover:bg-white/10 hover:text-white cursor-pointer relative';
                     sections[key].style.display = 'none';
                 }
             });
@@ -2290,7 +2304,7 @@
             div.id = rowId;
             div.className = 'flex gap-2';
             div.innerHTML = `
-                <input type="text" class="cl_partItem flex-1 px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm" placeholder="เช่น Filter Drier 3/8 = 1" value="${(value || '').replace(/"/g,'&quot;')}">
+                <input type="text" class="cl_partItem flex-1 px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm" placeholder="เช่น Filter Drier 3/8 = 1" value="${(value || '').replace(/"/g,'&quot;')}">
                 <button type="button" onclick="removePartRow('${rowId}')" class="text-red-400 hover:text-red-600 px-2"><i class="fa-solid fa-trash"></i></button>
             `;
             container.appendChild(div);
@@ -3944,7 +3958,7 @@
             const container = document.getElementById('modalPartRows');
             const div = document.createElement('div');
             div.id = rowId;
-            div.className = 'border border-slate-200 rounded-xl p-4 relative';
+            div.className = 'border border-slate-200 rounded-lg p-3.5 relative';
             div.innerHTML = `
                 <button type="button" onclick="removeModalPartRow('${rowId}')" class="absolute top-3 right-3 text-slate-300 hover:text-red-500" title="ลบอะไหล่ชิ้นนี้">
                     <i class="fa-solid fa-xmark"></i>
@@ -3952,16 +3966,16 @@
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
                         <label class="block text-slate-700 text-sm font-semibold mb-1">รหัสสินค้า <span class="text-red-500">*</span></label>
-                        <input type="text" class="modal_partCode w-full px-3 py-2 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm" placeholder="เช่น P003">
+                        <input type="text" class="modal_partCode w-full px-3 py-1.5 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm" placeholder="เช่น P003">
                         <p class="modal_partStatus text-xs mt-1 text-slate-400"></p>
                     </div>
                     <div>
                         <label class="block text-slate-700 text-sm font-semibold mb-1">จำนวน <span class="text-red-500">*</span></label>
-                        <input type="number" min="0" step="1" value="1" class="modal_qty w-full px-3 py-2 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
+                        <input type="number" min="0" step="1" value="1" class="modal_qty w-full px-3 py-1.5 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
                     </div>
                     <div>
                         <label class="block text-slate-700 text-sm font-semibold mb-1">Quotation</label>
-                        <input type="text" class="modal_quotationRef w-full px-3 py-2 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
+                        <input type="text" class="modal_quotationRef w-full px-3 py-1.5 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
                     </div>
                 </div>
                 <div class="modal_partPreview mt-3 text-sm text-slate-500 hidden bg-slate-50 rounded-lg p-3">
@@ -4755,11 +4769,11 @@
                     </div>
                     ${remarkHtml}
                     <div class="flex flex-wrap items-center gap-2 mt-3">
-                        <button type="button" class="jf-download-btn bg-blood-600 text-white text-xs font-semibold py-2 px-3 rounded-lg hover:bg-blood-700 transition-colors">
+                        <button type="button" class="jf-download-btn bg-blood-600 text-white text-xs font-semibold py-1.5 px-3 rounded-md hover:bg-blood-700 transition-colors">
                             <i class="fa-solid fa-download mr-1"></i> ดาวน์โหลดฟอร์ม
                         </button>
                         <input type="file" accept="application/pdf,image/jpeg,image/png" capture="environment" class="jf-file-input text-xs flex-1 min-w-[140px]">
-                        <button type="button" class="jf-upload-btn bg-emerald-600 text-white text-xs font-semibold py-2 px-3 rounded-lg hover:bg-emerald-700 transition-colors">
+                        <button type="button" class="jf-upload-btn bg-emerald-600 text-white text-xs font-semibold py-1.5 px-3 rounded-md hover:bg-emerald-700 transition-colors">
                             <i class="fa-solid fa-upload mr-1"></i> ส่งฟอร์มกลับ
                         </button>
                         <span class="jf-status text-xs text-slate-400"></span>
@@ -5398,7 +5412,7 @@
             (actions || []).forEach(function (action) {
                 const btn = document.createElement('button');
                 btn.type = 'button';
-                btn.className = 'bg-white text-slate-700 border border-slate-300 font-semibold py-2 px-4 rounded-xl hover:bg-slate-100 transition-colors text-sm';
+                btn.className = 'bg-white text-slate-700 border border-slate-300 font-semibold py-1.5 px-3.5 rounded-lg hover:bg-slate-100 transition-colors text-sm';
                 btn.innerHTML = (action.icon ? '<i class="' + action.icon + ' mr-1"></i> ' : '') + action.label;
                 btn.onclick = action.onClick;
                 actionsEl.appendChild(btn);
@@ -5469,7 +5483,7 @@
             }
             container.innerHTML = items.map(function (it) {
                 return `
-                <div class="border border-slate-200 rounded-xl p-4 flex flex-wrap justify-between items-start gap-3">
+                <div class="border border-slate-200 rounded-lg p-3.5 flex flex-wrap justify-between items-start gap-3">
                     <div>
                         <div class="font-bold text-slate-800">${it.main_id}${it.branch ? ' <span class="text-slate-400 font-normal">— ' + it.branch + '</span>' : ''}</div>
                         ${it.service_type ? '<div class="text-xs text-slate-500 mt-0.5">ประเภทงาน: ' + it.service_type + '</div>' : ''}
@@ -5479,10 +5493,10 @@
                         <div class="text-xs text-slate-400 mt-1">พักเมื่อ ${formatTimestamp(it.paused_at)} โดย ${it.paused_by || '-'}</div>
                     </div>
                     <div class="flex gap-2">
-                        <button type="button" onclick="openEditPausedModal('${it.main_id}')" class="bg-slate-600 text-white text-xs font-semibold py-2 px-3 rounded-lg hover:bg-slate-700 transition-colors whitespace-nowrap">
+                        <button type="button" onclick="openEditPausedModal('${it.main_id}')" class="bg-slate-600 text-white text-xs font-semibold py-1.5 px-3 rounded-md hover:bg-slate-700 transition-colors whitespace-nowrap">
                             <i class="fa-solid fa-pen mr-1"></i> แก้ไข
                         </button>
-                        <button type="button" onclick="resumePausedIssue('${it.main_id}')" class="bg-emerald-600 text-white text-xs font-semibold py-2 px-3 rounded-lg hover:bg-emerald-700 transition-colors whitespace-nowrap">
+                        <button type="button" onclick="resumePausedIssue('${it.main_id}')" class="bg-emerald-600 text-white text-xs font-semibold py-1.5 px-3 rounded-md hover:bg-emerald-700 transition-colors whitespace-nowrap">
                             <i class="fa-solid fa-play mr-1"></i> กลับมาทำงาน
                         </button>
                     </div>
@@ -5705,7 +5719,7 @@
                     ? formatDurationHours((endMs - startMs) / (1000 * 60 * 60)) + (isPaused ? ' (นับต่อเนื่อง)' : '')
                     : null;
                 return `
-                <div class="border border-slate-200 rounded-xl p-4">
+                <div class="border border-slate-200 rounded-lg p-3.5">
                     <div class="text-sm font-semibold ${isPaused ? 'text-red-600' : 'text-emerald-600'}">
                         ${isPaused ? '🔴 กำลังพักอยู่' : '🟢 กลับมาทำงานแล้ว'}${it.branch ? ' <span class="text-slate-400 font-normal">— ' + it.branch + '</span>' : ''}
                     </div>
