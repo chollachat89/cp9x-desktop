@@ -288,8 +288,8 @@ async function generateBillingPdfBase64(rows: any[], isAdmin: boolean): Promise<
       return r;
     });
 
-    const HEADER_ROW_H = 22;
-    const DATA_ROW_H = 18;
+    const HEADER_ROW_H = 24;
+    const DATA_ROW_H = 20;
     const SUMMARY_H = 24;
 
     function drawPageHeader(page: any): number {
@@ -300,16 +300,16 @@ async function generateBillingPdfBase64(rows: any[], isAdmin: boolean): Promise<
       page.drawImage(logoImage, { x: MARGIN, y: y - logoH, width: logoW, height: logoH });
 
       y -= 22;
-      pdfCenterText(page, boldFont, 'สรุปเอกสารวางบิล CM', PAGE_W / 2, y, 20, PDF_GREEN_DARK);
+      pdfCenterText(page, boldFont, 'สรุปเอกสารวางบิล CM', PAGE_W / 2, y, 22, PDF_GREEN_DARK);
       y -= 18;
-      pdfCenterText(page, font, 'บริษัท ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด', PAGE_W / 2, y, 13, PDF_GREEN);
+      pdfCenterText(page, font, 'บริษัท ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด', PAGE_W / 2, y, 14, PDF_GREEN);
       y -= 14;
-      pdfCenterText(page, font, '557-557/1 ถนน ไทยรามัญ แขวงสามวาตะวันตก เขตคลองสามวา กรุงเทพมหานคร 10510', PAGE_W / 2, y, 10, PDF_GRAY_TEXT);
+      pdfCenterText(page, font, '557-557/1 ถนน ไทยรามัญ แขวงสามวาตะวันตก เขตคลองสามวา กรุงเทพมหานคร 10510', PAGE_W / 2, y, 11, PDF_GRAY_TEXT);
       y -= 13;
-      pdfCenterText(page, font, 'โทร 089-743-7111 : เลขประจำตัวผู้เสียภาษี 0105562019441', PAGE_W / 2, y, 10, PDF_GRAY_TEXT);
+      pdfCenterText(page, font, 'โทร 089-743-7111 : เลขประจำตัวผู้เสียภาษี 0105562019441', PAGE_W / 2, y, 11, PDF_GRAY_TEXT);
       if (singleContractorName) {
         y -= 16;
-        pdfCenterText(page, boldFont, 'ใบวางบิลผู้รับเหมา: ' + singleContractorName, PAGE_W / 2, y, 14, PDF_DARK_RED);
+        pdfCenterText(page, boldFont, 'ใบวางบิลผู้รับเหมา: ' + singleContractorName, PAGE_W / 2, y, 15, PDF_DARK_RED);
       }
       // เส้นคั่นสีเขียวใต้หัวกระดาษ ให้ดูเป็นระเบียบ และซ้ำเหมือนกันทุกหน้า
       const dividerY = Math.min(y - 8, PAGE_H - MARGIN - logoH - 4);
@@ -321,14 +321,17 @@ async function generateBillingPdfBase64(rows: any[], isAdmin: boolean): Promise<
       const boxH = SUMMARY_H;
       const w1 = 300, w2 = 220, w3 = usableWidth - w1 - w2;
       page.drawRectangle({ x: MARGIN, y: y - boxH, width: w1, height: boxH, color: PDF_WHITE });
-      page.drawText('วันที่พิมพ์: ' + thaiDateString(), { x: MARGIN + 4, y: y - boxH + 7, size: 11, font: boldFont, color: PDF_GRAY_TEXT });
+      page.drawText('วันที่พิมพ์: ' + thaiDateString(), { x: MARGIN + 4, y: y - boxH + 7, size: 12, font: boldFont, color: PDF_GRAY_TEXT });
       page.drawRectangle({ x: MARGIN + w1, y: y - boxH, width: w2, height: boxH, color: PDF_GREEN });
-      pdfCenterText(page, boldFont, 'จำนวนรายการ: ' + rows.length, MARGIN + w1 + w2 / 2, y - boxH + 7, 11, PDF_WHITE);
+      pdfCenterText(page, boldFont, 'จำนวนรายการ: ' + rows.length, MARGIN + w1 + w2 / 2, y - boxH + 7, 12, PDF_WHITE);
       page.drawRectangle({ x: MARGIN + w1 + w2, y: y - boxH, width: w3, height: boxH, color: PDF_YELLOW });
-      pdfCenterText(page, boldFont, 'รวมทั้งหมด: ' + grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 }) + ' บาท', MARGIN + w1 + w2 + w3 / 2, y - boxH + 7, 11, rgb(0x3f / 255, 0x2d / 255, 0));
+      pdfCenterText(page, boldFont, 'รวมทั้งหมด: ' + grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 }) + ' บาท', MARGIN + w1 + w2 + w3 / 2, y - boxH + 7, 12, rgb(0x3f / 255, 0x2d / 255, 0));
       return y - boxH - 6;
     }
 
+    // หัวตารางคงขนาด 8 ไว้ (เล็กกว่าเนื้อข้อมูลที่ใช้ 9) เพราะตารางนี้มีถึง 24 คอลัมน์ในหน้า A3
+    // ถ้าขยายหัวตารางตามไปด้วย ชื่อคอลัมน์จะถูกตัดด้วย … เกือบทุกช่อง อ่านไม่รู้เรื่อง
+    // ตัวข้อมูลคือสิ่งที่คนอ่านจริง จึงให้ความสำคัญกับการขยายตรงนั้นแทน
     function drawTableHeader(page: any, y: number): number {
       page.drawRectangle({ x: MARGIN, y: y - HEADER_ROW_H, width: usableWidth, height: HEADER_ROW_H, color: PDF_GREEN_DARK });
       headers.forEach((h, c) => {
@@ -342,11 +345,11 @@ async function generateBillingPdfBase64(rows: any[], isAdmin: boolean): Promise<
 
     // ตัดคำแทนการตัดข้อความทิ้ง (…) เพื่อให้เห็นข้อความเต็มๆ ทุกช่อง โดยคำนวณความสูงแถวใหม่ตามจำนวนบรรทัดที่ต้องใช้จริง
     const CELL_PAD_H = 3;
-    const LINE_H = 9;
+    const LINE_H = 10.5;
     const MAX_LINES_PER_CELL = 6;
     const rowRenderInfo = displayRows.map((rowData) => {
       const colLines = rowData.map((val, c) => {
-        let lines = pdfWrapText(font, val, 8, scaledWidths[c] - CELL_PAD_H * 2);
+        let lines = pdfWrapText(font, val, 9, scaledWidths[c] - CELL_PAD_H * 2);
         if (lines.length > MAX_LINES_PER_CELL) lines = lines.slice(0, MAX_LINES_PER_CELL);
         return lines;
       });
@@ -362,11 +365,11 @@ async function generateBillingPdfBase64(rows: any[], isAdmin: boolean): Promise<
         const align = rightAlignCols.indexOf(c) !== -1 ? 'right' : 'center';
         let baselineY = yTop - 4 - 7;
         lines.forEach((line) => {
-          const w = font.widthOfTextAtSize(line, 8);
+          const w = font.widthOfTextAtSize(line, 9);
           let drawX = colX[c] + CELL_PAD_H;
           if (align === 'center') drawX = colX[c] + (scaledWidths[c] - w) / 2;
           else if (align === 'right') drawX = colX[c] + scaledWidths[c] - w - CELL_PAD_H;
-          page.drawText(line, { x: drawX, y: baselineY, size: 8, font, color: rgb(0.15, 0.15, 0.15) });
+          page.drawText(line, { x: drawX, y: baselineY, size: 9, font, color: rgb(0.15, 0.15, 0.15) });
           baselineY -= LINE_H;
         });
       });
@@ -400,7 +403,7 @@ async function generateBillingPdfBase64(rows: any[], isAdmin: boolean): Promise<
       rowCursor++;
     }
 
-    pdfCenterText(page, font, 'บริษัท ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด', PAGE_W / 2, Math.max(y - 14, MARGIN), 9, rgb(0.4, 0.45, 0.5));
+    pdfCenterText(page, font, 'บริษัท ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด', PAGE_W / 2, Math.max(y - 14, MARGIN), 10, rgb(0.4, 0.45, 0.5));
 
     const pdfBytes = await pdfDoc.save();
     let binary = '';
@@ -543,14 +546,14 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
       const logoW = logoH / logoAspect;
       page.drawImage(logoImage, { x: MARGIN, y: y - logoH, width: logoW, height: logoH });
 
-      pdfCenterText(page, boldFont, 'บริษัท ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด', PAGE_W / 2, y, 16, BLACK);
+      pdfCenterText(page, boldFont, 'บริษัท ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด', PAGE_W / 2, y, 18, BLACK);
       y -= 17;
-      pdfCenterText(page, font, '557-557/1 ถนน ไทยรามัญ แขวงสามวาตะวันตก เขตคลองสามวา กรุงเทพมหานคร 10510', PAGE_W / 2, y, 10, BLACK);
+      pdfCenterText(page, font, '557-557/1 ถนน ไทยรามัญ แขวงสามวาตะวันตก เขตคลองสามวา กรุงเทพมหานคร 10510', PAGE_W / 2, y, 11, BLACK);
       y -= 13;
-      pdfCenterText(page, font, 'โทร 089-743-7111 : เลขประจำตัวผู้เสียภาษี 0105562019441', PAGE_W / 2, y, 10, BLACK);
+      pdfCenterText(page, font, 'โทร 089-743-7111 : เลขประจำตัวผู้เสียภาษี 0105562019441', PAGE_W / 2, y, 11, BLACK);
       y -= 21;
       // หัวข้อเอกสารหลัก ขยับขนาดขึ้นจากตัวบริษัท (16) เป็น 18 ให้เห็นลำดับความสำคัญชัดเจนขึ้น (เดิมเท่ากันทำให้ดูไม่เป็นหัวข้อ)
-      pdfCenterText(page, boldFont, 'ใบเสนอราคา / QUOTATION', PAGE_W / 2, y, 18, BLACK);
+      pdfCenterText(page, boldFont, 'ใบเสนอราคา / QUOTATION', PAGE_W / 2, y, 20, BLACK);
       y -= 10;
       page.drawLine({ start: { x: MARGIN, y: y - 4 }, end: { x: PAGE_W - MARGIN, y: y - 4 }, thickness: 1, color: BORDER });
       return y - 16; // บล็อกข้อความหัวกระดาษ (~77pt) สูงกว่าโลโก้ (46pt) อยู่แล้ว จึงไม่มีทางชนกัน ไม่ต้องเผื่อเพิ่ม
@@ -562,7 +565,7 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
     function drawCustomerBlock(page: any, yStart: number): number {
       const rightX = PAGE_W - MARGIN - 200;
       const dividerX = rightX - 6;
-      const rowH = 15;
+      const rowH = 16.5;
       const boxTop = yStart;
       const boxBottom = yStart - rowH * 3;
       // กรอบนอกรอบทั้งกล่อง
@@ -576,31 +579,31 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
       page.drawLine({ start: { x: dividerX, y: boxTop - rowH }, end: { x: MARGIN + usableWidth, y: boxTop - rowH }, thickness: 0.75, color: BORDER });
       page.drawLine({ start: { x: dividerX, y: boxTop - rowH * 2 }, end: { x: MARGIN + usableWidth, y: boxTop - rowH * 2 }, thickness: 0.75, color: BORDER });
 
-      page.drawText('เรียน/Attention: คุณวศิน / ที่นับถือ', { x: MARGIN + 4, y: boxTop - 11, size: 10, font: boldFont, color: BLACK });
-      page.drawText('เลขที่/No. : ' + docNo, { x: rightX, y: boxTop - 11, size: 10, font, color: BLACK });
-      page.drawText('สำเนาเรียน/CC. คุณอาร์ม / ที่นับถือ', { x: MARGIN + 4, y: boxTop - 11 - rowH, size: 10, font: boldFont, color: BLACK });
-      page.drawText('วันที่ Date : ' + thaiDateString(), { x: rightX, y: boxTop - 11 - rowH, size: 10, font, color: BLACK });
-      page.drawText('ที่อยู่/Address : บริษัท ซี.เจ. เอ็กซ์เพรส กรุ๊ป จำกัด', { x: MARGIN + 4, y: boxTop - 11 - rowH * 2, size: 10, font: boldFont, color: BLACK });
-      page.drawText('TEL. : -', { x: rightX, y: boxTop - 11 - rowH * 2, size: 10, font, color: BLACK });
+      page.drawText('เรียน/Attention: คุณวศิน / ที่นับถือ', { x: MARGIN + 4, y: boxTop - 11, size: 11, font: boldFont, color: BLACK });
+      page.drawText('เลขที่/No. : ' + docNo, { x: rightX, y: boxTop - 11, size: 11, font, color: BLACK });
+      page.drawText('สำเนาเรียน/CC. คุณอาร์ม / ที่นับถือ', { x: MARGIN + 4, y: boxTop - 11 - rowH, size: 11, font: boldFont, color: BLACK });
+      page.drawText('วันที่ Date : ' + thaiDateString(), { x: rightX, y: boxTop - 11 - rowH, size: 11, font, color: BLACK });
+      page.drawText('ที่อยู่/Address : บริษัท ซี.เจ. เอ็กซ์เพรส กรุ๊ป จำกัด', { x: MARGIN + 4, y: boxTop - 11 - rowH * 2, size: 11, font: boldFont, color: BLACK });
+      page.drawText('TEL. : -', { x: rightX, y: boxTop - 11 - rowH * 2, size: 11, font, color: BLACK });
 
       let y = boxBottom - 12;
-      page.drawText('ขอเสนอราคาและเงื่อนไขสำหรับท่านดังนี้', { x: MARGIN, y, size: 10, font, color: BLACK });
+      page.drawText('ขอเสนอราคาและเงื่อนไขสำหรับท่านดังนี้', { x: MARGIN, y, size: 11, font, color: BLACK });
       y -= 13;
-      page.drawText('We are please to submit you the following described here in at price, items and terms stated :', { x: MARGIN, y, size: 9, font, color: BLACK });
+      page.drawText('We are please to submit you the following described here in at price, items and terms stated :', { x: MARGIN, y, size: 10, font, color: BLACK });
       y -= 10;
       return y;
     }
 
-    const HEADER_H = 20;
+    const HEADER_H = 22;
     const WHITE = rgb(1, 1, 1);
     function drawTableHeaderRow(page: any, y: number): number {
       page.drawRectangle({ x: MARGIN, y: y - HEADER_H, width: usableWidth, height: HEADER_H, color: rgb(0, 0, 0) });
-      pdfDrawCellText(page, boldFont, 'Item', colX_item, y - HEADER_H + 6, colW_item, 9, WHITE, 'center');
-      pdfDrawCellText(page, boldFont, 'Description', colX_desc, y - HEADER_H + 6, colW_desc, 9, WHITE, 'center');
-      pdfDrawCellText(page, boldFont, 'Qty', colX_qty, y - HEADER_H + 6, colW_qty, 9, WHITE, 'center');
-      pdfDrawCellText(page, boldFont, 'Unit', colX_unit, y - HEADER_H + 6, colW_unit, 9, WHITE, 'center');
-      pdfDrawCellText(page, boldFont, 'Unit Price', colX_price, y - HEADER_H + 6, colW_price, 9, WHITE, 'center');
-      pdfDrawCellText(page, boldFont, 'Amount', colX_amount, y - HEADER_H + 6, colW_amount, 9, WHITE, 'center');
+      pdfDrawCellText(page, boldFont, 'Item', colX_item, y - HEADER_H + 6, colW_item, 10, WHITE, 'center');
+      pdfDrawCellText(page, boldFont, 'Description', colX_desc, y - HEADER_H + 6, colW_desc, 10, WHITE, 'center');
+      pdfDrawCellText(page, boldFont, 'Qty', colX_qty, y - HEADER_H + 6, colW_qty, 10, WHITE, 'center');
+      pdfDrawCellText(page, boldFont, 'Unit', colX_unit, y - HEADER_H + 6, colW_unit, 10, WHITE, 'center');
+      pdfDrawCellText(page, boldFont, 'Unit Price', colX_price, y - HEADER_H + 6, colW_price, 10, WHITE, 'center');
+      pdfDrawCellText(page, boldFont, 'Amount', colX_amount, y - HEADER_H + 6, colW_amount, 10, WHITE, 'center');
       colStops.forEach((x) => { page.drawLine({ start: { x, y }, end: { x, y: y - HEADER_H }, thickness: 0.5, color: rgb(0.4, 0.4, 0.4) }); });
       page.drawLine({ start: { x: MARGIN, y: y - HEADER_H }, end: { x: MARGIN + usableWidth, y: y - HEADER_H }, thickness: 0.5, color: BORDER });
       return y - HEADER_H;
@@ -609,28 +612,28 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
     // แถวหัวรายการรวม (ไม่มีเลข/ราคา แค่คำอธิบายงานโดยรวม เหมือนแถวที่ 12 ในแบบฟอร์ม Excel ต้นฉบับ)
     function drawGroupLabelRow(page: any, y: number): number {
       const text = 'ค่าดำเนินการงาน Preventive Maintenance เครื่องเย็น โครงการ CJ Express ตามสัญญาบริการ ประจำเดือน ' + headerMonth + '/' + headerYear;
-      const rowH = 16;
-      page.drawText(text, { x: colX_desc, y: y - rowH + 5, size: 9, font, color: BLACK });
+      const rowH = 17.5;
+      page.drawText(text, { x: colX_desc, y: y - rowH + 5, size: 10, font, color: BLACK });
       page.drawLine({ start: { x: MARGIN, y: y - rowH }, end: { x: MARGIN + usableWidth, y: y - rowH }, thickness: 0.4, color: BORDER });
       return y - rowH;
     }
 
-    const DATA_ROW_H = 15;
+    const DATA_ROW_H = 17;
     const rowRenderInfo = lineItems.map((item: any, idx: number) => {
-      const lines = pdfWrapText(font, item.desc, 9, colW_desc - 6);
-      const h = Math.max(DATA_ROW_H, lines.length * 11 + 4);
+      const lines = pdfWrapText(font, item.desc, 10, colW_desc - 6);
+      const h = Math.max(DATA_ROW_H, lines.length * 12.5 + 4);
       return { item, idx, lines, h };
     });
 
     function drawItemRow(page: any, yTop: number, info: any): void {
       const h = info.h;
-      pdfDrawCellText(page, font, String(info.idx + 1), colX_item, yTop - h + 5, colW_item, 9, BLACK, 'center');
+      pdfDrawCellText(page, font, String(info.idx + 1), colX_item, yTop - h + 5, colW_item, 10, BLACK, 'center');
       let ly = yTop - 11;
-      info.lines.forEach((line: string) => { page.drawText(line, { x: colX_desc + 3, y: ly, size: 9, font, color: BLACK }); ly -= 11; });
-      pdfDrawCellText(page, font, info.item.qty.toFixed(2), colX_qty, yTop - h + 5, colW_qty, 9, BLACK, 'center');
-      pdfDrawCellText(page, font, info.item.unit, colX_unit, yTop - h + 5, colW_unit, 9, BLACK, 'center');
-      pdfDrawCellText(page, font, info.item.unitPrice ? money(info.item.unitPrice) : '-', colX_price, yTop - h + 5, colW_price, 9, BLACK, 'right', 6);
-      pdfDrawCellText(page, font, info.item.amount ? money(info.item.amount) : '-', colX_amount, yTop - h + 5, colW_amount, 9, BLACK, 'right', 6);
+      info.lines.forEach((line: string) => { page.drawText(line, { x: colX_desc + 3, y: ly, size: 10, font, color: BLACK }); ly -= 12.5; });
+      pdfDrawCellText(page, font, info.item.qty.toFixed(2), colX_qty, yTop - h + 5, colW_qty, 10, BLACK, 'center');
+      pdfDrawCellText(page, font, info.item.unit, colX_unit, yTop - h + 5, colW_unit, 10, BLACK, 'center');
+      pdfDrawCellText(page, font, info.item.unitPrice ? money(info.item.unitPrice) : '-', colX_price, yTop - h + 5, colW_price, 10, BLACK, 'right', 6);
+      pdfDrawCellText(page, font, info.item.amount ? money(info.item.amount) : '-', colX_amount, yTop - h + 5, colW_amount, 10, BLACK, 'right', 6);
       colStops.forEach((x) => { page.drawLine({ start: { x, y: yTop }, end: { x, y: yTop - h }, thickness: 0.4, color: BORDER }); });
       page.drawLine({ start: { x: MARGIN, y: yTop - h }, end: { x: MARGIN + usableWidth, y: yTop - h }, thickness: 0.4, color: BORDER });
     }
@@ -667,8 +670,8 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
     function moneyOrDash(n: number): string { return n ? money(n) : '-'; }
     function drawSummaryLine(label: string, value: string, bold = false): void {
       const f = bold ? boldFont : font;
-      page.drawText(label, { x: summaryLabelX, y, size: 10, font: f, color: BLACK });
-      pdfDrawCellText(page, f, value, colX_amount, y, colW_amount, 10, BLACK, 'right', 6);
+      page.drawText(label, { x: summaryLabelX, y, size: 11, font: f, color: BLACK });
+      pdfDrawCellText(page, f, value, colX_amount, y, colW_amount, 11, BLACK, 'right', 6);
       y -= 15;
     }
     drawSummaryLine('Total Item', moneyOrDash(totalItem));
@@ -680,32 +683,32 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
     page.drawRectangle({ x: MARGIN, y: y - 4, width: usableWidth, height: 15, color: ORANGE });
     const bahtText = '(' + thaiBahtText(grandTotal) + ')';
     const bahtMaxWidth = summaryLabelX - MARGIN - 8;
-    const bahtSize = font.widthOfTextAtSize(bahtText, 10) <= bahtMaxWidth ? 10 : 8;
+    const bahtSize = font.widthOfTextAtSize(bahtText, 11) <= bahtMaxWidth ? 11 : 9;
     page.drawText(bahtText, { x: MARGIN + 4, y: y + (bahtSize === 10 ? 0 : 1), size: bahtSize, font, color: BLACK });
-    page.drawText('Grand Total', { x: summaryLabelX, y, size: 10, font: boldFont, color: BLACK });
-    pdfDrawCellText(page, boldFont, moneyOrDash(grandTotal), colX_amount, y, colW_amount, 10, BLACK, 'right', 6);
+    page.drawText('Grand Total', { x: summaryLabelX, y, size: 11, font: boldFont, color: BLACK });
+    pdfDrawCellText(page, boldFont, moneyOrDash(grandTotal), colX_amount, y, colW_amount, 11, BLACK, 'right', 6);
     y -= 20;
 
     // ---- เงื่อนไขชำระเงิน + ลายเซ็น ----
-    page.drawText('เงื่อนไขชำระเงิน  1)  100% ชำระเมื่อส่งมอบงาน  (เครดิต 45 วัน)', { x: MARGIN, y, size: 9, font, color: BLACK });
+    page.drawText('เงื่อนไขชำระเงิน  1)  100% ชำระเมื่อส่งมอบงาน  (เครดิต 45 วัน)', { x: MARGIN, y, size: 10, font, color: BLACK });
     const sigX = PAGE_W - MARGIN - 200;
-    page.drawText('ขอแสดงความนับถือ', { x: sigX, y, size: 9, font, color: BLACK });
+    page.drawText('ขอแสดงความนับถือ', { x: sigX, y, size: 10, font, color: BLACK });
     y -= 13;
-    page.drawText('กำหนดยืนราคา :  45 วันหลังจากในใบเสนอราคานี้', { x: MARGIN, y, size: 9, font, color: BLACK });
-    page.drawText('บริษัท  ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด', { x: sigX, y, size: 9, font, color: BLACK });
+    page.drawText('กำหนดยืนราคา :  45 วันหลังจากในใบเสนอราคานี้', { x: MARGIN, y, size: 10, font, color: BLACK });
+    page.drawText('บริษัท  ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด', { x: sigX, y, size: 10, font, color: BLACK });
     y -= 8;
     // ลายเซ็นจริงวางทับเหนือเส้นประเลย (ไม่ต้องเซ็นสดเพิ่ม) — จัดกึ่งกลางบล็อกลายเซ็นเหมือนตำแหน่งในไฟล์ Excel ต้นฉบับ
     const sigH = 34;
     const sigW = sigH / sigAspect;
     page.drawImage(sigImage, { x: sigX + 70 - sigW / 2, y: y - sigH + 6, width: sigW, height: sigH });
     y -= sigH;
-    page.drawText('........................................................................', { x: sigX, y, size: 9, font, color: BLACK });
+    page.drawText('........................................................................', { x: sigX, y, size: 10, font, color: BLACK });
     y -= 13;
-    page.drawText('( นายเจริญ พูนน้อย )', { x: sigX + 30, y, size: 9, font, color: BLACK });
+    page.drawText('( นายเจริญ พูนน้อย )', { x: sigX + 30, y, size: 10, font, color: BLACK });
     y -= 12;
-    page.drawText('Managing Director', { x: sigX + 30, y, size: 9, font, color: BLACK });
+    page.drawText('Managing Director', { x: sigX + 30, y, size: 10, font, color: BLACK });
     y -= 12;
-    page.drawText('089-743-7111', { x: sigX + 30, y, size: 9, font, color: BLACK });
+    page.drawText('089-743-7111', { x: sigX + 30, y, size: 10, font, color: BLACK });
 
     const pdfBytes = await pdfDoc.save();
     let binary = '';
@@ -759,10 +762,10 @@ async function generatePmQuotationXlsxBase64(rows: any[], roundNo: number | stri
     const logoImgId = workbook.addImage({ buffer: logoBuf, extension: 'png' });
     sheet.addImage(logoImgId, { tl: { col: 0.1, row: 0.1 }, ext: { width: 60, height: 60 } });
 
-    sheet.mergeCells(1, 1, 1, 6); setCell(1, 1, 'บริษัท ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด', { bold: true, size: 16, align: 'center' });
-    sheet.mergeCells(2, 1, 2, 6); setCell(2, 1, '557-557/1 ถนน ไทยรามัญ แขวงสามวาตะวันตก เขตคลองสามวา กรุงเทพมหานคร 10510', { size: 10, align: 'center' });
-    sheet.mergeCells(3, 1, 3, 6); setCell(3, 1, 'โทร 089-743-7111 : เลขประจำตัวผู้เสียภาษี 0105562019441', { size: 10, align: 'center' });
-    sheet.mergeCells(4, 1, 4, 6); setCell(4, 1, 'ใบเสนอราคา / QUOTATION', { bold: true, size: 16, align: 'center' });
+    sheet.mergeCells(1, 1, 1, 6); setCell(1, 1, 'บริษัท ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด', { bold: true, size: 18, align: 'center' });
+    sheet.mergeCells(2, 1, 2, 6); setCell(2, 1, '557-557/1 ถนน ไทยรามัญ แขวงสามวาตะวันตก เขตคลองสามวา กรุงเทพมหานคร 10510', { size: 11, align: 'center' });
+    sheet.mergeCells(3, 1, 3, 6); setCell(3, 1, 'โทร 089-743-7111 : เลขประจำตัวผู้เสียภาษี 0105562019441', { size: 11, align: 'center' });
+    sheet.mergeCells(4, 1, 4, 6); setCell(4, 1, 'ใบเสนอราคา / QUOTATION', { bold: true, size: 18, align: 'center' });
     for (let c = 1; c <= 6; c++) border(4, c, { bottom: true });
     [1, 2, 3, 4].forEach((r) => { sheet.getRow(r).height = r === 1 ? 24 : r === 4 ? 26 : 16; });
 
@@ -788,7 +791,7 @@ async function generatePmQuotationXlsxBase64(rows: any[], roundNo: number | stri
 
     let r = custR2 + 1;
     sheet.mergeCells(r, 1, r, 6); setCell(r, 1, 'ขอเสนอราคาและเงื่อนไขสำหรับท่านดังนี้'); r++;
-    sheet.mergeCells(r, 1, r, 6); setCell(r, 1, 'We are please to submit you the following described here in at price, items and terms stated :', { size: 9 }); r++;
+    sheet.mergeCells(r, 1, r, 6); setCell(r, 1, 'We are please to submit you the following described here in at price, items and terms stated :', { size: 10 }); r++;
     r++; // แถวว่างคั่นก่อนตาราง
 
     // ---- หัวตารางรายการ (พื้นดำ ตัวขาว) ----
@@ -809,7 +812,7 @@ async function generatePmQuotationXlsxBase64(rows: any[], roundNo: number | stri
       if (!isNaN(d.getTime())) { headerMonth = d.getMonth() + 1; headerYear = d.getFullYear(); }
     }
     sheet.mergeCells(r, 2, r, 6);
-    setCell(r, 2, 'ค่าดำเนินการงาน Preventive Maintenance เครื่องเย็น โครงการ CJ Express ตามสัญญาบริการ ประจำเดือน ' + headerMonth + '/' + headerYear, { size: 9 });
+    setCell(r, 2, 'ค่าดำเนินการงาน Preventive Maintenance เครื่องเย็น โครงการ CJ Express ตามสัญญาบริการ ประจำเดือน ' + headerMonth + '/' + headerYear, { size: 10 });
     for (let c = 1; c <= 6; c++) border(r, c, { bottom: true });
     r++;
 
@@ -857,7 +860,7 @@ async function generatePmQuotationXlsxBase64(rows: any[], roundNo: number | stri
     summaryLine('VAT 7%', vat);
 
     // ---- แถว Grand Total: จำนวนเงินตัวอักษร (คอลัมน์ B) + Grand Total (คอลัมน์ E/F) อยู่แถวเดียวกัน ไฮไลท์สีส้มเต็มความกว้าง ----
-    setCell(r, 2, '(' + thaiBahtText(grandTotal) + ')', { size: 11 });
+    setCell(r, 2, '(' + thaiBahtText(grandTotal) + ')', { size: 12 });
     setCell(r, 5, 'Grand Total', { bold: true });
     setCell(r, 6, grandTotal, { bold: true, align: 'right' }); sheet.getCell(r, 6).numFmt = numFmtDash;
     for (let c = 1; c <= 6; c++) sheet.getCell(r, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ORANGE_FILL } };
@@ -865,20 +868,20 @@ async function generatePmQuotationXlsxBase64(rows: any[], roundNo: number | stri
     r++;
 
     // ---- เงื่อนไขชำระเงิน + ลายเซ็น ----
-    sheet.mergeCells(r, 1, r, 4); setCell(r, 1, 'เงื่อนไขชำระเงิน  1)  100% ชำระเมื่อส่งมอบงาน  (เครดิต 45 วัน)', { size: 9 });
-    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, 'ขอแสดงความนับถือ', { size: 9, align: 'center' }); r++;
-    sheet.mergeCells(r, 1, r, 4); setCell(r, 1, 'กำหนดยืนราคา :  45 วันหลังจากในใบเสนอราคานี้', { size: 9 });
-    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, 'บริษัท  ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด', { size: 9, align: 'center' }); r++;
+    sheet.mergeCells(r, 1, r, 4); setCell(r, 1, 'เงื่อนไขชำระเงิน  1)  100% ชำระเมื่อส่งมอบงาน  (เครดิต 45 วัน)', { size: 10 });
+    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, 'ขอแสดงความนับถือ', { size: 10, align: 'center' }); r++;
+    sheet.mergeCells(r, 1, r, 4); setCell(r, 1, 'กำหนดยืนราคา :  45 วันหลังจากในใบเสนอราคานี้', { size: 10 });
+    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, 'บริษัท  ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด', { size: 10, align: 'center' }); r++;
 
     const sigRowStart = r;
     const sigBuf = Uint8Array.from(atob(PM_QUOTATION_SIGNATURE_PNG_BASE64), (c) => c.charCodeAt(0));
     const sigImgId = workbook.addImage({ buffer: sigBuf, extension: 'png' });
     sheet.addImage(sigImgId, { tl: { col: 4.3, row: sigRowStart - 1 + 0.1 }, ext: { width: 90, height: 40 } });
     r += 2;
-    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, '........................................................', { size: 9, align: 'center' }); r++;
-    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, '( นายเจริญ พูนน้อย )', { size: 9, align: 'center' }); r++;
-    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, 'Managing Director', { size: 9, align: 'center' }); r++;
-    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, '089-743-7111', { size: 9, align: 'center' });
+    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, '........................................................', { size: 10, align: 'center' }); r++;
+    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, '( นายเจริญ พูนน้อย )', { size: 10, align: 'center' }); r++;
+    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, 'Managing Director', { size: 10, align: 'center' }); r++;
+    sheet.mergeCells(r, 5, r, 6); setCell(r, 5, '089-743-7111', { size: 10, align: 'center' });
 
     const buffer: ArrayBuffer = await workbook.xlsx.writeBuffer();
     const bytes = new Uint8Array(buffer);
@@ -903,7 +906,7 @@ function xlsxApplyBoxStyle(ws: any, r1: number, c1: number, r2: number, c2: numb
         right: { style: 'thin', color: { argb: 'FF999999' } },
       };
       cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-      cell.font = { name: 'Arial', size: 10 };
+      cell.font = { name: 'Arial', size: 11 };
     }
   }
 }

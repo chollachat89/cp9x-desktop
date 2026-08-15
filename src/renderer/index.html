@@ -64,6 +64,26 @@
         textarea::-webkit-scrollbar { width: 6px; }
         textarea::-webkit-scrollbar-track { background: transparent; }
         textarea::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+
+        /* ---------- เมนูด้านข้าง: โหมดย่อ (เหลือแต่ไอคอน) ----------
+           กดปุ่มลูกศรที่หัวเมนูเพื่อย่อ ตารางฝั่งขวาจะกว้างขึ้นทันที เหมาะกับตารางที่มีหลายคอลัมน์
+           ใช้ CSS ล้วน ไม่ต้องสลับคลาสทีละปุ่ม แค่ติด .sidebar-collapsed ที่ตัว aside อันเดียว */
+        #sidebar { transition: width .18s ease, transform .2s ease; }
+        @media (min-width: 768px) {
+            #sidebar.sidebar-collapsed { width: 3.75rem !important; }
+            /* ซ่อนเฉพาะข้อความ ไอคอนยังอยู่ครบและถูกจัดกึ่งกลาง */
+            #sidebar.sidebar-collapsed .sidebar-label { display: none; }
+            #sidebar.sidebar-collapsed nav button { justify-content: center; padding-left: .5rem; padding-right: .5rem; }
+            /* หัวหมวดหมู่ไม่มีประโยชน์ตอนย่อ เพราะไม่มีข้อความให้อ่าน - ซ่อนไปเลยแต่ยังโชว์รายการทั้งหมด */
+            #sidebar.sidebar-collapsed .sidebar-group-head { display: none; }
+            #sidebar.sidebar-collapsed .sidebar-group-items { display: block !important; }
+            #sidebar.sidebar-collapsed .sidebar-group + .sidebar-group { border-top: 1px solid rgba(255,255,255,.1); margin-top: .35rem; padding-top: .35rem; }
+            /* ป้ายแจ้งเตือนขยับมาเกาะมุมไอคอน ไม่งั้นจะหลุดออกนอกปุ่มที่แคบลง */
+            #sidebar.sidebar-collapsed nav button > span[id$="Badge"] { right: .35rem; top: .3rem; transform: none; }
+        }
+        /* หมวดที่ถูกพับเก็บ */
+        .sidebar-group.is-folded .sidebar-group-items { display: none; }
+        .sidebar-group.is-folded .sidebar-group-caret { transform: rotate(-90deg); }
         /* ===== แบรนด์ CP9X : ตัวอักษรไล่เฉดเขียว-มิ้นต์ พร้อมเรืองแสงจางๆ ===== */
         .cp9x-wordmark {
             font-family: 'Orbitron', 'Segoe UI', system-ui, sans-serif;
@@ -154,50 +174,81 @@
             <div class="cp9x-mark w-9 h-9 shrink-0">
                 <i class="fa-solid fa-bolt text-white text-base"></i>
             </div>
-            <div class="leading-tight">
+            <div class="leading-tight sidebar-label">
                 <div class="cp9x-wordmark cp9x-glow text-xl">CP9X</div>
-                <div class="text-[10px] text-slate-500 tracking-[0.18em] uppercase">Energy Consultant</div>
+                <div class="text-[10px] text-emerald-100/45 tracking-[0.18em] uppercase">Energy Consultant</div>
             </div>
+            <!-- ปุ่มย่อ/ขยายเมนู - เห็นเฉพาะจอใหญ่ (จอเล็กใช้ปุ่มแฮมเบอร์เกอร์ที่แถบบนอยู่แล้ว) -->
+            <button type="button" onclick="toggleSidebarCollapsed()" title="ย่อ/ขยายเมนู"
+                class="hidden md:flex ml-auto w-7 h-7 items-center justify-center rounded-md text-emerald-100/60 hover:text-white hover:bg-white/10 transition-colors shrink-0">
+                <i id="sidebarCollapseIcon" class="fa-solid fa-angles-left text-xs"></i>
+            </button>
         </div>
-        <nav class="flex-1 overflow-y-auto py-3 px-2.5 space-y-0.5">
-            <button id="tabOpen" onclick="switchMode('open')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors">
-                <i class="fa-solid fa-folder-open w-5 text-center"></i> <span>เปิดงาน</span>
-            </button>
-            <button id="tabClose" onclick="switchMode('close')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors">
-                <i class="fa-solid fa-check-double w-5 text-center"></i> <span>ปิดงาน</span>
-            </button>
-           <button id="tabPause" onclick="switchMode('pause')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors relative">
-                <i class="fa-solid fa-pause w-5 text-center"></i> <span>พักงาน</span>
-                <span id="pauseBadge" class="hidden absolute right-3 top-1/2 -translate-y-1/2 bg-amber-500 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">0</span>
-            </button>
-            <button id="tabBilling" onclick="switchMode('billing')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors">
-                <i class="fa-solid fa-receipt w-5 text-center"></i> <span>ตารางวางบิล</span>
-            </button>
-            <button id="tabPM" onclick="switchMode('pm')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors">
-                <i class="fa-solid fa-screwdriver-wrench w-5 text-center"></i> <span>PM</span>
-            </button>
-            <button id="tabJobForms" onclick="switchMode('jobforms')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors relative">
-                <i class="fa-solid fa-file-arrow-up w-5 text-center"></i> <span>ฟอร์มวางบิล</span>
-                <span id="jobFormsBadge" class="hidden absolute right-3 top-1/2 -translate-y-1/2 bg-red-600 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">0</span>
-            </button>
-            <div class="pt-3 pb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-emerald-100/45">ตรวจสอบ / รายงาน</div>
-            <button id="tabOpenList" onclick="switchMode('openlist')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors">
-                <i class="fa-solid fa-magnifying-glass w-5 text-center"></i> <span>ตรวจสอบเปิดงาน</span>
-            </button>
-            <button id="tabCloseList" onclick="switchMode('closelist')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors">
-                <i class="fa-solid fa-magnifying-glass w-5 text-center"></i> <span>ตรวจสอบปิดงาน</span>
-            </button>
-            <button id="tabStatusReport" onclick="switchMode('statusreport')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors relative">
-                <i class="fa-solid fa-chart-line w-5 text-center"></i> <span>รายงานสถานะดำเนินการ</span>
-                <span id="pendingBadge" class="hidden absolute right-3 top-1/2 -translate-y-1/2 bg-red-600 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">0</span>
-            </button>
-            <button id="tabSubmissions" onclick="switchMode('submissions')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors relative">
-                <i class="fa-solid fa-inbox w-5 text-center"></i> <span>ไฟล์ผู้รับเหมาส่งกลับ</span>
-                <span id="submissionsBadge" class="hidden absolute right-3 top-1/2 -translate-y-1/2 bg-red-600 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">0</span>
-            </button>
-            <button id="tabCompleted" onclick="switchMode('completed')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors">
-                <i class="fa-solid fa-circle-check w-5 text-center"></i> <span>งานที่เสร็จสิ้น</span>
-            </button>
+        <nav class="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
+
+            <div class="sidebar-group" data-group="cm">
+                <button type="button" onclick="toggleSidebarGroup('cm')" class="sidebar-group-head w-full flex items-center gap-2 px-2 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-100/45 hover:text-emerald-100/80 transition-colors">
+                    <i class="fa-solid fa-chevron-down text-[8px] transition-transform sidebar-group-caret"></i>
+                    <span class="sidebar-label">งาน CM (งานซ่อม)</span>
+                </button>
+                <div class="sidebar-group-items space-y-0.5">
+                    <button id="tabOpen" onclick="switchMode('open')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors" title="เปิดงาน">
+                        <i class="fa-solid fa-folder-open w-5 text-center shrink-0"></i> <span class="sidebar-label">เปิดงาน</span>
+                    </button>
+                    <button id="tabClose" onclick="switchMode('close')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors" title="ปิดงาน">
+                        <i class="fa-solid fa-check-double w-5 text-center shrink-0"></i> <span class="sidebar-label">ปิดงาน</span>
+                    </button>
+                    <button id="tabPause" onclick="switchMode('pause')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors relative" title="พักงาน">
+                        <i class="fa-solid fa-pause w-5 text-center shrink-0"></i> <span class="sidebar-label">พักงาน</span>
+                        <span id="pauseBadge" class="hidden absolute right-3 top-1/2 -translate-y-1/2 bg-amber-500 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1.5 flex items-center justify-center tabular-nums">0</span>
+                    </button>
+                    <button id="tabBilling" onclick="switchMode('billing')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors" title="ตารางวางบิล">
+                        <i class="fa-solid fa-receipt w-5 text-center shrink-0"></i> <span class="sidebar-label">ตารางวางบิล</span>
+                    </button>
+                    <button id="tabJobForms" onclick="switchMode('jobforms')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors relative" title="ฟอร์มวางบิล">
+                        <i class="fa-solid fa-file-arrow-up w-5 text-center shrink-0"></i> <span class="sidebar-label">ฟอร์มวางบิล</span>
+                        <span id="jobFormsBadge" class="hidden absolute right-3 top-1/2 -translate-y-1/2 bg-red-600 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1.5 flex items-center justify-center tabular-nums">0</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="sidebar-group" data-group="pm">
+                <button type="button" onclick="toggleSidebarGroup('pm')" class="sidebar-group-head w-full flex items-center gap-2 px-2 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-100/45 hover:text-emerald-100/80 transition-colors">
+                    <i class="fa-solid fa-chevron-down text-[8px] transition-transform sidebar-group-caret"></i>
+                    <span class="sidebar-label">งาน PM (บำรุงรักษา)</span>
+                </button>
+                <div class="sidebar-group-items space-y-0.5">
+                    <button id="tabPM" onclick="switchMode('pm')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors" title="ใบเสนอราคา PM">
+                        <i class="fa-solid fa-screwdriver-wrench w-5 text-center shrink-0"></i> <span class="sidebar-label">ใบเสนอราคา PM</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="sidebar-group" data-group="report">
+                <button type="button" onclick="toggleSidebarGroup('report')" class="sidebar-group-head w-full flex items-center gap-2 px-2 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-100/45 hover:text-emerald-100/80 transition-colors">
+                    <i class="fa-solid fa-chevron-down text-[8px] transition-transform sidebar-group-caret"></i>
+                    <span class="sidebar-label">ตรวจสอบ / รายงาน</span>
+                </button>
+                <div class="sidebar-group-items space-y-0.5">
+                    <button id="tabOpenList" onclick="switchMode('openlist')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors" title="ตรวจสอบเปิดงาน">
+                        <i class="fa-solid fa-magnifying-glass w-5 text-center shrink-0"></i> <span class="sidebar-label">ตรวจสอบเปิดงาน</span>
+                    </button>
+                    <button id="tabCloseList" onclick="switchMode('closelist')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors" title="ตรวจสอบปิดงาน">
+                        <i class="fa-solid fa-magnifying-glass w-5 text-center shrink-0"></i> <span class="sidebar-label">ตรวจสอบปิดงาน</span>
+                    </button>
+                    <button id="tabStatusReport" onclick="switchMode('statusreport')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors relative" title="รายงานสถานะดำเนินการ">
+                        <i class="fa-solid fa-chart-line w-5 text-center shrink-0"></i> <span class="sidebar-label">รายงานสถานะดำเนินการ</span>
+                        <span id="pendingBadge" class="hidden absolute right-3 top-1/2 -translate-y-1/2 bg-red-600 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1.5 flex items-center justify-center tabular-nums">0</span>
+                    </button>
+                    <button id="tabSubmissions" onclick="switchMode('submissions')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors relative" title="ไฟล์ผู้รับเหมาส่งกลับ">
+                        <i class="fa-solid fa-inbox w-5 text-center shrink-0"></i> <span class="sidebar-label">ไฟล์ผู้รับเหมาส่งกลับ</span>
+                        <span id="submissionsBadge" class="hidden absolute right-3 top-1/2 -translate-y-1/2 bg-red-600 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1.5 flex items-center justify-center tabular-nums">0</span>
+                    </button>
+                    <button id="tabCompleted" onclick="switchMode('completed')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors" title="งานที่เสร็จสิ้น">
+                        <i class="fa-solid fa-circle-check w-5 text-center shrink-0"></i> <span class="sidebar-label">งานที่เสร็จสิ้น</span>
+                    </button>
+                </div>
+            </div>
         </nav>
         <div class="px-4 py-3 border-t border-white/10 text-xs text-emerald-100/60">
             <div class="flex items-center gap-2">
@@ -1758,6 +1809,14 @@
             // ปุ่ม "ซิงค์ข้อมูลไป Sheet" ที่หัวเว็บ - แอดมินเท่านั้น
             const syncBtn = document.getElementById('btnManualSync');
             if (syncBtn) syncBtn.classList.toggle('hidden', !isAdmin);
+
+            // ซ่อนหัวหมวดที่ไม่เหลือเมนูให้กดเลย (เช่น ผู้รับเหมาไม่เห็นหมวด PM และหมวดตรวจสอบ/รายงาน)
+            // ถ้าไม่ทำ จะเหลือหัวหมวดลอย ๆ ที่กดแล้วไม่มีอะไรอยู่ข้างใน ดูเหมือนระบบพัง
+            document.querySelectorAll('.sidebar-group').forEach(function (group) {
+                const items = group.querySelectorAll('.sidebar-group-items > button');
+                const anyVisible = Array.prototype.some.call(items, function (b) { return b.style.display !== 'none'; });
+                group.style.display = anyVisible ? '' : 'none';
+            });
         }
 
         // ปุ่ม "ซิงค์ข้อมูลไป Sheet" ที่หัวเว็บ (แอดมินเท่านั้น) - เปิด popup ให้เลือกตารางก่อนซิงค์
@@ -1963,6 +2022,7 @@
         })();
 
         window.addEventListener('DOMContentLoaded', function () {
+            restoreSidebarPrefs();
             addPartRow();
             loadBillingColumnPrefs();
             applyBillingColumnPrefsToHeaders();
@@ -2105,6 +2165,49 @@
                 sidebar.classList.add('-translate-x-full');
                 document.getElementById('sidebarOverlay').classList.add('hidden');
             }
+        }
+
+        // ==================== ย่อ/ขยายเมนูด้านข้าง + พับหมวดหมู่ ====================
+        // จำค่าที่ผู้ใช้เลือกไว้ใน localStorage เพราะเป็นความชอบส่วนตัวของแต่ละเครื่อง
+        // (บางคนชอบเมนูย่อตลอดเพื่อดูตารางกว้าง ๆ บางคนชอบเห็นชื่อเมนูครบ)
+        const SIDEBAR_COLLAPSED_KEY = 'crMaintSidebarCollapsed';
+        const SIDEBAR_FOLDED_GROUPS_KEY = 'crMaintSidebarFoldedGroups';
+
+        function applySidebarCollapsed(collapsed) {
+            const sidebar = document.getElementById('sidebar');
+            const icon = document.getElementById('sidebarCollapseIcon');
+            if (!sidebar) return;
+            // ความกว้างโหมดย่อคุมด้วย CSS (ใน media query จอใหญ่) ไม่แตะคลาส w-60 ของ Tailwind
+            // ถ้าไปถอด w-60 ออกด้วย JS เมนูบนมือถือจะกว้างเพี้ยนไปด้วย เพราะโหมดย่อไม่มีผลบนจอเล็ก
+            sidebar.classList.toggle('sidebar-collapsed', collapsed);
+            if (icon) icon.className = 'fa-solid text-xs ' + (collapsed ? 'fa-angles-right' : 'fa-angles-left');
+        }
+
+        function toggleSidebarCollapsed() {
+            const collapsed = !document.getElementById('sidebar').classList.contains('sidebar-collapsed');
+            applySidebarCollapsed(collapsed);
+            try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0'); } catch (e) {}
+        }
+
+        function getFoldedGroups() {
+            try { return JSON.parse(localStorage.getItem(SIDEBAR_FOLDED_GROUPS_KEY) || '[]'); } catch (e) { return []; }
+        }
+
+        function toggleSidebarGroup(name) {
+            const el = document.querySelector('.sidebar-group[data-group="' + name + '"]');
+            if (!el) return;
+            const folded = el.classList.toggle('is-folded');
+            const list = getFoldedGroups().filter(function (g) { return g !== name; });
+            if (folded) list.push(name);
+            try { localStorage.setItem(SIDEBAR_FOLDED_GROUPS_KEY, JSON.stringify(list)); } catch (e) {}
+        }
+
+        function restoreSidebarPrefs() {
+            try { applySidebarCollapsed(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1'); } catch (e) {}
+            getFoldedGroups().forEach(function (name) {
+                const el = document.querySelector('.sidebar-group[data-group="' + name + '"]');
+                if (el) el.classList.add('is-folded');
+            });
         }
 
         function switchMode(mode) {
@@ -4654,7 +4757,7 @@
             const badge = document.getElementById('pendingBadge');
             if (!badge) return;
             if (count > 0) {
-                badge.textContent = count > 99 ? '99+' : String(count);
+                badge.textContent = String(count); // แสดงจำนวนจริงเสมอ ไม่ตัดเป็น 99+ เพราะแอดมินต้องรู้ยอดค้างที่แท้จริง
                 badge.classList.remove('hidden');
             } else {
                 badge.classList.add('hidden');
@@ -4666,7 +4769,7 @@
             const badge = document.getElementById('pauseBadge');
             if (!badge) return;
             if (count > 0) {
-                badge.textContent = count > 99 ? '99+' : String(count);
+                badge.textContent = String(count); // แสดงจำนวนจริงเสมอ ไม่ตัดเป็น 99+ เพราะแอดมินต้องรู้ยอดค้างที่แท้จริง
                 badge.classList.remove('hidden');
             } else {
                 badge.classList.add('hidden');
@@ -4687,7 +4790,7 @@
             const badge = document.getElementById('submissionsBadge');
             if (!badge) return;
             if (count > 0) {
-                badge.textContent = count > 99 ? '99+' : String(count);
+                badge.textContent = String(count); // แสดงจำนวนจริงเสมอ ไม่ตัดเป็น 99+ เพราะแอดมินต้องรู้ยอดค้างที่แท้จริง
                 badge.classList.remove('hidden');
             } else {
                 badge.classList.add('hidden');
@@ -4910,7 +5013,7 @@
             const badge = document.getElementById('jobFormsBadge');
             if (!badge) return;
             if (count > 0) {
-                badge.textContent = count > 99 ? '99+' : String(count);
+                badge.textContent = String(count); // แสดงจำนวนจริงเสมอ ไม่ตัดเป็น 99+ เพราะแอดมินต้องรู้ยอดค้างที่แท้จริง
                 badge.classList.remove('hidden');
             } else {
                 badge.classList.add('hidden');
