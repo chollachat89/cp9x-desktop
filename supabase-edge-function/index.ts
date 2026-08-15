@@ -1365,7 +1365,7 @@ const STATUS_REPORT_SHEET = {
 // keyOf ใช้ "id" (primary key ของแถวในฐานข้อมูล) เป็นค่าเริ่มต้นเสมอ เพราะเสถียรที่สุด ไม่มีวันเปลี่ยน/ซ้ำ
 // (ต่างจากการอ้างอิงด้วยเลขงาน/เลขทรัพย์สิน ที่ตอนนี้ 1 เลขงานมีได้หลายแถวแล้ว)
 const SYNC_TABLE_REGISTRY: { table: string; sheetName: string; color: string; headers: string[]; keyOf: (r: any) => string; mapRow: (r: any) => any[] }[] = [
-  { table: 'open_issues', sheetName: 'เปิดงาน', color: '#e0e7ff', headers: ['เลขที่ใบแจ้งซ่อมบำรุง', 'Service Type', 'ประเภทสัญญา', 'วันที่ร้องขอ', 'งานบริการ', 'รหัส-ชื่อสาขา', 'รายละเอียดปัญหาที่พบ'], keyOf: (r) => String(r.id), mapRow: (r) => [r.main_id, r.service_type, r.contract_type ?? '', r.req_date, r.service_work, r.branch, r.details] },
+  { table: 'open_issues', sheetName: 'เปิดงาน', color: '#e0e7ff', headers: ['เลขที่ใบแจ้งซ่อมบำรุง', 'Service Type', 'ประเภทสัญญา', 'วันที่ร้องขอ', 'งานบริการ', 'Service Issue', 'รหัส-ชื่อสาขา', 'รายละเอียดปัญหาที่พบ'], keyOf: (r) => String(r.id), mapRow: (r) => [r.main_id, r.service_type, r.contract_type ?? '', r.req_date, r.service_work, r.service_issue ?? '', r.branch, r.details] },
   { table: 'close_issues', sheetName: 'ปิดงาน', color: '#d1fae5', headers: ['เลขงาน', 'สาขา', 'วันที่เข้าแก้ไข', 'รายการอะไหล่ที่เปลี่ยน', 'เลขทรัพย์สิน', 'ดำเนินการ', 'ลิงก์แนบรูป'], keyOf: (r) => String(r.id), mapRow: (r) => [r.job_id, r.branch, r.fix_date, r.parts, r.asset_id, r.action_taken, r.photo_form_link] },
   { table: 'quotations', sheetName: 'ใบเสนอราคา', color: '#fef3c7', headers: ['ชุดที่', 'วันที่', 'Customer Case', 'Branch Code', 'Branch', 'Type', 'Asset No.', 'Part Code', 'Detail', 'ระยะเวลารับประกัน(เดือน)', 'จำนวน', 'หน่วย', 'ราคา/หน่วย', 'ราคา/รวม', 'วันที่รับแจ้งงาน', 'วันที่เข้างาน', 'Quotation', 'อะไหล่เก่าส่งคืน CJ', 'ผู้รับผิดชอบ', 'บริษัท'], keyOf: (r) => String(r.id), mapRow: (r) => [r.set_no ?? null, r.quote_date ?? null, r.customer_case, r.branch_code, r.branch_name, r.work_type ?? null, r.asset_id, r.part_code, r.part_name, r.warranty_months, r.qty, r.unit, r.unit_price, r.total_price, r.req_date, r.visit_date, r.quotation_ref, r.return_old_part, r.responsible, r.company] },
   { table: 'billing_documents', sheetName: 'ตารางวางบิล', color: '#fbecec', headers: ['ลำดับ', 'Customer Case', 'รหัสสาขา', 'ชื่อสาขา', 'งานบริการ', 'เลขทรัพย์สิน', 'Part Code', 'รายละเอียดอะไหล่', 'ระยะเวลาประกัน(เดือน)', 'จำนวน', 'หน่วย', 'ราคา/หน่วย (CJ)', 'ราคา/รวม (CJ)', 'ราคา/หน่วย (ผู้รับเหมา)', 'ราคา/รวม (ผู้รับเหมา)', 'วันที่รับแจ้ง', 'วันที่เข้างาน', 'Quotation', 'อะไหล่เก่าส่งคืน CJ', 'ผู้รับผิดชอบ', 'บริษัท', 'ผู้รับเหมา', 'รอบบิลที่', 'ช่วงรอบบิล'], keyOf: (r) => String(r.id), mapRow: (r) => [r.seq, r.customer_case, r.branch_code, r.branch_name, r.service_type, r.asset_id, r.part_code, r.part_detail, r.warranty_months, r.qty, r.unit, r.unit_price, r.total_price, r.unit_price_contractor, r.total_price_contractor, r.req_date, r.visit_date, r.quotation_ref, r.return_old_part, r.responsible, r.company, r.contractor, r.round_no, r.round_period] },
@@ -1712,7 +1712,8 @@ Deno.serve(async (req: Request) => {
         if (dupCheck.exists) return jsonResponse({ success: false, message: 'เลขที่ใบแจ้งซ่อมบำรุง "' + mainId + '" ถูกเปิดงานไปแล้ว ห้ามเปิดซ้ำ' });
         const row: any = {
           main_id: mainId, service_type: f.serviceType || '-', req_date: f.reqDate || '-',
-          service_work: f.serviceWork || '-', branch: f.branch || '-', details: f.details || '-',
+          service_work: f.serviceWork || '-', service_issue: f.serviceIssue || '-',
+          branch: f.branch || '-', details: f.details || '-',
           contract_type: (f.contractType || '').toString().trim() || null,
           contractor: f.contractor, synced_to_sheet: false,
         };
@@ -2560,7 +2561,7 @@ Deno.serve(async (req: Request) => {
         const { data: existing, error: existErr } = await supabase.from('open_issues').select('id').eq('main_id', id).order('created_at', { ascending: false }).limit(1);
         if (existErr) return jsonResponse({ success: false, message: existErr.message });
         if (!existing || existing.length === 0) return jsonResponse({ success: false, message: 'ไม่พบข้อมูลเปิดงานของเลขที่ "' + id + '"' });
-        const allowedKeys = ['service_type', 'contract_type', 'req_date', 'service_work', 'branch', 'details', 'contractor'];
+        const allowedKeys = ['service_type', 'contract_type', 'req_date', 'service_work', 'service_issue', 'branch', 'details', 'contractor'];
         const patch: any = {};
         allowedKeys.forEach((key) => { if (fields && Object.prototype.hasOwnProperty.call(fields, key)) patch[key] = fields[key]; });
         const { error } = await supabase.from('open_issues').update(patch).eq('id', existing[0].id);
@@ -2582,7 +2583,7 @@ Deno.serve(async (req: Request) => {
           const { data: existing, error: existErr } = await supabase.from('open_issues').select('id').eq('main_id', id).order('created_at', { ascending: false }).limit(1);
           if (existErr) return { success: false, message: existErr.message };
           if (!existing || existing.length === 0) return { success: false, message: 'ไม่พบข้อมูลเปิดงานของเลขที่ "' + id + '"' };
-          const allowedKeys = ['service_type', 'contract_type', 'req_date', 'service_work', 'branch', 'details', 'contractor'];
+          const allowedKeys = ['service_type', 'contract_type', 'req_date', 'service_work', 'service_issue', 'branch', 'details', 'contractor'];
           const patch: any = {};
           allowedKeys.forEach((key) => { if (flds && Object.prototype.hasOwnProperty.call(flds, key)) patch[key] = flds[key]; });
           const { error } = await supabase.from('open_issues').update(patch).eq('id', existing[0].id);

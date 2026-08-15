@@ -319,6 +319,10 @@
                                 <input type="text" id="op_serviceWork" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
                             </div>
                             <div>
+                                <label class="block text-slate-700 text-sm font-semibold mb-1">Service Issue</label>
+                                <input type="text" id="op_serviceIssue" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm" placeholder="เช่น F04_ไม่เย็น/อุณหภูมิไม่ได้มาตรฐาน">
+                            </div>
+                            <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">รหัสสาขา</label>
                                 <input type="text" id="op_branchCode" onblur="doLookupBranchGeneric('op_branchCode','op_branchName','op_branchStatus')" class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm" placeholder="เช่น 0002">
                                 <p id="op_branchStatus" class="text-xs mt-1 text-slate-400"></p>
@@ -752,6 +756,7 @@
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">Service Type</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">วันที่ร้องขอ</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">งานบริการ</th>
+                                <th class="p-2 text-left font-semibold whitespace-nowrap">Service Issue</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">รหัส-ชื่อสาขา</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">รายละเอียดปัญหาที่พบ</th>
                             </tr>
@@ -2336,11 +2341,16 @@
             };
 
             if (mode === 'open') {
-                const data = { mainId: '', type: '', date: '', service: '', branch: '', details: '' };
+                const data = { mainId: '', type: '', date: '', service: '', serviceIssue: '', branch: '', details: '' };
                 for (let i = 0; i < lines.length; i++) {
                     let line = lines[i];
                     let nextLine = (i + 1 < lines.length) ? lines[i + 1] : '';
                     if (line.includes('เลขที่ใบแจ้งซ่อมบำรุง')) data.mainId = extractValue(line, nextLine);
+                    // ต้องเช็ค "Service Issue" ก่อน "Service Type" ไม่ได้ เพราะเป็นคนละคำกันอยู่แล้ว
+                    // แต่ต้องแยกเป็นเงื่อนไขของตัวเอง ไม่งั้นบรรทัดนี้จะไม่ถูกอ่านเลย
+                    // รูปแบบที่ใช้จริงคือหัวข้ออยู่บรรทัดหนึ่ง ค่าอยู่บรรทัดถัดไป (ไม่มีเครื่องหมาย :)
+                    // ซึ่ง extractValue รองรับอยู่แล้ว - ถ้าบรรทัดนี้ไม่มี ":" จะไปหยิบบรรทัดถัดไปมาให้
+                    else if (line.includes('Service Issue')) data.serviceIssue = extractValue(line, nextLine);
                     else if (line.includes('Service Type')) data.type = extractValue(line, nextLine);
                     else if (line.includes('วันที่ร้องขอ')) data.date = extractValue(line, nextLine);
                     else if (line.includes('งานบริการ')) data.service = extractValue(line, nextLine);
@@ -2351,6 +2361,7 @@
                 document.getElementById('op_serviceType').value = data.type || '';
                 document.getElementById('op_reqDate').value = data.date || '';
                 document.getElementById('op_serviceWork').value = data.service || '';
+                document.getElementById('op_serviceIssue').value = data.serviceIssue || '';
                 setBranchAndLookup('op_branchCode', 'op_branchName', 'op_branchStatus', data.branch);
                 document.getElementById('op_details').value = data.details || '';
                 // แยกข้อความแล้วได้เลขงานมา เช็คซ้ำให้ทันที ไม่ต้องรอผู้ใช้คลิกออกจากช่อง
@@ -4079,7 +4090,7 @@
 
         function renderOpenIssuesList(rows) {
             const tbody = document.getElementById('openListBody');
-            const fields = ['created_at','main_id','service_type','req_date','service_work','branch','details'];
+            const fields = ['created_at','main_id','service_type','req_date','service_work','service_issue','branch','details'];
             tbody.innerHTML = rows.map(row => {
                 return '<tr class="border-t border-slate-100">' + fields.map(f => {
                     const v = f === 'created_at' ? formatTimestamp(row[f]) : (row[f] === null || row[f] === undefined ? '' : row[f]);
@@ -5196,6 +5207,7 @@
                     contractType: document.getElementById('op_contractType').value,
                     reqDate: document.getElementById('op_reqDate').value,
                     serviceWork: document.getElementById('op_serviceWork').value,
+                    serviceIssue: document.getElementById('op_serviceIssue').value,
                     branch: combineBranchCodeName('op_branchCode', 'op_branchName'),
                     details: document.getElementById('op_details').value,
                     contractor: contractorVal,
