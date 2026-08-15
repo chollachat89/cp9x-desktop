@@ -881,6 +881,7 @@
                                 <th data-col="branch" class="p-2 text-left font-semibold whitespace-nowrap">สาขา</th>
                                 <th data-col="service_type" class="p-2 text-left font-semibold whitespace-nowrap">Service Type</th>
                                 <th data-col="service_work" class="p-2 text-left font-semibold whitespace-nowrap">งานบริการ</th>
+                                <th data-col="service_issue" class="p-2 text-left font-semibold whitespace-nowrap">Service Issue</th>
                                 <th data-col="contractor" class="p-2 text-left font-semibold whitespace-nowrap">ผู้รับเหมา</th>
                                 <th data-col="opened_at" class="p-2 text-left font-semibold whitespace-nowrap">วันที่เปิดงาน</th>
                                 <th data-col="asset_id" class="p-2 text-left font-semibold whitespace-nowrap">เลขทรัพย์สิน</th>
@@ -3709,6 +3710,7 @@
             { key: 'branch', label: 'สาขา' },
             { key: 'service_type', label: 'Service Type' },
             { key: 'service_work', label: 'งานบริการ' },
+            { key: 'service_issue', label: 'Service Issue' },
             { key: 'contractor', label: 'ผู้รับเหมา' },
             { key: 'opened_at', label: 'วันที่เปิดงาน' },
             { key: 'asset_id', label: 'เลขทรัพย์สิน' },
@@ -4320,6 +4322,7 @@
                     <td data-col="branch" class="p-2 whitespace-nowrap${hc('branch')}">${row.branch || ''}</td>
                     <td data-col="service_type" class="p-2 whitespace-nowrap${hc('service_type')}">${row.service_type || ''}</td>
                     <td data-col="service_work" class="p-2 whitespace-nowrap${hc('service_work')}">${row.service_work || ''}</td>
+                    <td data-col="service_issue" class="p-2 whitespace-nowrap${hc('service_issue')}">${(row.service_issue && row.service_issue !== '-') ? row.service_issue : ''}</td>
                     <td data-col="contractor" class="p-2 whitespace-nowrap${hc('contractor')}">${row.contractor || ''}</td>
                     <td data-col="opened_at" class="p-2 whitespace-nowrap${hc('opened_at')}">${formatTimestamp(row.opened_at)}</td>
                     <td data-col="asset_id" class="p-2 whitespace-nowrap${hc('asset_id')}">${(row.asset_id && row.asset_id !== '-') ? row.asset_id : ''}</td>
@@ -4354,6 +4357,7 @@
                 ['สาขา', row.branch],
                 ['Service Type', row.service_type],
                 ['งานบริการ', row.service_work],
+                ['Service Issue', row.service_issue],
                 ['ประเภทสัญญา', row.contract_type],
                 ['ผู้รับเหมา', row.contractor],
                 ['รายละเอียดปัญหาที่พบ', row.details],
@@ -4399,12 +4403,13 @@
                 return s ? '="' + s.replace(/"/g, '""') + '"' : s;
             };
 
-            const headers = ['เลขที่ใบแจ้งซ่อมบำรุง','สาขา','Service Type','งานบริการ','ประเภทสัญญา','ผู้รับเหมา','รายละเอียดปัญหาที่พบ','วันที่ร้องขอ','วันที่เปิดงาน','เลขทรัพย์สิน','วันที่เข้าแก้ไข (ปิดงาน)','วันที่ปิดงาน','ดำเนินการแก้ไขแล้ว','ระยะเวลาดำเนินการ','ส่งมอบงานให้ผู้รับเหมาแล้ว','เสร็จสิ้น (ตัดบิลแล้ว)','สถานะปัจจุบัน'];
+            const headers = ['เลขที่ใบแจ้งซ่อมบำรุง','สาขา','Service Type','งานบริการ','Service Issue','ประเภทสัญญา','ผู้รับเหมา','รายละเอียดปัญหาที่พบ','วันที่ร้องขอ','วันที่เปิดงาน','เลขทรัพย์สิน','วันที่เข้าแก้ไข (ปิดงาน)','วันที่ปิดงาน','ดำเนินการแก้ไขแล้ว','ระยะเวลาดำเนินการ','ส่งมอบงานให้ผู้รับเหมาแล้ว','เสร็จสิ้น (ตัดบิลแล้ว)','สถานะปัจจุบัน'];
             const values = [
                 forceTextForExcel(row.main_id),
                 row.branch,
                 row.service_type,
                 row.service_work,
+                row.service_issue,
                 row.contract_type,
                 row.contractor,
                 row.details,

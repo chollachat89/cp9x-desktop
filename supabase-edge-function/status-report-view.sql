@@ -21,6 +21,10 @@
 --   - ช่องวันเวลา (timestamp) ยังคงเป็นค่าว่างได้ตามจริง เพื่อให้เรียงลำดับ/คำนวณวันที่ต่อได้ถูกต้อง
 --     แต่จะมีคอลัมน์ข้อความคู่กันบอกสถานะไว้ให้อ่านง่ายแทน
 --
+-- ⚠ ต้องรัน add-service-issue-column.sql ก่อนไฟล์นี้
+--   เพราะ VIEW นี้อ้างถึงคอลัมน์ service_issue ถ้ายังไม่มีคอลัมน์นั้นจะสร้าง VIEW ไม่ผ่าน
+--   (ขึ้น error ว่า column "service_issue" does not exist)
+--
 -- วิธีใช้: เปิด Supabase Dashboard ของโปรเจกต์ CP9X -> SQL Editor -> New query
 -- แล้ววางโค้ดด้านล่างนี้ทั้งหมด กด Run (รันซ้ำได้อย่างปลอดภัย)
 -- ============================================================================
@@ -86,7 +90,7 @@ base as (
   -- ชั้นนี้ทำหน้าที่ join ทุกตารางเข้าด้วยกันก่อน แล้วค่อยไปจัดรูปแบบ/เติมค่าว่างในชั้นถัดไป
   -- (แยกเป็น 2 ชั้นเพื่อให้เขียน coalesce ได้สั้นและอ่านง่าย ไม่ต้องเขียน o.xxx / c.xxx ซ้ำ ๆ)
   select
-    o.main_id, o.branch, o.service_type, o.service_work, o.contract_type,
+    o.main_id, o.branch, o.service_type, o.service_work, o.service_issue, o.contract_type,
     o.contractor, o.details, o.req_date, o.created_at as opened_at,
     c.id as close_id, c.asset_id, c.fix_date, c.created_at as closed_at,
     c.action_taken, c.parts, c.branch as close_branch, c.photo_form_link,
@@ -125,6 +129,7 @@ select
   )                                                                as "ชื่อสาขา",
   coalesce(nullif(trim(service_type), ''), '-')                    as "Service Type",
   coalesce(nullif(trim(service_work), ''), '-')                    as "งานบริการ",
+  coalesce(nullif(trim(service_issue), ''), '-')                   as "Service Issue",
   coalesce(nullif(trim(contract_type), ''), 'ไม่ระบุประเภทสัญญา')     as "ประเภทสัญญา",
   coalesce(nullif(trim(contractor), ''), 'ยังไม่ระบุผู้รับเหมา')       as "ผู้รับเหมา",
   coalesce(nullif(trim(details), ''), '-')                         as "รายละเอียดปัญหาที่พบ",
@@ -239,6 +244,13 @@ order by "จำนวน" desc;
 select "งานบริการ", count(*) as "จำนวนงาน"
 from status_report_view
 group by "งานบริการ"
+order by "จำนวนงาน" desc;
+
+-- สรุปตาม "Service Issue" (อาการเสียแบบไหนเจอบ่อยที่สุด)
+select "Service Issue", count(*) as "จำนวนงาน"
+from status_report_view
+where "Service Issue" <> '-'
+group by "Service Issue"
 order by "จำนวนงาน" desc;
 
 -- สรุปตาม "งานบริการ" แยกตามสถานะ (ดูว่างาน F แต่ละแบบค้างอยู่ขั้นไหนบ้าง)
