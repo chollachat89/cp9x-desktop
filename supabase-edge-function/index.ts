@@ -1371,7 +1371,7 @@ const SYNC_TABLE_REGISTRY: { table: string; sheetName: string; color: string; he
   { table: 'open_issues', sheetName: 'เปิดงาน', color: '#e0e7ff', headers: ['เลขที่ใบแจ้งซ่อมบำรุง', 'Service Type', 'ประเภทสัญญา', 'วันที่ร้องขอ', 'งานบริการ', 'Service Issue', 'รหัส-ชื่อสาขา', 'รายละเอียดปัญหาที่พบ'], keyOf: (r) => String(r.id), mapRow: (r) => [r.main_id, r.service_type, r.contract_type ?? '', r.req_date, r.service_work, r.service_issue ?? '', r.branch, r.details] },
   { table: 'close_issues', sheetName: 'ปิดงาน', color: '#d1fae5', headers: ['เลขงาน', 'สาขา', 'วันที่เข้าแก้ไข', 'รายการอะไหล่ที่เปลี่ยน', 'เลขทรัพย์สิน', 'ดำเนินการ', 'ลิงก์แนบรูป'], keyOf: (r) => String(r.id), mapRow: (r) => [r.job_id, r.branch, r.fix_date, r.parts, r.asset_id, r.action_taken, r.photo_form_link] },
   { table: 'quotations', sheetName: 'ใบเสนอราคา', color: '#fef3c7', headers: ['ชุดที่', 'วันที่', 'Customer Case', 'Branch Code', 'Branch', 'Type', 'Asset No.', 'Part Code', 'Detail', 'ระยะเวลารับประกัน(เดือน)', 'จำนวน', 'หน่วย', 'ราคา/หน่วย', 'ราคา/รวม', 'วันที่รับแจ้งงาน', 'วันที่เข้างาน', 'Quotation', 'อะไหล่เก่าส่งคืน CJ', 'ผู้รับผิดชอบ', 'บริษัท'], keyOf: (r) => String(r.id), mapRow: (r) => [r.set_no ?? null, r.quote_date ?? null, r.customer_case, r.branch_code, r.branch_name, r.work_type ?? null, r.asset_id, r.part_code, r.part_name, r.warranty_months, r.qty, r.unit, r.unit_price, r.total_price, r.req_date, r.visit_date, r.quotation_ref, r.return_old_part, r.responsible, r.company] },
-  { table: 'billing_documents', sheetName: 'ตารางวางบิล', color: '#fbecec', headers: ['ลำดับ', 'Customer Case', 'รหัสสาขา', 'ชื่อสาขา', 'งานบริการ', 'เลขทรัพย์สิน', 'Part Code', 'รายละเอียดอะไหล่', 'ระยะเวลาประกัน(เดือน)', 'จำนวน', 'หน่วย', 'ราคา/หน่วย (CJ)', 'ราคา/รวม (CJ)', 'ราคา/หน่วย (ผู้รับเหมา)', 'ราคา/รวม (ผู้รับเหมา)', 'วันที่รับแจ้ง', 'วันที่เข้างาน', 'Quotation', 'อะไหล่เก่าส่งคืน CJ', 'ผู้รับผิดชอบ', 'บริษัท', 'ผู้รับเหมา', 'รอบบิลที่', 'ช่วงรอบบิล'], keyOf: (r) => String(r.id), mapRow: (r) => [r.seq, r.customer_case, r.branch_code, r.branch_name, r.service_type, r.asset_id, r.part_code, r.part_detail, r.warranty_months, r.qty, r.unit, r.unit_price, r.total_price, r.unit_price_contractor, r.total_price_contractor, r.req_date, r.visit_date, r.quotation_ref, r.return_old_part, r.responsible, r.company, r.contractor, r.round_no, r.round_period] },
+  { table: 'billing_documents', sheetName: 'ตารางวางบิล', color: '#fbecec', headers: ['ลำดับ', 'Customer Case', 'รหัสสาขา', 'ชื่อสาขา', 'งานบริการ', 'เลขทรัพย์สิน', 'Part Code', 'รายละเอียดอะไหล่', 'ระยะเวลาประกัน(เดือน)', 'จำนวน', 'หน่วย', 'ราคา/หน่วย (CJ)', 'ราคา/รวม (CJ)', 'ราคา/หน่วย (ผู้รับเหมา)', 'ราคา/รวม (ผู้รับเหมา)', 'วันที่รับแจ้ง', 'วันที่เข้างาน', 'Quotation', 'อะไหล่เก่าส่งคืน CJ', 'ผู้รับผิดชอบ', 'บริษัท', 'ผู้รับเหมา', 'รอบบิลที่', 'ช่วงรอบบิล', 'ประเภทเก็บเงิน'], keyOf: (r) => String(r.id), mapRow: (r) => [r.seq, r.customer_case, r.branch_code, r.branch_name, r.service_type, r.asset_id, r.part_code, r.part_detail, r.warranty_months, r.qty, r.unit, r.unit_price, r.total_price, r.unit_price_contractor, r.total_price_contractor, r.req_date, r.visit_date, r.quotation_ref, r.return_old_part, r.responsible, r.company, r.contractor, r.round_no, r.round_period, (r.billing_type === 'claim' ? 'เคลม' : 'เก็บเงินปกติ')] },
   { table: 'pause_records', sheetName: 'พักงาน', color: '#fde68a', headers: ['เลขที่ใบแจ้งซ่อมบำรุง', 'เหตุผลที่พัก', 'หมายเหตุ', 'วันเวลาที่พัก', 'ผู้พักงาน', 'วันเวลาที่กลับมาทำ', 'ผู้ทำรายการกลับมาทำ', 'สถานะ'], keyOf: (r) => String(r.id), mapRow: (r) => [r.main_id, r.reason, r.note, r.paused_at, r.paused_by, r.resumed_at, r.resumed_by, r.status] },
 ];
 
@@ -1436,7 +1436,14 @@ Deno.serve(async (req: Request) => {
   // และตอน "ยืนยันบันทึกรอบบิล" (generateBillingDocumentsForAllClosedJobs) เพื่อให้ผลลัพธ์ตรงกันเป๊ะทั้งสองขั้น)
   // เดิมฟังก์ชันนี้คืนแค่ "เลขงาน" (1 เลขงาน = 1 บิลเสมอ) แต่ตอนนี้ 1 เลขงานปิดงานได้หลายครั้ง (คนละเลขทรัพย์สิน)
   // แต่ละครั้งที่ปิดงานควรนับเป็นข้อมูลที่ต้องจับคู่แยกกัน จึงเปลี่ยนมาคืนเป็นคู่ (เลขงาน, เลขทรัพย์สิน) แทน
-  async function resolveBillingCandidatePairs(startDate: string | null, endDate: string | null, jobIds: string[] | null): Promise<{ candidatePairs: { jobId: string; assetId: string }[]; roundPeriod: string; error?: string }> {
+  // includeBacklog = รวม "งานตกค้าง" คืองานที่ปิดไปก่อนวันเริ่มรอบ แต่ยังไม่เคยถูกออกบิลเลย
+  //
+  // ทำไมต้องมี: ตัวกรองปกติใช้ "วันที่เข้าแก้ไข (fix_date)" ตัดสินว่างานอยู่ในรอบไหน
+  // ถ้าเลขงานถูกเปิดไว้นานแล้วเพิ่งมาปิดทีหลัง fix_date อาจตกอยู่ในรอบที่ตัดบิลไปแล้ว
+  // พอถึงรอบใหม่ งานนั้นจะอยู่นอกช่วงวันที่ทุกครั้ง = ไม่มีวันถูกดึงมาวางบิลเลย เงินหลุดถาวรโดยไม่มีใครรู้
+  // เปิดตัวเลือกนี้แล้วจะไม่สนใจวันเริ่มต้น ดึงทุกงานที่ปิดแล้วจนถึงวันสิ้นสุดรอบมาพิจารณาแทน
+  // ส่วนงานที่เคยออกบิลไปแล้วยังถูกกันซ้ำด้วยกลไกเดิม (billing_documents + claim_billing_jobs) อยู่ดี
+  async function resolveBillingCandidatePairs(startDate: string | null, endDate: string | null, jobIds: string[] | null, includeBacklog?: boolean): Promise<{ candidatePairs: { jobId: string; assetId: string }[]; roundPeriod: string; error?: string }> {
     if ((!jobIds || jobIds.length === 0) && (!startDate || !endDate)) {
       return { candidatePairs: [], roundPeriod: '', error: 'ต้องระบุช่วงวันที่ (ตั้งแต่วันที่ และ ถึงวันที่) หรือระบุเลขงานเจาะจง ก่อนถึงจะจับคู่ข้อมูลได้' };
     }
@@ -1459,7 +1466,7 @@ Deno.serve(async (req: Request) => {
       });
       return { candidatePairs, roundPeriod };
     }
-    const roundPeriod = startDate + ' ถึง ' + endDate;
+    const roundPeriod = startDate + ' ถึง ' + endDate + (includeBacklog ? ' (รวมงานตกค้างก่อนหน้า)' : '');
     const { data: closeData, error: closeErr } = await supabase.from('close_issues').select('job_id,asset_id,fix_date').order('created_at', { ascending: true });
     if (closeErr) return { candidatePairs: [], roundPeriod: '', error: 'ดึงข้อมูล close_issues ล้มเหลว: ' + closeErr.message };
     const startD = new Date(startDate + 'T00:00:00');
@@ -1469,7 +1476,9 @@ Deno.serve(async (req: Request) => {
     (closeData || []).forEach((r: any) => {
       if (!r.job_id) return;
       const fx = parseFixDateString(r.fix_date);
-      if (!fx || fx < startD || fx > endD) return;
+      // โหมดรวมงานตกค้าง: ไม่สนใจวันเริ่มต้น เอาทุกงานที่ปิดก่อนวันสิ้นสุดรอบ
+      if (!fx || fx > endD) return;
+      if (!includeBacklog && fx < startD) return;
       const assetId = r.asset_id || '-';
       const key = r.job_id + '||' + assetId;
       if (seenPair.has(key)) return;
@@ -1707,6 +1716,18 @@ Deno.serve(async (req: Request) => {
         if (!f.contractor) return jsonResponse({ success: false, message: 'กรุณาเลือกผู้รับเหมาก่อนบันทึกเปิดงาน' });
         const mainId = (f.mainId || '').toString().trim();
         if (!mainId) return jsonResponse({ success: false, message: 'กรุณากรอกเลขที่ใบแจ้งซ่อมบำรุง' });
+        // ตรวจครบทุกช่องซ้ำอีกชั้นที่ฝั่งเซิร์ฟเวอร์ ไม่พึ่งการตรวจฝั่งหน้าเว็บอย่างเดียว
+        // เพราะฝั่งหน้าเว็บถูกข้ามได้ (เรียก API ตรง หรือใช้แอปรุ่นเก่าที่ยังไม่มีตัวตรวจ)
+        // ค่าที่ระบบเคยเติมให้เป็น '-' อัตโนมัติ ถือว่า "ว่าง" ด้วย เพราะไม่ใช่ข้อมูลจริง
+        const openRequired: [string, string][] = [
+          ['serviceType', 'Service Type'], ['serviceWork', 'งานบริการ'], ['serviceIssue', 'Service Issue'],
+          ['reqDate', 'วันที่ร้องขอ'], ['branch', 'สาขา'], ['details', 'รายละเอียดปัญหาที่พบ'],
+          ['contractType', 'ประเภทสัญญา'],
+        ];
+        for (const [key, label] of openRequired) {
+          const v = (f[key] === null || f[key] === undefined) ? '' : String(f[key]).trim();
+          if (!v || v === '-') return jsonResponse({ success: false, message: 'กรอกข้อมูลไม่ครบ: ขาดช่อง "' + label + '"' });
+        }
         // กันเปิดงานซ้ำ (คนละคนกรอกเลขเดียวกัน) - เช็คก่อนบันทึกเป็นด่านแรก
         // ยังมีโอกาสชนกันได้ถ้ากดบันทึกพร้อมกันเป๊ะ ๆ จึงดักจับ error 23505 (unique_violation) จาก DB อีกชั้นด้านล่าง
         // (ต้องสร้าง UNIQUE INDEX บนคอลัมน์ open_issues.main_id ไว้ก่อน ดู add-unique-constraints.sql)
@@ -1738,6 +1759,21 @@ Deno.serve(async (req: Request) => {
         const f = formData || {};
         const jobId = (f.kissflowId || '').toString().trim();
         if (!jobId) return jsonResponse({ success: false, message: 'กรุณากรอกเลขที่ใบแจ้งซ่อมบำรุง' });
+        // ตรวจครบทุกช่องซ้ำอีกชั้นที่ฝั่งเซิร์ฟเวอร์ (เหตุผลเดียวกับ saveOpenIssue)
+        const closeRequired: [string, string][] = [
+          ['branch', 'สาขา'], ['fixDate', 'วันที่เข้าแก้ไข'], ['parts', 'รายการอะไหล่ที่เปลี่ยน'],
+          ['actionTaken', 'ดำเนินการ'],
+        ];
+        for (const [key, label] of closeRequired) {
+          const v = (f[key] === null || f[key] === undefined) ? '' : String(f[key]).trim();
+          if (!v || v === '-') return jsonResponse({ success: false, message: 'กรอกข้อมูลไม่ครบ: ขาดช่อง "' + label + '"' });
+        }
+        // เลขทรัพย์สินบังคับ 12 หลักเสมอ (ไม่ยอมรับค่าว่างหรือ '-' อีกต่อไป)
+        // เพราะระบบใช้คู่ (เลขงาน + เลขทรัพย์สิน) เป็นตัวกันปิดงานซ้ำ ถ้าปล่อยว่างจะกันซ้ำไม่ได้จริง
+        const assetRaw = (f.assetId || '').toString().trim();
+        if (!/^\d{12}$/.test(assetRaw)) {
+          return jsonResponse({ success: false, message: 'เลขทรัพย์สินต้องเป็นตัวเลข 12 หลักเท่านั้น (ได้รับ "' + assetRaw + '")' });
+        }
         const openCheck = await checkOpenIssueExists(jobId);
         if (openCheck.error) return jsonResponse({ success: false, message: 'ตรวจสอบเลขงานล้มเหลว: ' + openCheck.error });
         if (!openCheck.exists) return jsonResponse({ success: false, message: 'ไม่พบการเปิดงานเลขที่ "' + jobId + '" ในระบบ กรุณาบันทึก "เปิดงาน" ก่อน แล้วค่อยปิดงาน' });
@@ -1811,7 +1847,8 @@ Deno.serve(async (req: Request) => {
           if (session.role === 'admin') {
             if (contractorFilter) q = q.eq('contractor', contractorFilter);
           } else {
-            q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true);
+            // แถวประเภท 'claim' ไม่เก็บเงินผู้รับเหมา จึงต้องไม่โผล่ในตาราง/บิลฝั่งผู้รับเหมาเลย
+            q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true).neq('billing_type', 'claim');
           }
         } else {
           q = q.order('round_no', { ascending: true }).order('contractor', { ascending: true }).order('seq', { ascending: true }).limit(1000);
@@ -1820,7 +1857,7 @@ Deno.serve(async (req: Request) => {
             if (contractorFilter) q = q.eq('contractor', contractorFilter);
             else q = q.or('sent_to_contractor.is.null,sent_to_contractor.eq.false');
           } else {
-            q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true).is('completed_at', null);
+            q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true).is('completed_at', null).neq('billing_type', 'claim');
           }
           if (jobIdsFilter && jobIdsFilter.length > 0) q = q.in('customer_case', jobIdsFilter);
         }
@@ -1852,6 +1889,11 @@ Deno.serve(async (req: Request) => {
           const qty = clean.qty ?? parseFloat(fields.qty) ?? 0;
           const unitPriceContractor = clean.unit_price_contractor ?? parseFloat(fields.unit_price_contractor) ?? 0;
           clean.total_price_contractor = (qty || 0) * (unitPriceContractor || 0);
+        }
+        // billing_type เป็นคอลัมน์ NOT NULL และมี CHECK ให้รับแค่ 'normal'/'claim'
+        // ถ้าปล่อยค่าว่างหรือค่าแปลกผ่านไป การอัปเดตจะพังทั้งแถว จึงบังคับให้ลงที่ 'normal' เสมอเมื่อไม่ใช่ 'claim'
+        if (clean.billing_type !== undefined) {
+          clean.billing_type = (clean.billing_type === 'claim') ? 'claim' : 'normal';
         }
         const { error } = await supabase.from('billing_documents').update(clean).eq('id', id);
         if (error) return jsonResponse({ success: false, message: error.message });
@@ -1907,7 +1949,7 @@ Deno.serve(async (req: Request) => {
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ error: 'กรุณาเข้าสู่ระบบใหม่' });
         let q = supabase.from('billing_documents').select('round_no,round_period').not('round_no', 'is', null);
-        if (session.role !== 'admin') q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true);
+        if (session.role !== 'admin') q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true).neq('billing_type', 'claim');
         const { data, error } = await q;
         if (error) return jsonResponse({ error: error.message });
         const seen = new Set(); const options: any[] = [];
@@ -1924,7 +1966,7 @@ Deno.serve(async (req: Request) => {
         if (session.role === 'admin') {
           q = q.or('sent_to_contractor.eq.true,completed_at.not.is.null');
         } else {
-          q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true);
+          q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true).neq('billing_type', 'claim');
         }
         const { data, error } = await q;
         if (error) return jsonResponse({ error: error.message });
@@ -1953,11 +1995,11 @@ Deno.serve(async (req: Request) => {
       // ดูตัวอย่างก่อนบันทึกรอบบิลจริง (ไม่เขียนอะไรลงฐานข้อมูลเลย - อ่านอย่างเดียว)
       // ใช้เงื่อนไขจับคู่แบบเดียวกับตอนบันทึกจริงเป๊ะ (resolveBillingCandidatePairs) เพื่อให้สิ่งที่เห็นตรงกับสิ่งที่จะถูกบันทึก
       case 'previewBillingCandidates': {
-        const [username, token, startDate, endDate, jobIds] = args;
+        const [username, token, startDate, endDate, jobIds, includeBacklog] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ทำรายการนี้ได้' });
-        const candResult = await resolveBillingCandidatePairs(startDate, endDate, jobIds);
+        const candResult = await resolveBillingCandidatePairs(startDate, endDate, jobIds, !!includeBacklog);
         if (candResult.error) return jsonResponse({ success: false, message: candResult.error });
         const candidatePairs = candResult.candidatePairs;
         const roundPeriod = candResult.roundPeriod;
@@ -2011,14 +2053,14 @@ Deno.serve(async (req: Request) => {
       }
 
       case 'generateBillingDocumentsForAllClosedJobs': {
-        const [username, token, startDate, endDate, jobIds] = args;
+        const [username, token, startDate, endDate, jobIds, includeBacklog] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ทำรายการนี้ได้' });
         if ((!jobIds || jobIds.length === 0) && (!startDate || !endDate)) {
           return jsonResponse({ success: false, message: 'ต้องระบุช่วงวันที่ (ตั้งแต่วันที่ และ ถึงวันที่) หรือระบุเลขงานเจาะจง ก่อนถึงจะจับคู่ข้อมูลได้' });
         }
-        const candResult = await resolveBillingCandidatePairs(startDate, endDate, jobIds);
+        const candResult = await resolveBillingCandidatePairs(startDate, endDate, jobIds, !!includeBacklog);
         if (candResult.error) return jsonResponse({ success: false, message: candResult.error });
         const candidatePairs = candResult.candidatePairs;
         const roundPeriod = candResult.roundPeriod;
@@ -2403,6 +2445,9 @@ Deno.serve(async (req: Request) => {
             unit_price: unitPrice, total_price: qty * unitPrice, unit_price_contractor: unitPriceContractor,
             total_price_contractor: qty * unitPriceContractor, quotation_ref: item.quotationRef || '-',
             return_old_part: part ? part.return_old_part : '-', company: part ? part.company : '-',
+            // ประเภทการเก็บเงินของอะไหล่ชิ้นนี้ - 'claim' = ไม่เก็บเงินผู้รับเหมา (ซ่อนจากฝั่งผู้รับเหมาทั้งหมด)
+            // รับเฉพาะ 2 ค่าที่รู้จัก ค่าอื่นถือเป็น normal เพื่อไม่ให้ข้อมูลแปลกปลอมทำให้บิลผู้รับเหมาหาย
+            billing_type: (item.billingType === 'claim') ? 'claim' : 'normal',
           };
           if (emptyRowId) {
             const { error: updErr } = await supabase.from('billing_documents').update(partFields).eq('id', emptyRowId);
@@ -2824,7 +2869,8 @@ Deno.serve(async (req: Request) => {
         if (!cleanJobId) return jsonResponse({ success: false, message: 'ไม่พบเลขที่ใบแจ้งซ่อมบำรุง' });
         let q = supabase.from('billing_documents').select('*').eq('customer_case', cleanJobId).order('seq', { ascending: true }).order('created_at', { ascending: true });
         if (session.role === 'admin') q = q.or('sent_to_contractor.eq.true,completed_at.not.is.null');
-        else q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true);
+        // ใบเขียวของผู้รับเหมาต้องไม่มีรายการเคลม เพราะเป็นรายการที่ไม่เก็บเงินผู้รับเหมา
+        else q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true).neq('billing_type', 'claim');
         const { data, error } = await q;
         if (error) return jsonResponse({ success: false, message: 'ดึงข้อมูลบิลล้มเหลว: ' + error.message });
         if (!data || data.length === 0) return jsonResponse({ success: false, message: 'งานนี้ยังไม่มีใบวางบิล (ใบเขียว) หรือยังไม่ถูกส่งบิลให้ผู้รับเหมา' });
@@ -2844,7 +2890,7 @@ Deno.serve(async (req: Request) => {
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (!jobIds || jobIds.length === 0) return jsonResponse({ success: false, message: 'ไม่มีเลขงานให้สร้างฟอร์ม' });
         let q = supabase.from('billing_documents').select('customer_case,branch_code,branch_name,service_type,asset_id,contractor,sent_to_contractor').in('customer_case', jobIds).order('created_at', { ascending: true });
-        if (session.role !== 'admin') q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true);
+        if (session.role !== 'admin') q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true).neq('billing_type', 'claim');
         const { data, error } = await q;
         if (error) return jsonResponse({ success: false, message: 'ดึงข้อมูลล้มเหลว: ' + error.message });
         // เดิม dedupe ด้วย customer_case อย่างเดียว ทำให้ 1 เลขงานที่มีหลายเลขทรัพย์สินได้ฟอร์มแค่ 1 ใบ (สูญข้อมูลเลขทรัพย์สินอื่น)

@@ -84,6 +84,22 @@
         /* หมวดที่ถูกพับเก็บ */
         .sidebar-group.is-folded .sidebar-group-items { display: none; }
         .sidebar-group.is-folded .sidebar-group-caret { transform: rotate(-90deg); }
+
+        /* ---------- ตารางในแอป: ให้พอดีจอและกวาดตาง่าย ----------
+           ใช้กับกล่องที่ครอบตารางทุกตัว (div ที่มี overflow-x-auto อยู่แล้ว)
+           - จำกัดความสูงไม่ให้ตารางยาวดันหน้าจอจนต้องเลื่อนทั้งหน้า เลื่อนเฉพาะในตารางแทน
+           - ตรึงหัวตารางไว้ด้านบนขณะเลื่อน จะได้รู้ตลอดว่าคอลัมน์ไหนคืออะไร
+           - แถวคู่/คี่สลับสีอ่อน ๆ ช่วยไล่สายตาตามแนวนอนในตารางที่มีหลายคอลัมน์ */
+        .table-scroll { max-height: calc(100vh - 320px); overflow: auto; }
+        .table-scroll thead th {
+            position: sticky; top: 0; z-index: 10;
+            background: #f8fafc; color: #64748b;
+            box-shadow: inset 0 -1px 0 #e2e8f0;
+        }
+        .table-scroll tbody tr:nth-child(even) { background: #fcfdfe; }
+        .table-scroll tbody tr:hover { background: #f1f5f9; }
+        /* ช่องกรอกในตารางให้เตี้ยลง เห็นแถวได้มากขึ้นต่อหนึ่งหน้าจอ */
+        .table-scroll .grid-input { padding-top: 2px; padding-bottom: 2px; }
         /* ===== แบรนด์ CP9X : ตัวอักษรไล่เฉดเขียว-มิ้นต์ พร้อมเรืองแสงจางๆ ===== */
         .cp9x-wordmark {
             font-family: 'Orbitron', 'Segoe UI', system-ui, sans-serif;
@@ -650,6 +666,13 @@
                         <button type="button" onclick="clearBillingDateRange()" class="text-slate-500 text-xs underline hover:text-slate-700 pb-2">
                             ล้างช่วงวันที่
                         </button>
+                        <label class="flex items-start gap-2 pb-1 cursor-pointer max-w-xs" title="ดึงงานที่ปิดก่อนวันเริ่มรอบ แต่ยังไม่เคยออกบิล">
+                            <input type="checkbox" id="billingIncludeBacklog" class="mt-0.5 rounded border-slate-300">
+                            <span class="text-xs text-slate-700 leading-snug">
+                                <span class="font-semibold">รวมงานตกค้าง</span>
+                                <span class="block text-slate-400">งานที่ปิดก่อนวันเริ่มรอบแต่ยังไม่เคยออกบิล จะถูกดึงมาด้วย</span>
+                            </span>
+                        </label>
                         <div class="text-slate-400 text-xs font-semibold pb-2">หรือ</div>
                         <div>
                             <label class="block text-slate-700 text-xs font-semibold mb-1">ระบุเลขงานเจาะจง (ไม่ต้องใส่ช่วงวันที่ — ใส่ได้หลายเลขงาน คั่นด้วย , หรือขึ้นบรรทัดใหม่)</label>
@@ -726,7 +749,7 @@
                 <p id="billingStatus" class="text-sm text-slate-400 mb-3">
                     เลือกช่วงวันที่/เลขงาน และผู้รับเหมา (ถ้าต้องการ) แล้วกด "ดูตัวอย่างก่อนบันทึกรอบบิล" เพื่อตรวจสอบข้อมูลก่อนยืนยัน หรือกด "โหลด/รีเฟรชข้อมูล" เพื่อแสดงข้อมูลที่เคยบันทึกไว้แล้ว
                 </p>
-                <div class="overflow-x-auto border border-slate-200 rounded-xl">
+                <div class="table-scroll overflow-x-auto border border-slate-200 rounded-xl">
                     <table class="w-full text-xs" id="billingTable">
                         <thead class="bg-slate-100 text-slate-600">
                             <tr>
@@ -755,6 +778,7 @@
                                 <th id="thSentStatus" data-col="sent_to_contractor" class="p-2 text-left font-semibold w-20">สถานะ</th>
                                 <th id="thUnitPriceContractor" data-col="unit_price_contractor" class="p-2 text-left font-semibold">ราคา/หน่วย (ผู้รับเหมา)</th>
                                 <th id="thTotalPriceContractor" data-col="total_price_contractor" class="p-2 text-left font-semibold">ราคา/รวม (ผู้รับเหมา)</th>
+                                <th id="thBillingType" data-col="billing_type" class="p-2 text-left font-semibold w-24">ประเภทเก็บเงิน</th>
                                 <th class="p-2 w-16"></th>
                             </tr>
                         </thead>
@@ -783,7 +807,7 @@
 
                 <!-- โซนที่ 2: ส่งแล้ว - รอตรวจสอบ (งานที่อนุมัติแล้วจะไม่แสดงอีกในหน้านี้ แต่ยังบันทึกถาวรในเมนูแอดมิน) -->
                 <h4 class="text-sm font-bold text-slate-600 mb-2"><i class="fa-solid fa-clipboard-check mr-1"></i> ส่งแล้ว - รอตรวจสอบ</h4>
-                <div class="overflow-x-auto border border-slate-200 rounded-xl">
+                <div class="table-scroll overflow-x-auto border border-slate-200 rounded-xl">
                     <table class="w-full text-xs">
                         <thead class="bg-slate-100 text-slate-600">
                             <tr>
@@ -812,7 +836,7 @@
                 <input type="text" id="openListFilter" oninput="debouncedFilterOpenIssuesList()" placeholder="พิมพ์คำค้น เพื่อกรองข้อมูลทุกคอลัมน์ (เลขที่ใบแจ้ง, สาขา, Service Type, รายละเอียด ฯลฯ)"
                     class="w-full px-4 py-2.5 mb-3 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
                 <p id="openListStatus" class="text-sm text-slate-400 mb-3">กดปุ่ม "โหลด/รีเฟรชข้อมูล" เพื่อดึงรายการเปิดงานทั้งหมดมาแสดง</p>
-                <div class="overflow-x-auto border border-slate-200 rounded-xl">
+                <div class="table-scroll overflow-x-auto border border-slate-200 rounded-xl">
                     <table class="w-full text-xs">
                         <thead class="bg-slate-100 text-slate-600">
                             <tr>
@@ -844,7 +868,7 @@
                 <input type="text" id="closeListFilter" oninput="debouncedFilterCloseIssuesList()" placeholder="พิมพ์คำค้น เพื่อกรองข้อมูลทุกคอลัมน์ (เลขงาน, สาขา, เลขทรัพย์สิน, รายการอะไหล่ ฯลฯ)"
                     class="w-full px-4 py-2.5 mb-3 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
                 <p id="closeListStatus" class="text-sm text-slate-400 mb-3">กดปุ่ม "โหลด/รีเฟรชข้อมูล" เพื่อดึงรายการปิดงานทั้งหมดมาแสดง</p>
-                <div class="overflow-x-auto border border-slate-200 rounded-xl">
+                <div class="table-scroll overflow-x-auto border border-slate-200 rounded-xl">
                     <table class="w-full text-xs">
                         <thead class="bg-slate-100 text-slate-600">
                             <tr>
@@ -938,7 +962,7 @@
                 </div>
 
                 <p id="statusReportStatus" class="text-sm text-slate-400 mb-3">กดปุ่ม "โหลด/รีเฟรชข้อมูล" เพื่อดึงรายงานสถานะทั้งหมดมาแสดง</p>
-                <div class="overflow-x-auto border border-slate-200 rounded-xl">
+                <div class="table-scroll overflow-x-auto border border-slate-200 rounded-xl">
                     <table id="statusReportTable" class="w-full text-xs">
                         <thead class="bg-slate-50 text-slate-500 sticky top-0 z-10 shadow-[0_1px_0_0_rgb(226,232,240)]">
                             <tr>
@@ -1021,7 +1045,7 @@
                 </div>
 
                 <p id="pmBillingStatus" class="text-sm text-slate-400 mb-3">กดปุ่ม "โหลด/รีเฟรชข้อมูล" เพื่อดึงรายการรอบบิล PM ที่เคยบันทึกไว้มาแสดง</p>
-                <div class="overflow-x-auto border border-slate-200 rounded-xl">
+                <div class="table-scroll overflow-x-auto border border-slate-200 rounded-xl">
                     <table class="w-full text-xs" id="pmBillingTable">
                         <thead class="bg-slate-100 text-slate-600">
                             <tr>
@@ -1101,7 +1125,7 @@
                             <span class="font-semibold px-3 py-1.5 rounded-full bg-emerald-100 text-emerald-700">งานใหม่ที่จะบันทึก: <span id="pmPreviewNewCount">0</span> รายการ</span>
                             <span id="pmPreviewAlreadyBadge" class="hidden font-semibold px-3 py-1.5 rounded-full bg-slate-100 text-slate-500">บันทึกไปแล้วก่อนหน้านี้ (ข้ามอัตโนมัติ): <span id="pmPreviewAlreadyCount">0</span> รายการ</span>
                         </div>
-                        <div class="overflow-x-auto border border-slate-200 rounded-xl">
+                        <div class="table-scroll overflow-x-auto border border-slate-200 rounded-xl">
                             <table class="w-full text-xs border-collapse">
                                 <thead>
                                     <tr class="bg-slate-100 text-slate-600">
@@ -1194,7 +1218,7 @@
                         <option value="rejected">ตีกลับ</option>
                     </select>
                 </div>
-                <div class="overflow-x-auto border border-slate-200 rounded-xl">
+                <div class="table-scroll overflow-x-auto border border-slate-200 rounded-xl">
                     <table class="w-full text-xs">
                         <thead class="bg-slate-100 text-slate-600">
                             <tr>
@@ -1225,7 +1249,7 @@
                 <input type="text" id="completedFilter" oninput="debouncedFilterCompletedJobs()" placeholder="พิมพ์คำค้น เพื่อกรองบิลรอบ (เลขรอบบิล, ช่วงรอบบิล, ผู้รับเหมา)"
                     class="w-full px-4 py-2.5 mb-3 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
                 <p id="completedStatus" class="text-sm text-slate-400 mb-3">กดปุ่ม "โหลด/รีเฟรชข้อมูล" เพื่อดึงรายการบิลรอบที่เสร็จสิ้นทั้งหมด — กด "ดูรายละเอียด" ที่บิลรอบไหน เพื่อดูรายการอะไหล่ ดาวน์โหลด CSV และไฟล์ที่อนุมัติแล้ว</p>
-                <div class="overflow-x-auto border border-slate-200 rounded-xl">
+                <div class="table-scroll overflow-x-auto border border-slate-200 rounded-xl">
                     <table class="w-full text-xs">
                         <thead class="bg-slate-100 text-slate-600">
                             <tr>
@@ -1257,7 +1281,7 @@
             </div>
             <div class="p-5">
                 <p id="completedRoundDetailStatus" class="text-sm text-slate-400 mb-3">กำลังโหลดข้อมูล...</p>
-                <div class="overflow-x-auto border border-slate-200 rounded-xl">
+                <div class="table-scroll overflow-x-auto border border-slate-200 rounded-xl">
                     <table class="w-full text-xs">
                         <thead class="bg-slate-100 text-slate-600">
                             <tr>
@@ -1475,7 +1499,7 @@
                         <span class="font-semibold px-3 py-1.5 rounded-full bg-emerald-100 text-emerald-700">ข้อมูลใหม่ที่จะบันทึก: <span id="billingPreviewNewCount">0</span> รายการ</span>
                         <span id="billingPreviewAlreadyBadge" class="hidden font-semibold px-3 py-1.5 rounded-full bg-slate-100 text-slate-500">บันทึกไปแล้วก่อนหน้านี้ (ข้ามอัตโนมัติ): <span id="billingPreviewAlreadyCount">0</span> รายการ</span>
                     </div>
-                    <div class="overflow-x-auto border border-slate-200 rounded-xl">
+                    <div class="table-scroll overflow-x-auto border border-slate-200 rounded-xl">
                         <table class="w-full text-xs border-collapse">
                             <thead>
                                 <tr class="bg-slate-100 text-slate-600">
@@ -1794,7 +1818,7 @@
 
             // คอลัมน์ผู้รับเหมา/รอบบิลที่/ช่วงรอบบิล/ราคาผู้รับเหมา ในตารางวางบิล - โชว์แค่แอดมินเท่านั้น
             // (ผู้รับเหมาเห็นราคาของตัวเองอยู่แล้วในคอลัมน์ "ราคา/หน่วย"/"ราคา/รวม" ปกติ ไม่ต้องมีคอลัมน์แยก)
-            ['thContractor', 'thRoundNo', 'thRoundPeriod', 'thSentStatus', 'thUnitPriceContractor', 'thTotalPriceContractor'].forEach(function (id) {
+            ['thContractor', 'thRoundNo', 'thRoundPeriod', 'thSentStatus', 'thUnitPriceContractor', 'thTotalPriceContractor', 'thBillingType'].forEach(function (id) {
                 const el = document.getElementById(id);
                 if (el) el.style.display = isAdmin ? '' : 'none';
             });
@@ -2030,6 +2054,8 @@
             applyStatusReportColumnPrefsToHeaders();
             setDefaultOpenDateTime();
             setDefaultCloseDateTime();
+            lastAutoOpenDateTime = currentOpenDateTimeValue();
+            lastAutoCloseDateTime = currentCloseDateTimeValue();
             initStatusReportDefaultRange();
         });
 
@@ -2063,22 +2089,51 @@
             minuteSelect.value = String(minute).padStart(2, '0');
         }
 
+        // เวลาปัจจุบันตามเขตเวลาไทย (GMT+7) เสมอ ไม่ขึ้นกับว่าเครื่องผู้ใช้ตั้งเขตเวลาอะไรไว้
+        // คำนวณจากเวลา UTC บวก 7 ชั่วโมง แล้วอ่านค่าด้วย getUTC* เพื่อไม่ให้เขตเวลาเครื่องมาบวกซ้ำอีกชั้น
+        // ไทยไม่มี daylight saving ออฟเซ็ตจึงเป็น +7 คงที่ตลอดปี ตรงกับที่ฝั่งเซิร์ฟเวอร์ใช้ (bangkokIsoTimestamp)
+        function bangkokNow() {
+            return new Date(Date.now() + 7 * 60 * 60 * 1000);
+        }
+
         function setDefaultCloseDateTime() {
-            const now = new Date();
-            const iso = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+            const now = bangkokNow();
+            const iso = now.getUTCFullYear() + '-' + String(now.getUTCMonth() + 1).padStart(2, '0') + '-' + String(now.getUTCDate()).padStart(2, '0');
             document.getElementById('cl_closeDate').value = iso;
-            document.getElementById('cl_closeDateDisplay').value = String(now.getDate()).padStart(2, '0') + '/' + String(now.getMonth() + 1).padStart(2, '0') + '/' + now.getFullYear();
-            populateTimeSelects('cl_closeTimeHour', 'cl_closeTimeMinute', now.getHours(), now.getMinutes());
+            document.getElementById('cl_closeDateDisplay').value = String(now.getUTCDate()).padStart(2, '0') + '/' + String(now.getUTCMonth() + 1).padStart(2, '0') + '/' + now.getUTCFullYear();
+            populateTimeSelects('cl_closeTimeHour', 'cl_closeTimeMinute', now.getUTCHours(), now.getUTCMinutes());
         }
 
         // ตั้งค่าเริ่มต้นของช่อง "วันเวลาที่เปิดงาน" เป็นเวลาปัจจุบัน (แก้ไขได้ถ้าต้องการระบุย้อนหลัง)
         // เรียกตอนโหลดหน้าเว็บครั้งแรก และเรียกซ้ำทุกครั้งหลังบันทึกเปิดงานสำเร็จ (เพราะ form.reset() จะล้างค่านี้ทิ้งไปด้วย)
         function setDefaultOpenDateTime() {
-            const now = new Date();
-            const iso = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+            const now = bangkokNow();
+            const iso = now.getUTCFullYear() + '-' + String(now.getUTCMonth() + 1).padStart(2, '0') + '-' + String(now.getUTCDate()).padStart(2, '0');
             document.getElementById('op_openDate').value = iso;
-            document.getElementById('op_openDateDisplay').value = String(now.getDate()).padStart(2, '0') + '/' + String(now.getMonth() + 1).padStart(2, '0') + '/' + now.getFullYear();
-            populateTimeSelects('op_openTimeHour', 'op_openTimeMinute', now.getHours(), now.getMinutes());
+            document.getElementById('op_openDateDisplay').value = String(now.getUTCDate()).padStart(2, '0') + '/' + String(now.getUTCMonth() + 1).padStart(2, '0') + '/' + now.getUTCFullYear();
+            populateTimeSelects('op_openTimeHour', 'op_openTimeMinute', now.getUTCHours(), now.getUTCMinutes());
+        }
+
+        // ค่าวันเวลาถูกตั้งตอนโหลดหน้าเว็บครั้งเดียว ถ้าเปิดแอปค้างไว้ข้ามวันหรือหลายชั่วโมง
+        // ค่าที่ค้างอยู่จะเก่าจนบันทึกผิดเวลาโดยไม่รู้ตัว จึงรีเฟรชให้ใหม่ทุกครั้งที่เข้าแท็บเปิดงาน/ปิดงาน
+        // แต่จะไม่แตะถ้าผู้ใช้แก้ค่าเองไว้แล้ว (เทียบกับค่าที่ระบบตั้งไว้ล่าสุด) กันค่าที่ตั้งใจใส่ย้อนหลังหาย
+        let lastAutoOpenDateTime = '';
+        let lastAutoCloseDateTime = '';
+        function currentOpenDateTimeValue() {
+            return document.getElementById('op_openDate').value + ' ' + document.getElementById('op_openTimeHour').value + ':' + document.getElementById('op_openTimeMinute').value;
+        }
+        function currentCloseDateTimeValue() {
+            return document.getElementById('cl_closeDate').value + ' ' + document.getElementById('cl_closeTimeHour').value + ':' + document.getElementById('cl_closeTimeMinute').value;
+        }
+        function refreshOpenDateTimeIfUntouched() {
+            if (lastAutoOpenDateTime && currentOpenDateTimeValue() !== lastAutoOpenDateTime) return; // ผู้ใช้แก้เอง ไม่ทับ
+            setDefaultOpenDateTime();
+            lastAutoOpenDateTime = currentOpenDateTimeValue();
+        }
+        function refreshCloseDateTimeIfUntouched() {
+            if (lastAutoCloseDateTime && currentCloseDateTimeValue() !== lastAutoCloseDateTime) return;
+            setDefaultCloseDateTime();
+            lastAutoCloseDateTime = currentCloseDateTimeValue();
         }
 
         // ==================== อัปเดตข้อมูลอัตโนมัติเป็นรอบๆ (real-time แบบเบาๆ) ====================
@@ -2254,6 +2309,10 @@
             if (mode === 'pause') {
                 loadPausedList(); // เปิดแท็บนี้ทีไร โหลดรายการงานที่พักอยู่ใหม่เสมอ
             }
+            // เข้าแท็บเปิดงาน/ปิดงานทีไร ตั้งวันเวลาให้เป็นปัจจุบัน (เวลาไทย) ใหม่เสมอ
+            // กันกรณีเปิดแอปค้างข้ามวันแล้วค่าที่ค้างอยู่เก่าจนบันทึกผิดวัน
+            if (mode === 'open') refreshOpenDateTimeIfUntouched();
+            if (mode === 'close') refreshCloseDateTimeIfUntouched();
             if (mode === 'completed' && currentCompletedData.length === 0) {
                 loadCompletedJobs();
             }
@@ -2548,22 +2607,48 @@
             } else if (mode === 'pause') {
                 // รองรับข้อความแบบ "ขออนุมัติแจ้งซ่อม" ที่ขึ้นต้นแต่ละบรรทัดด้วยเลขลำดับ "1." "2." ... เช่น:
                 // 1.เลขที่งาน:#CM20260715-0134 / 2.ชื่อสาขา: ... / 7.สถานะเลขงาน: พักงานรออะไหล่
+                // รองรับ 2 รูปแบบข้อความที่ใช้จริง โดยไม่ต้องให้ผู้ใช้จัดรูปแบบก่อนวาง:
+                //   แบบ ก "ขออนุมัติแจ้งซ่อม"  -> ขึ้นต้นด้วยเลขข้อ และคั่นค่าด้วย ":"  เช่น  1.เลขที่งาน:#CM...
+                //   แบบ ข "ใบแจ้งซ่อมบำรุง"   -> ไม่มีเลขข้อ ไม่มี ":" ค่าอยู่หลังหัวข้อโดยเว้นวรรค เช่น  เลขที่ใบแจ้งซ่อมบำรุง CM...
+                // จึงใช้วิธีค้นหาหัวข้อในบรรทัดแล้วตัดทุกอย่างข้างหน้าทิ้ง เหลือเฉพาะค่า
+                // ตัวคั่นที่ยอมรับได้คือ ":" "：" "*" "-" หรือเว้นวรรคเปล่า ๆ
                 const data = { mainId: '', branch: '', serviceType: '', cause: '', request: '', reasonStatus: '' };
+
+                function valueAfter(content, labels) {
+                    for (const lb of labels) {
+                        const i = content.indexOf(lb);
+                        if (i === -1) continue;
+                        return content.slice(i + lb.length).replace(/^[\s:：*\-]+/, '').replace(/^#/, '').trim();
+                    }
+                    return null;
+                }
+
                 lines.forEach(line => {
                     // ตัดเลขลำดับ "1." "2." ที่ขึ้นต้นบรรทัดออกก่อน (ถ้ามี)
                     const content = line.replace(/^\d+[.)]\s*/, '');
-                    if (content.includes('เลขที่งาน')) {
-                        data.mainId = content.replace(/^.*เลขที่งาน[:\s]*/, '').replace(/^#/, '').trim();
-                    } else if (content.includes('ชื่อสาขา')) {
-                        data.branch = content.replace(/^.*ชื่อสาขา[:\s]*/, '').trim();
-                    } else if (content.includes('ประเภทงาน')) {
-                        data.serviceType = content.replace(/^.*ประเภทงาน[:\s]*/, '').trim();
-                    } else if (content.includes('สาเหตุที่ตรวจพบ')) {
-                        data.cause = content.replace(/^.*สาเหตุที่ตรวจพบ[:\s]*/, '').trim();
+                    let v;
+                    // ลำดับการเช็คสำคัญ: หัวข้อที่ยาว/เจาะจงกว่าต้องมาก่อน ไม่งั้นจะถูกหัวข้อสั้นกินไปก่อน
+                    // เช่น "สถานะเลขงาน: พักงานรออะไหล่" มีคำว่า "พักงาน" อยู่ด้วย ถ้าเช็ค "พักงาน" ก่อนจะจับผิดบรรทัด
+                    if ((v = valueAfter(content, ['เลขที่ใบแจ้งซ่อมบำรุง', 'เลขที่งาน'])) !== null) {
+                        if (v) data.mainId = v;
+                    } else if ((v = valueAfter(content, ['สถานะเลขงาน'])) !== null) {
+                        if (v) data.reasonStatus = v.replace(/^พักงาน/, '').trim();
+                    } else if ((v = valueAfter(content, ['Service Type', 'ประเภทงาน'])) !== null) {
+                        if (v) data.serviceType = v;
+                    } else if ((v = valueAfter(content, ['รหัส-ชื่อสาขา', 'ชื่อสาขา'])) !== null) {
+                        if (v) data.branch = v;
+                    } else if ((v = valueAfter(content, ['สาเหตุที่ตรวจพบ', 'รายละเอียดปัญหาที่พบ'])) !== null) {
+                        if (v) data.cause = v;
                     } else if (content.includes('รายการ') && content.includes('อนุมัติ')) {
                         data.request = content.replace(/^.*อนุมัติ\s*/, '').trim();
-                    } else if (content.includes('สถานะเลขงาน')) {
-                        data.reasonStatus = content.replace(/^.*สถานะเลขงาน[:\s]*/, '').replace(/^พักงาน/, '').trim();
+                    } else if ((v = valueAfter(content, ['พักงาน'])) !== null) {
+                        // แบบ ข ปิดท้ายด้วยบรรทัด "พักงาน <สิ่งที่ตรวจพบ + สิ่งที่ขออนุมัติ>"
+                        // ใส่ข้อความเต็มเป็นเหตุผลที่พัก และถ้ามีคำว่า "ขออนุมัติ" ให้แยกท่อนหลังไปเป็นรายการที่ขออนุมัติด้วย
+                        if (v) {
+                            if (!data.reasonStatus) data.reasonStatus = v;
+                            const idx = v.indexOf('ขออนุมัติ');
+                            if (idx !== -1 && !data.request) data.request = v.slice(idx + 'ขออนุมัติ'.length).trim();
+                        }
                     }
                 });
 
@@ -2725,7 +2810,8 @@
                 statusEl.textContent = '';
             }
 
-            runServerCall('previewBillingCandidates', [currentSession.username, currentSession.token, startDate, endDate, jobIds], function(res) {
+            const includeBacklog = document.getElementById('billingIncludeBacklog').checked;
+            runServerCall('previewBillingCandidates', [currentSession.username, currentSession.token, startDate, endDate, jobIds, includeBacklog], function(res) {
                 resetBtn();
                 if (res && res.success) {
                     renderBillingPreview(res);
@@ -2808,7 +2894,8 @@
             confirmBtn.classList.add('opacity-60', 'cursor-not-allowed');
             textEl.textContent = 'กำลังบันทึกรอบบิล...';
 
-            runServerCall('generateBillingDocumentsForAllClosedJobs', [currentSession.username, currentSession.token, startDate, endDate, jobIds], function(res) {
+            const includeBacklog = document.getElementById('billingIncludeBacklog').checked;
+            runServerCall('generateBillingDocumentsForAllClosedJobs', [currentSession.username, currentSession.token, startDate, endDate, jobIds, includeBacklog], function(res) {
                 confirmBtn.disabled = false;
                 confirmBtn.classList.remove('opacity-60', 'cursor-not-allowed');
                 textEl.textContent = 'ยืนยันบันทึกรอบบิล';
@@ -3943,7 +4030,9 @@
                     ['contractor', false, 'readonly'], ['round_no', false, 'readonly'], ['round_period', false, 'readonly'], ['sent_to_contractor', false, 'sentstatus'],
                     // ราคาผู้รับเหมา (แยกจากราคา CJ ที่คอลัมน์ unit_price/total_price ด้านบน) - แอดมินเท่านั้นที่เห็น/แก้ได้
                     // ผู้รับเหมาไม่เห็นคอลัมน์คู่นี้ เพราะเห็นราคาของตัวเองอยู่แล้วที่คอลัมน์ "ราคา/หน่วย"/"ราคา/รวม" ปกติ
-                    ['unit_price_contractor', true, 'number'], ['total_price_contractor', false, 'readonly']
+                    ['unit_price_contractor', true, 'number'], ['total_price_contractor', false, 'readonly'],
+                    // ประเภทการเก็บเงิน - แก้ได้ในตารางเลย เผื่อเลือกผิดตอนเพิ่มอะไหล่แล้วต้องกลับมาแก้
+                    ['billing_type', true, 'billingtype']
                 );
             }
 
@@ -3978,6 +4067,15 @@
                                 <option value="" ${val === '' ? 'selected' : ''}>-</option>
                                 <option value="YES" ${val === 'YES' ? 'selected' : ''}>YES</option>
                                 <option value="NO" ${val === 'NO' ? 'selected' : ''}>NO</option>
+                            </select>
+                        </td>`;
+                    } else if (effectiveType === 'billingtype') {
+                        // เคลม = ไม่เก็บเงินผู้รับเหมา ทำสีเหลืองให้เห็นชัดว่าแถวนี้จะไม่ขึ้นในบิลผู้รับเหมา
+                        const isClaim = String(val) === 'claim';
+                        cellsHtml += `<td data-col="${key}" class="p-1${hiddenCls}">
+                            <select data-field="${key}" class="grid-input w-full px-1 py-1 rounded border text-xs ${isClaim ? 'border-amber-300 bg-amber-50 text-amber-800 font-semibold' : 'border-slate-200 bg-white'}">
+                                <option value="normal" ${!isClaim ? 'selected' : ''}>เก็บเงินปกติ</option>
+                                <option value="claim" ${isClaim ? 'selected' : ''}>เคลม</option>
                             </select>
                         </td>`;
                     } else if (effectiveType === 'partcode') {
@@ -4055,6 +4153,19 @@
             modalSourceId = null;
         }
 
+        // อธิบายผลของประเภทที่เลือกให้เห็นทันทีตอนเลือก กันเลือกผิดแล้วบิลผู้รับเหมาหายไปเงียบ ๆ
+        function updateBillingTypeHint(sel) {
+            const hint = sel.closest('div').querySelector('.modal_billingTypeHint');
+            if (!hint) return;
+            if (sel.value === 'claim') {
+                hint.textContent = 'รายการนี้จะไม่ขึ้นในตารางและใบวางบิลของผู้รับเหมา แต่ยังเก็บเงิน CJ ตามปกติ';
+                hint.className = 'modal_billingTypeHint text-xs mt-1 text-amber-600 font-semibold';
+            } else {
+                hint.textContent = 'ออกใบวางบิลทั้งฝั่ง CJ และฝั่งผู้รับเหมาตามปกติ';
+                hint.className = 'modal_billingTypeHint text-xs mt-1 text-slate-400';
+            }
+        }
+
         function addModalPartRow() {
             modalPartRowCount++;
             const rowId = 'modalRow_' + modalPartRowCount;
@@ -4080,6 +4191,14 @@
                         <label class="block text-slate-700 text-sm font-semibold mb-1">Quotation</label>
                         <input type="text" class="modal_quotationRef w-full px-3 py-1.5 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
                     </div>
+                </div>
+                <div class="mt-3">
+                    <label class="block text-slate-700 text-sm font-semibold mb-1">ประเภทการเก็บเงิน <span class="text-red-500">*</span></label>
+                    <select class="modal_billingType w-full px-3 py-1.5 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm bg-white" onchange="updateBillingTypeHint(this)">
+                        <option value="normal">เก็บเงินปกติ — ออกใบวางบิลทั้ง CJ และผู้รับเหมา</option>
+                        <option value="claim">เคลม — เก็บเฉพาะ CJ ไม่เก็บเงินผู้รับเหมา</option>
+                    </select>
+                    <p class="modal_billingTypeHint text-xs mt-1 text-slate-400">ค่าเริ่มต้นคือเก็บเงินปกติ</p>
                 </div>
                 <div class="modal_partPreview mt-3 text-sm text-slate-500 hidden bg-slate-50 rounded-lg p-3">
                     <div><span class="font-semibold text-slate-600">รายละเอียด:</span> <span class="modal_previewName"></span></div>
@@ -4145,8 +4264,10 @@
                 const partCode = row.querySelector('.modal_partCode').value.trim();
                 const qty = row.querySelector('.modal_qty').value;
                 const quotationRef = row.querySelector('.modal_quotationRef').value.trim();
+                const billingTypeEl = row.querySelector('.modal_billingType');
+                const billingType = billingTypeEl ? billingTypeEl.value : 'normal';
                 if (!partCode) continue;
-                items.push({ partCode: partCode, qty: qty, quotationRef: quotationRef });
+                items.push({ partCode: partCode, qty: qty, quotationRef: quotationRef, billingType: billingType });
             }
 
             if (items.length === 0) {
@@ -5317,8 +5438,62 @@
             return code;
         }
 
+        // ==================== ตรวจความครบถ้วนของฟอร์ม ก่อนยอมให้บันทึก ====================
+        // เดิมมี required แค่ 4 ช่อง ทำให้บันทึกเปิดงาน/ปิดงานทั้งที่ข้อมูลไม่ครบได้ แล้วไปโผล่เป็นช่องว่าง
+        // ในตารางวางบิลกับใบเขียวทีหลัง ซึ่งตามแก้ย้อนหลังยากเพราะแก้ข้อมูลเปิดงานได้เฉพาะตอนพักงาน
+        // จึงดักให้ครบทุกช่องตั้งแต่ต้นทาง พร้อมเลื่อนจอไปที่ช่องแรกที่ขาดและโฟกัสให้เลย
+        function validateRequiredFields(specs) {
+            for (const spec of specs) {
+                const el = document.getElementById(spec.id);
+                const val = el ? String(el.value || '').trim() : '';
+                let bad = !val;
+                if (!bad && spec.test) bad = !spec.test(val);
+                if (bad) {
+                    showAlert('error', spec.msg);
+                    if (el) {
+                        try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+                        el.focus();
+                    }
+                    return false;
+                }
+            }
+            return true;
+        }
+
         function handleFormSubmit(event, mode) {
             event.preventDefault();
+
+            if (mode === 'open') {
+                const ok = validateRequiredFields([
+                    { id: 'op_mainId',      msg: 'กรุณากรอกเลขที่ใบแจ้งซ่อมบำรุง' },
+                    { id: 'op_serviceType', msg: 'กรุณากรอก Service Type' },
+                    { id: 'op_serviceWork', msg: 'กรุณากรอกงานบริการ' },
+                    { id: 'op_serviceIssue',msg: 'กรุณากรอก Service Issue' },
+                    { id: 'op_reqDate',     msg: 'กรุณากรอกวันที่ร้องขอ' },
+                    { id: 'op_branchCode',  msg: 'กรุณากรอกรหัสสาขา' },
+                    { id: 'op_branchName',  msg: 'ไม่พบชื่อสาขาจากรหัสที่กรอก กรุณาตรวจสอบรหัสสาขาอีกครั้ง' },
+                    { id: 'op_details',     msg: 'กรุณากรอกรายละเอียดปัญหาที่พบ' },
+                    { id: 'op_contractType',msg: 'กรุณาเลือกประเภทสัญญา' },
+                    { id: 'op_contractor',  msg: 'กรุณาเลือกผู้รับเหมา' },
+                    { id: 'op_openDate',    msg: 'กรุณาระบุวันที่เปิดงาน' },
+                ]);
+                if (!ok) return;
+            } else if (mode === 'close') {
+                const ok = validateRequiredFields([
+                    { id: 'cl_kissflowId', msg: 'กรุณากรอกเลขที่ใบแจ้งซ่อมบำรุง' },
+                    { id: 'cl_branchCode', msg: 'กรุณากรอกรหัสสาขา' },
+                    { id: 'cl_branchName', msg: 'ไม่พบชื่อสาขาจากรหัสที่กรอก กรุณาตรวจสอบรหัสสาขาอีกครั้ง' },
+                    { id: 'cl_fixDate',    msg: 'กรุณากรอกวันที่เข้าแก้ไข' },
+                    { id: 'cl_assetId',    msg: 'เลขทรัพย์สินต้องเป็นตัวเลข 12 หลักเท่านั้น', test: function (v) { return /^\d{12}$/.test(v); } },
+                    { id: 'cl_actionTaken',msg: 'กรุณากรอกช่อง "ดำเนินการ" ว่าทำอะไรไปบ้าง' },
+                    { id: 'cl_closeDate',  msg: 'กรุณาระบุวันที่ปิดงาน' },
+                ]);
+                if (!ok) return;
+                if (getPartsAsText().trim() === '') {
+                    showAlert('error', 'กรุณากรอกรายการอะไหล่ที่เปลี่ยนอย่างน้อย 1 รายการ (ถ้าไม่ได้เปลี่ยนอะไหล่ ให้ระบุว่า "ไม่มีการเปลี่ยนอะไหล่")');
+                    return;
+                }
+            }
 
             const btn = document.getElementById(`btn_${mode}`);
             const text = document.getElementById(`text_${mode}`);
@@ -5935,7 +6110,7 @@
         function renderCompletedRoundDetailTable(rows) {
             const tbody = document.getElementById('completedRoundDetailBody');
             if (rows.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="19" class="p-3 text-center text-slate-400">ไม่พบข้อมูล</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="20" class="p-3 text-center text-slate-400">ไม่พบข้อมูล</td></tr>';
                 return;
             }
 
