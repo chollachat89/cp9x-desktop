@@ -36,9 +36,12 @@ const NOT_SUPPORTED_PREFIX = 'ฟังก์ชันนี้ต้องใ�
 
 // ==================== ประเภทการเก็บเงินของแถววางบิล (billing_type) ====================
 // มี 3 แบบ และแต่ละแบบตัดสินว่าแถวนี้จะขึ้นในใบวางบิล "ฝั่งไหน" บ้าง
-//   normal        = เก็บเงินปกติ            -> ขึ้นทั้งฝั่ง CJ และฝั่งผู้รับเหมา
-//   claim         = เคลม                    -> ไม่เก็บเงินทั้ง 2 ฝั่ง (ไม่ขึ้นทั้ง CJ และผู้รับเหมา)
-//   contractor_cr = ผู้รับเหมาเก็บเงินกับ CR -> ขึ้นเฉพาะฝั่งผู้รับเหมา ฝั่ง CJ ไม่เก็บ
+//   normal        = เก็บเงินปกติ         -> ขึ้นทั้งฝั่ง CJ และฝั่งผู้รับเหมา
+//   claim         = เคลมประกัน 3 เดือน   -> ไม่เก็บเงินทั้ง 2 ฝั่ง (ไม่ขึ้นทั้ง CJ และผู้รับเหมา)
+//   contractor_cr = เคลมอะไหล่           -> ขึ้นเฉพาะฝั่งผู้รับเหมา ฝั่ง CJ ไม่เก็บ
+//
+// หมายเหตุ: ค่าที่เก็บในฐานข้อมูลยังเป็น 'claim' / 'contractor_cr' เหมือนเดิม เปลี่ยนแค่ "ชื่อที่แสดง"
+// จึงไม่ต้องแก้ข้อมูลเก่าหรือรัน SQL ใหม่ตอนเปลี่ยนชื่อ (ถ้าเปลี่ยนค่าจริงจะต้องไล่แก้ CHECK + ข้อมูลทุกแถว)
 // แถวยังคงอยู่ในฐานข้อมูลและในตารางของแอดมินเสมอ เพื่อให้แอดมินเห็น/แก้ประเภทได้ - ที่ถูกกรองคือ "ผลลัพธ์ที่ออกบิล" เท่านั้น
 const BILLING_TYPE_VALUES = ['normal', 'claim', 'contractor_cr'];
 // ประเภทที่ต้องไม่ปรากฏในเอกสาร/ยอดของแต่ละฝั่ง
@@ -52,8 +55,8 @@ function normalizeBillingType(v: any): string {
 
 function billingTypeLabel(v: any): string {
   const t = normalizeBillingType(v);
-  if (t === 'claim') return 'เคลม';
-  if (t === 'contractor_cr') return 'ผู้รับเหมาเก็บเงินกับ CR';
+  if (t === 'claim') return 'เคลมประกัน 3 เดือน';
+  if (t === 'contractor_cr') return 'เคลมอะไหล่';
   return 'เก็บเงินปกติ';
 }
 
@@ -1884,7 +1887,7 @@ Deno.serve(async (req: Request) => {
             if (contractorFilter) q = q.eq('contractor', contractorFilter);
           } else {
             // แถวประเภท 'claim' ไม่เก็บเงินทั้ง 2 ฝั่ง จึงต้องไม่โผล่ในตาราง/บิลฝั่งผู้รับเหมาเลย
-            // ส่วน 'contractor_cr' (ผู้รับเหมาเก็บกับ CR) ต้องโผล่ฝั่งผู้รับเหมาตามปกติ จึงไม่กรองออก
+            // ส่วน 'contractor_cr' (เคลมอะไหล่) ต้องโผล่ฝั่งผู้รับเหมาตามปกติ จึงไม่กรองออก
             q = excludeBillingTypes(q.eq('contractor', session.displayName).eq('sent_to_contractor', true), BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
           }
         } else {
@@ -2010,13 +2013,13 @@ Deno.serve(async (req: Request) => {
         const groups: Record<string, any> = {};
         (data || []).forEach((r: any) => {
           const bType = normalizeBillingType(r.billing_type);
-          // เคลม = ไม่เก็บเงินทั้ง 2 ฝั่ง จึงไม่นับเข้ายอดใด ๆ และไม่นับเป็นจำนวนรายการที่ต้องเก็บเงิน
+          // เคลมประกัน 3 เดือน = ไม่เก็บเงินทั้ง 2 ฝั่ง จึงไม่นับเข้ายอดใด ๆ และไม่นับเป็นจำนวนรายการที่ต้องเก็บเงิน
           if (bType === 'claim') return;
           const key = r.round_no + '||' + (r.contractor || '');
           if (!groups[key]) groups[key] = { round_no: r.round_no, round_period: r.round_period || '', contractor: r.contractor || '', item_count: 0, total_cj: 0, total_contractor: 0, sent_at: null, completed_at: null, any_completed: false, all_completed: true };
           const g = groups[key];
           g.item_count++;
-          // 'contractor_cr' ผู้รับเหมาไปเก็บเงินกับ CR เอง ฝั่ง CJ ไม่เก็บ จึงไม่บวกเข้ายอด CJ
+          // 'contractor_cr' (เคลมอะไหล่) ฝั่ง CJ ไม่เก็บ จึงไม่บวกเข้ายอด CJ
           if (BILLING_TYPES_EXCLUDED_FROM_CJ.indexOf(bType) === -1) g.total_cj += parseFloat(r.total_price) || 0;
           g.total_contractor += parseFloat(r.total_price_contractor) || 0;
           if (r.sent_at && (!g.sent_at || r.sent_at < g.sent_at)) g.sent_at = r.sent_at;
@@ -2467,7 +2470,15 @@ Deno.serve(async (req: Request) => {
         const { data: sourceData, error: sourceErr } = await supabase.from('billing_documents').select('*').eq('id', sourceId).limit(1);
         if (sourceErr || !sourceData || sourceData.length === 0) return jsonResponse({ success: false, message: 'ไม่พบแถวต้นฉบับ' });
         const src = sourceData[0];
-        const { data: emptyRowData } = await supabase.from('billing_documents').select('id').eq('customer_case', src.customer_case).is('part_code', null).limit(1);
+        // แถวเปล่า (ยังไม่มี part_code) ของเลขงานนี้ จะถูกนำมาใช้เป็นแถวแรกแทนการสร้างแถวใหม่ กันแถวว่างค้างในตาราง
+        // แต่ต้องจับคู่ "เลขทรัพย์สิน" ด้วย ไม่ใช่จับแค่เลขงาน
+        // บั๊กเดิม: 1 เลขงานที่มีหลายเลขทรัพย์สิน ตอนเพิ่มอะไหล่ให้ทรัพย์สินชิ้น B
+        // ระบบไปเจอแถวเปล่าของทรัพย์สินชิ้น A ก่อน แล้วเขียนทับ ทำให้อะไหล่ไปติดผิดเลขทรัพย์สิน
+        // และแถวของชิ้น A ก็หายไปจากตารางด้วย
+        const srcAssetId = (src.asset_id === null || src.asset_id === undefined) ? null : src.asset_id;
+        let emptyRowQuery = supabase.from('billing_documents').select('id').eq('customer_case', src.customer_case).is('part_code', null);
+        emptyRowQuery = (srcAssetId === null) ? emptyRowQuery.is('asset_id', null) : emptyRowQuery.eq('asset_id', srcAssetId);
+        const { data: emptyRowData } = await emptyRowQuery.limit(1);
         let emptyRowId: string | null = (emptyRowData && emptyRowData.length > 0) ? emptyRowData[0].id : null;
         let created = 0;
         const errors: string[] = [];
@@ -2487,7 +2498,7 @@ Deno.serve(async (req: Request) => {
             total_price_contractor: qty * unitPriceContractor, quotation_ref: item.quotationRef || '-',
             return_old_part: part ? part.return_old_part : '-', company: part ? part.company : '-',
             // ประเภทการเก็บเงินของอะไหล่ชิ้นนี้ - 'claim' = ไม่เก็บเงินทั้ง CJ และผู้รับเหมา
-            // 'contractor_cr' = ผู้รับเหมาเก็บเงินกับ CR (ขึ้นเฉพาะบิลผู้รับเหมา ฝั่ง CJ ไม่เก็บ)
+            // 'contractor_cr' = เคลมอะไหล่ (ขึ้นเฉพาะบิลผู้รับเหมา ฝั่ง CJ ไม่เก็บ)
             // รับเฉพาะ 3 ค่าที่รู้จัก ค่าอื่นถือเป็น normal เพื่อไม่ให้ข้อมูลแปลกปลอมทำให้บิลหาย
             billing_type: normalizeBillingType(item.billingType),
           };
@@ -2727,7 +2738,12 @@ Deno.serve(async (req: Request) => {
         const [username, token] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ error: 'กรุณาเข้าสู่ระบบใหม่' });
+        // ฟอร์มวางบิล (.xlsx) เป็นเอกสารของ "ฝั่งผู้รับเหมา" จึงต้องตัดรายการที่ไม่เก็บเงินผู้รับเหมาออกเสมอ
+        // เดิมตรงนี้ไม่ได้กรอง billing_type เลย ทำให้เลขงานที่อะไหล่ทุกชิ้นเป็น "เคลมประกัน 3 เดือน"
+        // ยังโผล่ในแท็บฟอร์มวางบิลของผู้รับเหมา ทั้งที่ไม่มีอะไรต้องเก็บเงินสักบาท
+        // ถ้าเลขงานไหนเหลือ 0 แถวหลังกรอง ก็จะไม่ถูกใส่เข้า jobs เลย = หายไปจากแท็บทั้งเลขงาน (ตามที่ต้องการ)
         let jobsQ = supabase.from('billing_documents').select('customer_case,branch_code,branch_name,service_type,asset_id,contractor,created_at').eq('sent_to_contractor', true).is('completed_at', null).order('created_at', { ascending: true }).limit(2000);
+        jobsQ = excludeBillingTypes(jobsQ, BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
         if (session.role !== 'admin') jobsQ = jobsQ.eq('contractor', session.displayName);
         const { data: jobsData, error: jobsErr } = await jobsQ;
         if (jobsErr) return jsonResponse({ error: jobsErr.message });
@@ -2879,7 +2895,7 @@ Deno.serve(async (req: Request) => {
         // แถวส่งมาจากหน้าแอปโดยตรง จึงกรองประเภทการเก็บเงินซ้ำอีกชั้นที่นี่ กันกรณีหน้าแอปเวอร์ชันเก่ายังไม่กรอง
         const sideRows = filterRowsForSide(rowsArg, isAdminArg ? 'cj' : 'contractor');
         if (!sideRows || sideRows.length === 0) {
-          return jsonResponse({ success: false, message: 'ไม่มีรายการที่ต้องเก็บเงินในฝั่งนี้ (รายการเคลม/ผู้รับเหมาเก็บกับ CR ถูกตัดออกแล้ว)' });
+          return jsonResponse({ success: false, message: 'ไม่มีรายการที่ต้องเก็บเงินในฝั่งนี้ (รายการเคลมประกัน 3 เดือน / เคลมอะไหล่ ถูกตัดออกแล้ว)' });
         }
         const result = await generateBillingPdfBase64(sideRows, !!isAdminArg);
         return jsonResponse(result);
@@ -2895,8 +2911,8 @@ Deno.serve(async (req: Request) => {
         }
         if (roundNo === undefined || roundNo === null || roundNo === '') return jsonResponse({ success: false, message: 'ไม่พบเลขรอบบิล' });
         let q = supabase.from('billing_documents').select('*').eq('round_no', roundNo).eq('contractor', contractorName).order('seq', { ascending: true }).order('created_at', { ascending: true });
-        // PDF ของแอดมิน = ใบวางบิลฝั่ง CJ จึงต้องตัดทั้งเคลม (ไม่เก็บทั้ง 2 ฝั่ง) และ contractor_cr (ผู้รับเหมาเก็บกับ CR เอง) ออก
-        // PDF ของผู้รับเหมา = ตัดเฉพาะเคลม (เดิมตรงนี้ไม่ได้กรองเลย ทำให้ผู้รับเหมาโหลด PDF ย้อนหลังแล้วเจอรายการเคลมโผล่มา)
+        // PDF ของแอดมิน = ใบวางบิลฝั่ง CJ จึงต้องตัดทั้งเคลมประกัน 3 เดือน (ไม่เก็บทั้ง 2 ฝั่ง) และเคลมอะไหล่ (เก็บเฉพาะฝั่งผู้รับเหมา) ออก
+        // PDF ของผู้รับเหมา = ตัดเฉพาะเคลมประกัน 3 เดือน (เดิมตรงนี้ไม่ได้กรองเลย ทำให้ผู้รับเหมาโหลด PDF ย้อนหลังแล้วเจอรายการเคลมโผล่มา)
         if (session.role === 'admin') q = excludeBillingTypes(q.or('sent_to_contractor.eq.true,completed_at.not.is.null'), BILLING_TYPES_EXCLUDED_FROM_CJ);
         else q = excludeBillingTypes(q.eq('sent_to_contractor', true), BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
         const { data, error } = await q;
@@ -2918,7 +2934,7 @@ Deno.serve(async (req: Request) => {
         const cleanJobId = (jobId || '').toString().trim();
         if (!cleanJobId) return jsonResponse({ success: false, message: 'ไม่พบเลขที่ใบแจ้งซ่อมบำรุง' });
         let q = supabase.from('billing_documents').select('*').eq('customer_case', cleanJobId).order('seq', { ascending: true }).order('created_at', { ascending: true });
-        // ใบเขียวฝั่ง CJ (แอดมิน) ตัดเคลม + contractor_cr ออก / ใบเขียวผู้รับเหมาตัดเฉพาะเคลม
+        // ใบเขียวฝั่ง CJ (แอดมิน) ตัดเคลมประกัน 3 เดือน + เคลมอะไหล่ ออก / ใบเขียวผู้รับเหมาตัดเฉพาะเคลมประกัน 3 เดือน
         if (session.role === 'admin') q = excludeBillingTypes(q.or('sent_to_contractor.eq.true,completed_at.not.is.null'), BILLING_TYPES_EXCLUDED_FROM_CJ);
         else q = excludeBillingTypes(q.eq('contractor', session.displayName).eq('sent_to_contractor', true), BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
         const { data, error } = await q;
@@ -2939,8 +2955,12 @@ Deno.serve(async (req: Request) => {
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (!jobIds || jobIds.length === 0) return jsonResponse({ success: false, message: 'ไม่มีเลขงานให้สร้างฟอร์ม' });
+        // ฟอร์มวางบิลเป็นเอกสารฝั่งผู้รับเหมา จึงตัด "เคลมประกัน 3 เดือน" ออกทั้งสองบทบาท (รวมตอนแอดมินสร้างแทนด้วย)
+        // ผลที่ได้: เลขทรัพย์สินที่อะไหล่ทุกชิ้นเป็นเคลมประกัน 3 เดือน จะไม่มี sheet ในไฟล์
+        // และถ้าทั้งเลขงานเป็นแบบนั้นหมด จะไม่มีไฟล์ออกมาเลย พร้อมข้อความบอกเหตุผล
         let q = supabase.from('billing_documents').select('customer_case,branch_code,branch_name,service_type,asset_id,contractor,sent_to_contractor').in('customer_case', jobIds).order('created_at', { ascending: true });
-        if (session.role !== 'admin') q = excludeBillingTypes(q.eq('contractor', session.displayName).eq('sent_to_contractor', true), BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
+        q = excludeBillingTypes(q, BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
+        if (session.role !== 'admin') q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true);
         const { data, error } = await q;
         if (error) return jsonResponse({ success: false, message: 'ดึงข้อมูลล้มเหลว: ' + error.message });
         // เดิม dedupe ด้วย customer_case อย่างเดียว ทำให้ 1 เลขงานที่มีหลายเลขทรัพย์สินได้ฟอร์มแค่ 1 ใบ (สูญข้อมูลเลขทรัพย์สินอื่น)
@@ -2955,7 +2975,9 @@ Deno.serve(async (req: Request) => {
           if (jobMap[r.customer_case].assetIds.indexOf(assetKey) === -1) jobMap[r.customer_case].assetIds.push(assetKey);
         });
         const jobs: any[] = Object.values(jobMap);
-        if (jobs.length === 0) return jsonResponse({ success: false, message: 'ไม่พบข้อมูลเลขงานที่ระบุ (หรือไม่ใช่งานของคุณ / ยังไม่ถูกส่งบิล)' });
+        if (jobs.length === 0) {
+          return jsonResponse({ success: false, message: 'ไม่มีฟอร์มต้องกรอกสำหรับเลขงานนี้ — อะไหล่ทุกชิ้นเป็น "เคลมประกัน 3 เดือน" ซึ่งไม่เก็บเงินผู้รับเหมา (หรือไม่ใช่งานของคุณ / ยังไม่ถูกส่งบิล)' });
+        }
         const files: any[] = []; const errors: string[] = [];
         for (const job of jobs) {
           const result = await generateJobFormXlsxBase64(job);

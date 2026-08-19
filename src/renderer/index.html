@@ -711,20 +711,28 @@
                         <button type="button" onclick="downloadBillingPdf()" id="btn_downloadPdfSingle" class="bg-slate-800 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-900 transition-colors">
                             <i class="fa-solid fa-file-pdf mr-1"></i> Save PDF
                         </button>
-                        <!-- แอดมิน: แยกปุ่มดาวน์โหลดราคา CJ กับราคาผู้รับเหมาออกจากกันชัดเจน ทั้ง CSV และ PDF -->
-                        <div id="billingAdminExportButtons" class="flex gap-2 flex-wrap">
-                            <button type="button" onclick="exportBillingCSV('cj')" class="bg-blood-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-blood-700 transition-colors">
-                                <i class="fa-solid fa-file-csv mr-1"></i> CSV (CJ)
-                            </button>
-                            <button type="button" onclick="exportBillingCSV('contractor')" class="bg-blood-500 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-blood-600 transition-colors">
-                                <i class="fa-solid fa-file-csv mr-1"></i> CSV (ผู้รับเหมา)
-                            </button>
-                            <button type="button" onclick="downloadBillingPdf('cj', this)" class="bg-slate-800 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-900 transition-colors">
-                                <i class="fa-solid fa-file-pdf mr-1"></i> PDF (CJ)
-                            </button>
-                            <button type="button" onclick="downloadBillingPdf('contractor', this)" class="bg-slate-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-700 transition-colors">
-                                <i class="fa-solid fa-file-pdf mr-1"></i> PDF (ผู้รับเหมา)
-                            </button>
+                        <!-- แอดมิน: แยกเป็น 2 กล่องตาม "ฝั่งที่จะเก็บเงิน" ให้เห็นชัดว่าปุ่มไหนออกเอกสารของใคร
+                             ตัวเลขบนปุ่มคือจำนวนแถวที่จะออกจริงหลังตัดรายการที่ฝั่งนั้นไม่เก็บเงินแล้ว
+                             (กดได้เสมอ ถ้าเป็น 0 จะขึ้นข้อความบอกเหตุผลแทนการดาวน์โหลดไฟล์เปล่า) -->
+                        <div id="billingAdminExportButtons" class="flex gap-3 flex-wrap items-center">
+                            <div class="flex items-center gap-1.5 border border-slate-200 rounded-lg pl-2.5 pr-1.5 py-1">
+                                <span class="text-xs font-semibold text-slate-500 whitespace-nowrap">เก็บเงิน CJ</span>
+                                <button type="button" onclick="exportBillingCSV('cj')" title="ออกไฟล์ CSV ราคาฝั่ง CJ (ตัดเคลมประกัน 3 เดือน และเคลมอะไหล่ออก)" class="bg-blood-600 text-white text-sm font-semibold py-1.5 px-3 rounded-md hover:bg-blood-700 transition-colors">
+                                    <i class="fa-solid fa-file-csv mr-1"></i> CSV<span id="billingCountCsvCj" class="ml-1.5 px-1.5 rounded-full text-[11px] tabular-nums bg-white/25">0</span>
+                                </button>
+                                <button type="button" onclick="downloadBillingPdf('cj', this)" title="ออกไฟล์ PDF ราคาฝั่ง CJ (ตัดเคลมประกัน 3 เดือน และเคลมอะไหล่ออก)" class="bg-slate-800 text-white text-sm font-semibold py-1.5 px-3 rounded-md hover:bg-slate-900 transition-colors">
+                                    <i class="fa-solid fa-file-pdf mr-1"></i> PDF<span id="billingCountPdfCj" class="ml-1.5 px-1.5 rounded-full text-[11px] tabular-nums bg-white/25">0</span>
+                                </button>
+                            </div>
+                            <div class="flex items-center gap-1.5 border border-slate-200 rounded-lg pl-2.5 pr-1.5 py-1">
+                                <span class="text-xs font-semibold text-slate-500 whitespace-nowrap">เก็บเงินผู้รับเหมา</span>
+                                <button type="button" onclick="exportBillingCSV('contractor')" title="ออกไฟล์ CSV ราคาฝั่งผู้รับเหมา (ตัดเฉพาะเคลมประกัน 3 เดือน)" class="bg-blood-500 text-white text-sm font-semibold py-1.5 px-3 rounded-md hover:bg-blood-600 transition-colors">
+                                    <i class="fa-solid fa-file-csv mr-1"></i> CSV<span id="billingCountCsvContractor" class="ml-1.5 px-1.5 rounded-full text-[11px] tabular-nums bg-white/25">0</span>
+                                </button>
+                                <button type="button" onclick="downloadBillingPdf('contractor', this)" title="ออกไฟล์ PDF ราคาฝั่งผู้รับเหมา (ตัดเฉพาะเคลมประกัน 3 เดือน)" class="bg-slate-600 text-white text-sm font-semibold py-1.5 px-3 rounded-md hover:bg-slate-700 transition-colors">
+                                    <i class="fa-solid fa-file-pdf mr-1"></i> PDF<span id="billingCountPdfContractor" class="ml-1.5 px-1.5 rounded-full text-[11px] tabular-nums bg-white/25">0</span>
+                                </button>
+                            </div>
                         </div>
                         <button type="button" onclick="openBillingHistoryModal()" id="btn_billingHistory" class="bg-indigo-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-indigo-700 transition-colors">
                             <i class="fa-solid fa-clock-rotate-left mr-1"></i> ประวัติรอบบิล
@@ -1347,8 +1355,11 @@
     <div id="addProductModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div class="flex items-center justify-between p-5 border-b border-slate-200">
+                <!-- ต้องโชว์ "เลขทรัพย์สิน" ด้วยเสมอ เพราะ 1 เลขงานมีได้หลายเลขทรัพย์สิน
+                     อะไหล่ที่เพิ่มในหน้าต่างนี้จะไปผูกกับเลขทรัพย์สินที่โชว์อยู่นี้เท่านั้น -->
                 <h3 class="text-lg font-bold text-slate-800">
-                    เพิ่มสินค้า — <span id="modalCustomerCase" class="text-blood-700"></span>
+                    เพิ่มอะไหล่ — <span id="modalCustomerCase" class="text-blood-700"></span>
+                    <span class="block text-xs font-semibold text-slate-500 mt-0.5">เลขทรัพย์สิน: <span id="modalAssetId" class="text-slate-700">-</span> · เพิ่มได้หลายชิ้น แต่ละชิ้นตั้งประเภทเก็บเงินแยกกันได้</span>
                 </h3>
                 <button type="button" onclick="closeAddProductModal()" class="text-slate-400 hover:text-slate-700 text-xl leading-none">
                     <i class="fa-solid fa-xmark"></i>
@@ -3783,9 +3794,10 @@
 
         // ==================== ประเภทการเก็บเงิน (billing_type) ====================
         // ต้องตรงกับฝั่งเซิร์ฟเวอร์เป๊ะ ๆ (index.ts) - ถ้าเพิ่มประเภทใหม่ต้องแก้ทั้ง 2 ฝั่ง + CHECK ในฐานข้อมูล
-        //   normal        = เก็บเงินปกติ            -> ขึ้นทั้งบิล CJ และบิลผู้รับเหมา
-        //   claim         = เคลม                    -> ไม่เก็บเงินทั้ง 2 ฝั่ง
-        //   contractor_cr = ผู้รับเหมาเก็บเงินกับ CR -> ขึ้นเฉพาะบิลผู้รับเหมา ฝั่ง CJ ไม่เก็บ
+        //   normal        = เก็บเงินปกติ         -> ขึ้นทั้งบิล CJ และบิลผู้รับเหมา
+        //   claim         = เคลมประกัน 3 เดือน   -> ไม่เก็บเงินทั้ง 2 ฝั่ง
+        //   contractor_cr = เคลมอะไหล่           -> ขึ้นเฉพาะบิลผู้รับเหมา ฝั่ง CJ ไม่เก็บ
+        // ค่าที่เก็บในฐานข้อมูลยังเป็น 'claim'/'contractor_cr' เหมือนเดิม เปลี่ยนแค่ชื่อที่แสดงให้ผู้ใช้เห็น
         const BILLING_TYPE_VALUES = ['normal', 'claim', 'contractor_cr'];
         const BILLING_TYPES_EXCLUDED_FROM_CJ = ['claim', 'contractor_cr'];
         const BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR = ['claim'];
@@ -3797,9 +3809,66 @@
 
         function billingTypeLabel(v) {
             const t = normalizeBillingType(v);
-            if (t === 'claim') return 'เคลม';
-            if (t === 'contractor_cr') return 'ผู้รับเหมาเก็บเงินกับ CR';
+            if (t === 'claim') return 'เคลมประกัน 3 เดือน';
+            if (t === 'contractor_cr') return 'เคลมอะไหล่';
             return 'เก็บเงินปกติ';
+        }
+
+        // สร้าง <option> ของช่องเลือกประเภทเก็บเงินจากที่เดียว เพื่อให้ทุกตารางในแอปใช้ชื่อชุดเดียวกันเสมอ
+        // (เดิมพิมพ์ชื่อซ้ำไว้หลายที่ พอเปลี่ยนชื่อทีต้องไล่แก้ทุกจุด ลืมจุดใดจุดหนึ่งแล้วชื่อจะไม่ตรงกัน)
+        function billingTypeOptionsHtml(selectedValue) {
+            const sel = normalizeBillingType(selectedValue);
+            return BILLING_TYPE_VALUES.map(function (v) {
+                return '<option value="' + v + '"' + (v === sel ? ' selected' : '') + '>' + billingTypeLabel(v) + '</option>';
+            }).join('');
+        }
+
+        // สีของช่องเลือกประเภทเก็บเงิน - บอกด้วยสายตาว่าแถวนี้จะหายไปจากบิลฝั่งไหน
+        //   เคลมประกัน 3 เดือน (เหลือง) = ไม่ขึ้นทั้งบิล CJ และบิลผู้รับเหมา
+        //   เคลมอะไหล่ (ฟ้า)            = ขึ้นเฉพาะบิลผู้รับเหมา ฝั่ง CJ ไม่เก็บ
+        function billingTypeSelectClass(v) {
+            const t = normalizeBillingType(v);
+            if (t === 'claim') return 'border-amber-300 bg-amber-50 text-amber-800 font-semibold';
+            if (t === 'contractor_cr') return 'border-sky-300 bg-sky-50 text-sky-800 font-semibold';
+            return 'border-slate-200 bg-white';
+        }
+
+        // นับจำนวนแถวแยกตามประเภทเก็บเงิน (ใช้ทั้งกับป้ายจำนวนบนปุ่ม และกับข้อความอธิบายตอนไม่มีรายการ)
+        function countBillingRowsByType(rows) {
+            const counts = { normal: 0, claim: 0, contractor_cr: 0, total: 0 };
+            (rows || []).forEach(function (r) {
+                counts[normalizeBillingType(r.billing_type)]++;
+                counts.total++;
+            });
+            return counts;
+        }
+
+        // อธิบายให้ชัดว่าทำไมฝั่งนี้ถึงไม่มีรายการให้ออกเอกสาร
+        // เดิมขึ้นข้อความสั้น ๆ อย่างเดียว ผู้ใช้กดปุ่ม CSV (CJ) แล้วเหมือนปุ่มเสีย เพราะไม่รู้ว่าถูกกรองออกด้วยเหตุผลอะไร
+        function explainNoRowsForSide(rows, side) {
+            const c = countBillingRowsByType(rows);
+            if (c.total === 0) return 'ยังไม่มีข้อมูลในตาราง กรุณากด "โหลด/รีเฟรชข้อมูล" ก่อน (หรือลองล้างตัวกรองรอบบิล/ผู้รับเหมาออก)';
+            const sideName = side === 'cj' ? 'CJ' : 'ผู้รับเหมา';
+            const reasons = [];
+            if (c.claim > 0) reasons.push('"เคลมประกัน 3 เดือน" ' + c.claim + ' แถว (ไม่เก็บเงินทั้ง 2 ฝั่ง)');
+            if (side === 'cj' && c.contractor_cr > 0) reasons.push('"เคลมอะไหล่" ' + c.contractor_cr + ' แถว (เก็บเฉพาะฝั่งผู้รับเหมา)');
+            return 'ฝั่ง ' + sideName + ' ไม่มีรายการที่ต้องเก็บเงิน — ทั้ง ' + c.total + ' แถวที่แสดงอยู่ถูกตัดออกหมด'
+                + (reasons.length ? ' เพราะเป็น ' + reasons.join(' และ ') : '')
+                + ' · ถ้าแถวไหนต้องเก็บเงินฝั่งนี้จริง ให้แก้คอลัมน์ "ประเภทเก็บเงิน" ของแถวนั้นเป็น "เก็บเงินปกติ" ก่อน';
+        }
+
+        // อัปเดตป้ายจำนวนแถวบนปุ่มดาวน์โหลดของแอดมิน ให้เห็นตั้งแต่ก่อนกดว่าแต่ละฝั่งจะได้กี่แถว
+        // (ไม่ปิดการกดปุ่ม ยังกดได้เสมอ แต่ถ้าเป็น 0 จะขึ้นข้อความอธิบายเหตุผลแทนไฟล์เปล่า)
+        function updateBillingExportButtonCounts() {
+            const cjCount = getBillingRowsForDisplay('cj').length;
+            const contractorCount = getBillingRowsForDisplay('contractor').length;
+            [['billingCountCsvCj', cjCount], ['billingCountPdfCj', cjCount],
+             ['billingCountCsvContractor', contractorCount], ['billingCountPdfContractor', contractorCount]].forEach(function (pair) {
+                const el = document.getElementById(pair[0]);
+                if (!el) return;
+                el.textContent = pair[1];
+                el.className = 'ml-1.5 px-1.5 rounded-full text-[11px] tabular-nums ' + (pair[1] > 0 ? 'bg-white/25' : 'bg-white/25 line-through');
+            });
         }
 
         // มุมมอง "บิลรวม" (แอดมิน ไม่ได้เลือกผู้รับเหมาคนใดคนหนึ่ง): เลขลำดับในฐานข้อมูลรีเซ็ตใหม่ทุกผู้รับเหมา
@@ -3807,8 +3876,8 @@
         // นับตามเลขงาน (เลขงานเดียวกัน = ลำดับเดียวกัน) โดยไม่ยุ่งกับค่า seq จริงที่เก็บไว้ในฐานข้อมูล
         //
         // billingSide: ไม่ใส่ = ตารางในแอป (โชว์ทุกแถวเสมอ เพื่อให้แอดมินเห็นและแก้ประเภทได้)
-        //              'cj' = เอกสารฝั่ง CJ (ตัดเคลม + ผู้รับเหมาเก็บกับ CR ออก)
-        //              'contractor' = เอกสารฝั่งผู้รับเหมา (ตัดเฉพาะเคลม)
+        //              'cj' = เอกสารฝั่ง CJ (ตัดเคลมประกัน 3 เดือน + เคลมอะไหล่ ออก)
+        //              'contractor' = เอกสารฝั่งผู้รับเหมา (ตัดเฉพาะเคลมประกัน 3 เดือน)
         function getBillingRowsForDisplay(billingSide) {
             const roundFilterEl = document.getElementById('billingRoundFilter');
             const roundFilter = roundFilterEl ? roundFilterEl.value : '';
@@ -4031,6 +4100,8 @@
             const tbody = document.getElementById('billingBody');
             tbody.innerHTML = '';
             const isAdmin = currentSession && currentSession.role === 'admin';
+            // อัปเดตป้ายจำนวนบนปุ่มดาวน์โหลดทุกครั้งที่ตารางถูกวาดใหม่ (โหลดข้อมูล / เปลี่ยนตัวกรอง / แก้ประเภทเก็บเงิน)
+            updateBillingExportButtonCounts();
 
             // [key, editable?, type] - type: 'text' | 'number' | 'readonly' | 'yesno' | 'partcode'
             // ข้อมูลเดิม (ลำดับ/เลขงาน/สาขา/งานบริการ/เลขทรัพย์สิน/วันที่) ห้ามแก้ไข - แก้ไขได้แค่ส่วนของสินค้า/จำนวน/Quotation
@@ -4101,18 +4172,9 @@
                             </select>
                         </td>`;
                     } else if (effectiveType === 'billingtype') {
-                        // ทำสีให้เห็นทันทีว่าแถวนี้จะหายไปจากบิลฝั่งไหน
-                        //   เคลม (เหลือง)      = ไม่ขึ้นทั้งบิล CJ และบิลผู้รับเหมา
-                        //   ผู้รับเหมาเก็บกับ CR (ฟ้า) = ขึ้นเฉพาะบิลผู้รับเหมา ฝั่ง CJ ไม่เก็บ
-                        const bType = normalizeBillingType(val);
-                        const typeCls = bType === 'claim' ? 'border-amber-300 bg-amber-50 text-amber-800 font-semibold'
-                            : bType === 'contractor_cr' ? 'border-sky-300 bg-sky-50 text-sky-800 font-semibold'
-                            : 'border-slate-200 bg-white';
                         cellsHtml += `<td data-col="${key}" class="p-1${hiddenCls}">
-                            <select data-field="${key}" class="grid-input w-full px-1 py-1 rounded border text-xs ${typeCls}">
-                                <option value="normal" ${bType === 'normal' ? 'selected' : ''}>เก็บเงินปกติ</option>
-                                <option value="claim" ${bType === 'claim' ? 'selected' : ''}>เคลม</option>
-                                <option value="contractor_cr" ${bType === 'contractor_cr' ? 'selected' : ''}>ผู้รับเหมาเก็บเงินกับ CR</option>
+                            <select data-field="${key}" class="grid-input w-full px-1 py-1 rounded border text-xs ${billingTypeSelectClass(val)}">
+                                ${billingTypeOptionsHtml(val)}
                             </select>
                         </td>`;
                     } else if (effectiveType === 'partcode') {
@@ -4128,7 +4190,7 @@
                 });
                 if (isAdmin) {
                     cellsHtml += `<td class="p-1 flex gap-1">
-                        <button type="button" onclick="openAddProductModal('${row.id}', '${String(row.customer_case || '').replace(/'/g,"\\'")}')" class="text-blood-500 hover:text-blood-700" title="เพิ่มสินค้าอีกชิ้นให้เลขงานนี้"><i class="fa-solid fa-plus"></i></button>
+                        <button type="button" onclick="openAddProductModal('${row.id}', '${String(row.customer_case || '').replace(/'/g,"\\'")}', '${String(row.asset_id || '').replace(/'/g,"\\'")}')" class="text-blood-500 hover:text-blood-700" title="เพิ่มอะไหล่อีกชิ้นให้เลขทรัพย์สินของแถวนี้"><i class="fa-solid fa-plus"></i></button>
                         <button type="button" onclick="saveBillingRow('${row.id}')" class="text-blood-600 hover:text-blood-800" title="บันทึก"><i class="fa-solid fa-floppy-disk"></i></button>
                         <button type="button" onclick="deleteBillingRow('${row.id}')" class="text-red-400 hover:text-red-600" title="ลบ"><i class="fa-solid fa-trash"></i></button>
                     </td>`;
@@ -4176,9 +4238,11 @@
         let modalSourceId = null;
         let modalPartRowCount = 0;
 
-        function openAddProductModal(sourceId, customerCase) {
+        function openAddProductModal(sourceId, customerCase, assetId) {
             modalSourceId = sourceId;
             document.getElementById('modalCustomerCase').textContent = customerCase || '';
+            const assetEl = document.getElementById('modalAssetId');
+            if (assetEl) assetEl.textContent = (assetId && String(assetId).trim()) ? assetId : '(ยังไม่ระบุ)';
             document.getElementById('modalPartRows').innerHTML = '';
             modalPartRowCount = 0;
             addModalPartRow();
@@ -4195,10 +4259,10 @@
             const hint = sel.closest('div').querySelector('.modal_billingTypeHint');
             if (!hint) return;
             if (sel.value === 'claim') {
-                hint.textContent = 'ไม่เก็บเงินทั้ง 2 ฝั่ง รายการนี้จะไม่ขึ้นในใบวางบิลของ CJ และของผู้รับเหมาเลย';
+                hint.textContent = 'ไม่เก็บเงินทั้ง 2 ฝั่ง อะไหล่ชิ้นนี้จะไม่ขึ้นในใบวางบิลของ CJ และของผู้รับเหมาเลย';
                 hint.className = 'modal_billingTypeHint text-xs mt-1 text-amber-600 font-semibold';
             } else if (sel.value === 'contractor_cr') {
-                hint.textContent = 'ผู้รับเหมาไปเก็บเงินกับ CR เอง รายการนี้จะขึ้นเฉพาะใบวางบิลฝั่งผู้รับเหมา ฝั่ง CJ ไม่เก็บ';
+                hint.textContent = 'อะไหล่ชิ้นนี้จะขึ้นเฉพาะใบวางบิลฝั่งผู้รับเหมา ฝั่ง CJ ไม่เก็บเงิน';
                 hint.className = 'modal_billingTypeHint text-xs mt-1 text-sky-600 font-semibold';
             } else {
                 hint.textContent = 'ออกใบวางบิลทั้งฝั่ง CJ และฝั่งผู้รับเหมาตามปกติ';
@@ -4236,8 +4300,8 @@
                     <label class="block text-slate-700 text-sm font-semibold mb-1">ประเภทการเก็บเงิน <span class="text-red-500">*</span></label>
                     <select class="modal_billingType w-full px-3 py-1.5 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm bg-white" onchange="updateBillingTypeHint(this)">
                         <option value="normal">เก็บเงินปกติ — ออกใบวางบิลทั้ง CJ และผู้รับเหมา</option>
-                        <option value="claim">เคลม — ไม่เก็บเงินทั้ง CJ และผู้รับเหมา</option>
-                        <option value="contractor_cr">ผู้รับเหมาเก็บเงินกับ CR — ออกเฉพาะใบวางบิลผู้รับเหมา ไม่เก็บ CJ</option>
+                        <option value="claim">เคลมประกัน 3 เดือน — ไม่เก็บเงินทั้ง CJ และผู้รับเหมา</option>
+                        <option value="contractor_cr">เคลมอะไหล่ — ออกเฉพาะใบวางบิลผู้รับเหมา ไม่เก็บ CJ</option>
                     </select>
                     <p class="modal_billingTypeHint text-xs mt-1 text-slate-400">ค่าเริ่มต้นคือเก็บเงินปกติ</p>
                 </div>
@@ -5202,6 +5266,15 @@
 
             runServerCall('updateBillingDocumentRow', [currentSession.username, currentSession.token, id, fields], function(res) {
                 if (res && res.success) {
+                    // อัปเดตข้อมูลที่ถืออยู่ในหน้าจอให้ตรงกับที่เพิ่งบันทึกลงฐานข้อมูลด้วย
+                    // บั๊กเดิม: currentBillingData ไม่ถูกอัปเดตเลย พอแก้ "ประเภทเก็บเงิน" ในตารางแล้วกดบันทึก
+                    // ปุ่ม CSV/PDF ยังใช้ค่าเก่าในหน่วยความจำกรองอยู่ ทำให้แถวที่เพิ่งเปลี่ยนเป็น "เก็บเงินปกติ"
+                    // ยังถูกตัดออกเหมือนเดิม กด CSV (CJ) แล้วขึ้นว่าไม่มีรายการ เหมือนปุ่มเสีย
+                    const cached = (currentBillingData || []).find(r => String(r.id) === String(id));
+                    if (cached) Object.keys(fields).forEach(k => { cached[k] = fields[k]; });
+                    const typeSel = tr.querySelector('[data-field="billing_type"]');
+                    if (typeSel) typeSel.className = 'grid-input w-full px-1 py-1 rounded border text-xs ' + billingTypeSelectClass(typeSel.value);
+                    updateBillingExportButtonCounts();
                     showAlert('success', 'บันทึกแถวเรียบร้อย');
                 } else {
                     showAlert('error', (res && res.message) || 'บันทึกล้มเหลว');
@@ -5218,6 +5291,8 @@
                 if (res && res.success) {
                     const tr = document.querySelector(`#billingBody tr[data-id="${id}"]`);
                     if (tr) tr.remove();
+                    currentBillingData = (currentBillingData || []).filter(r => String(r.id) !== String(id));
+                    updateBillingExportButtonCounts();
                     showAlert('success', 'ลบแถวเรียบร้อย');
                 } else {
                     showAlert('error', (res && res.message) || 'ลบล้มเหลว');
@@ -5239,11 +5314,10 @@
             const isAdmin = currentSession && currentSession.role === 'admin';
             const useContractorPricing = pricingMode ? (pricingMode === 'contractor') : !isAdmin;
             // CSV เป็นเอกสารวางบิลจริง จึงต้องกรองประเภทการเก็บเงินตามฝั่งที่กำลังออก
-            const displayRows = getBillingRowsForDisplay(useContractorPricing ? 'contractor' : 'cj');
+            const billingSide = useContractorPricing ? 'contractor' : 'cj';
+            const displayRows = getBillingRowsForDisplay(billingSide);
             if (displayRows.length === 0) {
-                showAlert('error', useContractorPricing
-                    ? 'ไม่มีรายการที่ต้องเก็บเงินผู้รับเหมา (รายการเคลมถูกตัดออกทั้งหมด)'
-                    : 'ไม่มีรายการที่ต้องเก็บเงิน CJ (รายการเคลม / ผู้รับเหมาเก็บกับ CR ถูกตัดออกทั้งหมด)');
+                showAlert('error', explainNoRowsForSide(getBillingRowsForDisplay(), billingSide));
                 return;
             }
 
@@ -5323,9 +5397,7 @@
             // PDF เป็นเอกสารวางบิลจริง จึงต้องกรองประเภทการเก็บเงินตามฝั่งที่กำลังออก (เช็คก่อนขึ้นสถานะปุ่มกำลังโหลด)
             const pdfRows = getBillingRowsForDisplay(isCjSide ? 'cj' : 'contractor');
             if (pdfRows.length === 0) {
-                showAlert('error', isCjSide
-                    ? 'ไม่มีรายการที่ต้องเก็บเงิน CJ (รายการเคลม / ผู้รับเหมาเก็บกับ CR ถูกตัดออกทั้งหมด)'
-                    : 'ไม่มีรายการที่ต้องเก็บเงินผู้รับเหมา (รายการเคลมถูกตัดออกทั้งหมด)');
+                showAlert('error', explainNoRowsForSide(getBillingRowsForDisplay(), isCjSide ? 'cj' : 'contractor'));
                 return;
             }
 
@@ -6214,15 +6286,9 @@
                             </select>
                         </td>`;
                     } else if (type === 'billingtype') {
-                        const bType = normalizeBillingType(val);
-                        const typeCls = bType === 'claim' ? 'border-amber-300 bg-amber-50 text-amber-800 font-semibold'
-                            : bType === 'contractor_cr' ? 'border-sky-300 bg-sky-50 text-sky-800 font-semibold'
-                            : 'border-slate-200 bg-white';
                         cellsHtml += `<td class="p-1">
-                            <select data-field="${key}" class="grid-input w-full px-1 py-1 rounded border text-xs ${typeCls}">
-                                <option value="normal" ${bType === 'normal' ? 'selected' : ''}>เก็บเงินปกติ</option>
-                                <option value="claim" ${bType === 'claim' ? 'selected' : ''}>เคลม</option>
-                                <option value="contractor_cr" ${bType === 'contractor_cr' ? 'selected' : ''}>ผู้รับเหมาเก็บเงินกับ CR</option>
+                            <select data-field="${key}" class="grid-input w-full px-1 py-1 rounded border text-xs ${billingTypeSelectClass(val)}">
+                                ${billingTypeOptionsHtml(val)}
                             </select>
                         </td>`;
                     } else if (type === 'partcode') {
@@ -6260,6 +6326,12 @@
 
             runServerCall('updateBillingDocumentRow', [currentSession.username, currentSession.token, id, fields], function (res) {
                 if (res && res.success) {
+                    // เหตุผลเดียวกับ saveBillingRow: ถ้าไม่อัปเดตข้อมูลในหน่วยความจำ
+                    // ปุ่ม CSV ของบิลรอบจะยังกรองด้วยประเภทเก็บเงินค่าเก่า
+                    const cachedRow = (currentCompletedRoundDetailRows || []).find(r => String(r.id) === String(id));
+                    if (cachedRow) Object.keys(fields).forEach(k => { cachedRow[k] = fields[k]; });
+                    const typeSelEl = tr.querySelector('[data-field="billing_type"]');
+                    if (typeSelEl) typeSelEl.className = 'grid-input w-full px-1 py-1 rounded border text-xs ' + billingTypeSelectClass(typeSelEl.value);
                     showAlert('success', 'บันทึกแถวเรียบร้อย');
                 } else {
                     showAlert('error', (res && res.message) || 'บันทึกล้มเหลว');
@@ -6298,9 +6370,7 @@
             const excludedTypes = useContractorPricing ? BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR : BILLING_TYPES_EXCLUDED_FROM_CJ;
             const csvRows = currentCompletedRoundDetailRows.filter(r => excludedTypes.indexOf(normalizeBillingType(r.billing_type)) === -1);
             if (csvRows.length === 0) {
-                showAlert('error', useContractorPricing
-                    ? 'บิลรอบนี้ไม่มีรายการที่ต้องเก็บเงินผู้รับเหมา (รายการเคลมถูกตัดออกทั้งหมด)'
-                    : 'บิลรอบนี้ไม่มีรายการที่ต้องเก็บเงิน CJ (รายการเคลม / ผู้รับเหมาเก็บกับ CR ถูกตัดออกทั้งหมด)');
+                showAlert('error', 'บิลรอบนี้ — ' + explainNoRowsForSide(currentCompletedRoundDetailRows, useContractorPricing ? 'contractor' : 'cj'));
                 return;
             }
             const priceHeader = useContractorPricing ? 'ราคา/หน่วย (ผู้รับเหมา)' : 'ราคา/หน่วย';
