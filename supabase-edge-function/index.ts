@@ -34,6 +34,42 @@ const corsHeaders = {
 const AUTH_SALT = 'CR-MAINT-SYSTEM-SALT-2026';
 const NOT_SUPPORTED_PREFIX = 'ฟังก์ชันนี้ต้องใช้ Google API (Docs/Sheets/Drive) ซึ่งยังไม่รองรับในเวอร์ชัน Supabase นี้: ';
 
+// ==================== ประเภทการเก็บเงินของแถววางบิล (billing_type) ====================
+// มี 3 แบบ และแต่ละแบบตัดสินว่าแถวนี้จะขึ้นในใบวางบิล "ฝั่งไหน" บ้าง
+//   normal        = เก็บเงินปกติ            -> ขึ้นทั้งฝั่ง CJ และฝั่งผู้รับเหมา
+//   claim         = เคลม                    -> ไม่เก็บเงินทั้ง 2 ฝั่ง (ไม่ขึ้นทั้ง CJ และผู้รับเหมา)
+//   contractor_cr = ผู้รับเหมาเก็บเงินกับ CR -> ขึ้นเฉพาะฝั่งผู้รับเหมา ฝั่ง CJ ไม่เก็บ
+// แถวยังคงอยู่ในฐานข้อมูลและในตารางของแอดมินเสมอ เพื่อให้แอดมินเห็น/แก้ประเภทได้ - ที่ถูกกรองคือ "ผลลัพธ์ที่ออกบิล" เท่านั้น
+const BILLING_TYPE_VALUES = ['normal', 'claim', 'contractor_cr'];
+// ประเภทที่ต้องไม่ปรากฏในเอกสาร/ยอดของแต่ละฝั่ง
+const BILLING_TYPES_EXCLUDED_FROM_CJ = ['claim', 'contractor_cr'];
+const BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR = ['claim'];
+
+function normalizeBillingType(v: any): string {
+  const s = (v === null || v === undefined) ? '' : String(v).trim();
+  return BILLING_TYPE_VALUES.indexOf(s) !== -1 ? s : 'normal';
+}
+
+function billingTypeLabel(v: any): string {
+  const t = normalizeBillingType(v);
+  if (t === 'claim') return 'เคลม';
+  if (t === 'contractor_cr') return 'ผู้รับเหมาเก็บเงินกับ CR';
+  return 'เก็บเงินปกติ';
+}
+
+// ใช้ .neq() ต่อกันแทน .in() เพราะ .neq() ต่อกันหลายตัวถูก AND เข้าด้วยกันตรงไปตรงมา
+// และไม่ต้องพึ่งรูปแบบสตริงของ PostgREST ที่พิมพ์ผิดแล้วจะเงียบ ๆ ไม่กรองอะไรเลย
+function excludeBillingTypes(q: any, types: string[]) {
+  types.forEach((t) => { q = q.neq('billing_type', t); });
+  return q;
+}
+
+// กรองแถวฝั่ง client-side (ใช้กับข้อมูลที่ถืออยู่ในมือแล้ว ไม่ได้ query ใหม่)
+function filterRowsForSide(rows: any[], side: 'cj' | 'contractor'): any[] {
+  const excluded = side === 'cj' ? BILLING_TYPES_EXCLUDED_FROM_CJ : BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR;
+  return (rows || []).filter((r: any) => excluded.indexOf(normalizeBillingType(r && r.billing_type)) === -1);
+}
+
 // ==================== เชื่อมกับระบบ PM (คนละโปรเจกต์ Supabase กัน: ucxzsfiktqswabxfnojr) ====================
 // ดึงข้อมูลงาน PM ที่พร้อมวางบิลมาแสดงในเมนู "PM" — ทางเดียว (PM -> CP9X อ่านอย่างเดียว ไม่เขียนอะไรกลับไปที่ฝั่ง PM เลย)
 // ใช้ shared secret (x-api-key) แทน JWT เพราะเป็นการเรียกข้ามโปรเจกต์ - ต้องตรงกับค่าที่ตั้งไว้ใน Edge Function
@@ -1371,7 +1407,7 @@ const SYNC_TABLE_REGISTRY: { table: string; sheetName: string; color: string; he
   { table: 'open_issues', sheetName: 'เปิดงาน', color: '#e0e7ff', headers: ['เลขที่ใบแจ้งซ่อมบำรุง', 'Service Type', 'ประเภทสัญญา', 'วันที่ร้องขอ', 'งานบริการ', 'Service Issue', 'รหัส-ชื่อสาขา', 'รายละเอียดปัญหาที่พบ'], keyOf: (r) => String(r.id), mapRow: (r) => [r.main_id, r.service_type, r.contract_type ?? '', r.req_date, r.service_work, r.service_issue ?? '', r.branch, r.details] },
   { table: 'close_issues', sheetName: 'ปิดงาน', color: '#d1fae5', headers: ['เลขงาน', 'สาขา', 'วันที่เข้าแก้ไข', 'รายการอะไหล่ที่เปลี่ยน', 'เลขทรัพย์สิน', 'ดำเนินการ', 'ลิงก์แนบรูป'], keyOf: (r) => String(r.id), mapRow: (r) => [r.job_id, r.branch, r.fix_date, r.parts, r.asset_id, r.action_taken, r.photo_form_link] },
   { table: 'quotations', sheetName: 'ใบเสนอราคา', color: '#fef3c7', headers: ['ชุดที่', 'วันที่', 'Customer Case', 'Branch Code', 'Branch', 'Type', 'Asset No.', 'Part Code', 'Detail', 'ระยะเวลารับประกัน(เดือน)', 'จำนวน', 'หน่วย', 'ราคา/หน่วย', 'ราคา/รวม', 'วันที่รับแจ้งงาน', 'วันที่เข้างาน', 'Quotation', 'อะไหล่เก่าส่งคืน CJ', 'ผู้รับผิดชอบ', 'บริษัท'], keyOf: (r) => String(r.id), mapRow: (r) => [r.set_no ?? null, r.quote_date ?? null, r.customer_case, r.branch_code, r.branch_name, r.work_type ?? null, r.asset_id, r.part_code, r.part_name, r.warranty_months, r.qty, r.unit, r.unit_price, r.total_price, r.req_date, r.visit_date, r.quotation_ref, r.return_old_part, r.responsible, r.company] },
-  { table: 'billing_documents', sheetName: 'ตารางวางบิล', color: '#fbecec', headers: ['ลำดับ', 'Customer Case', 'รหัสสาขา', 'ชื่อสาขา', 'งานบริการ', 'เลขทรัพย์สิน', 'Part Code', 'รายละเอียดอะไหล่', 'ระยะเวลาประกัน(เดือน)', 'จำนวน', 'หน่วย', 'ราคา/หน่วย (CJ)', 'ราคา/รวม (CJ)', 'ราคา/หน่วย (ผู้รับเหมา)', 'ราคา/รวม (ผู้รับเหมา)', 'วันที่รับแจ้ง', 'วันที่เข้างาน', 'Quotation', 'อะไหล่เก่าส่งคืน CJ', 'ผู้รับผิดชอบ', 'บริษัท', 'ผู้รับเหมา', 'รอบบิลที่', 'ช่วงรอบบิล', 'ประเภทเก็บเงิน'], keyOf: (r) => String(r.id), mapRow: (r) => [r.seq, r.customer_case, r.branch_code, r.branch_name, r.service_type, r.asset_id, r.part_code, r.part_detail, r.warranty_months, r.qty, r.unit, r.unit_price, r.total_price, r.unit_price_contractor, r.total_price_contractor, r.req_date, r.visit_date, r.quotation_ref, r.return_old_part, r.responsible, r.company, r.contractor, r.round_no, r.round_period, (r.billing_type === 'claim' ? 'เคลม' : 'เก็บเงินปกติ')] },
+  { table: 'billing_documents', sheetName: 'ตารางวางบิล', color: '#fbecec', headers: ['ลำดับ', 'Customer Case', 'รหัสสาขา', 'ชื่อสาขา', 'งานบริการ', 'เลขทรัพย์สิน', 'Part Code', 'รายละเอียดอะไหล่', 'ระยะเวลาประกัน(เดือน)', 'จำนวน', 'หน่วย', 'ราคา/หน่วย (CJ)', 'ราคา/รวม (CJ)', 'ราคา/หน่วย (ผู้รับเหมา)', 'ราคา/รวม (ผู้รับเหมา)', 'วันที่รับแจ้ง', 'วันที่เข้างาน', 'Quotation', 'อะไหล่เก่าส่งคืน CJ', 'ผู้รับผิดชอบ', 'บริษัท', 'ผู้รับเหมา', 'รอบบิลที่', 'ช่วงรอบบิล', 'ประเภทเก็บเงิน'], keyOf: (r) => String(r.id), mapRow: (r) => [r.seq, r.customer_case, r.branch_code, r.branch_name, r.service_type, r.asset_id, r.part_code, r.part_detail, r.warranty_months, r.qty, r.unit, r.unit_price, r.total_price, r.unit_price_contractor, r.total_price_contractor, r.req_date, r.visit_date, r.quotation_ref, r.return_old_part, r.responsible, r.company, r.contractor, r.round_no, r.round_period, billingTypeLabel(r.billing_type)] },
   { table: 'pause_records', sheetName: 'พักงาน', color: '#fde68a', headers: ['เลขที่ใบแจ้งซ่อมบำรุง', 'เหตุผลที่พัก', 'หมายเหตุ', 'วันเวลาที่พัก', 'ผู้พักงาน', 'วันเวลาที่กลับมาทำ', 'ผู้ทำรายการกลับมาทำ', 'สถานะ'], keyOf: (r) => String(r.id), mapRow: (r) => [r.main_id, r.reason, r.note, r.paused_at, r.paused_by, r.resumed_at, r.resumed_by, r.status] },
 ];
 
@@ -1847,8 +1883,9 @@ Deno.serve(async (req: Request) => {
           if (session.role === 'admin') {
             if (contractorFilter) q = q.eq('contractor', contractorFilter);
           } else {
-            // แถวประเภท 'claim' ไม่เก็บเงินผู้รับเหมา จึงต้องไม่โผล่ในตาราง/บิลฝั่งผู้รับเหมาเลย
-            q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true).neq('billing_type', 'claim');
+            // แถวประเภท 'claim' ไม่เก็บเงินทั้ง 2 ฝั่ง จึงต้องไม่โผล่ในตาราง/บิลฝั่งผู้รับเหมาเลย
+            // ส่วน 'contractor_cr' (ผู้รับเหมาเก็บกับ CR) ต้องโผล่ฝั่งผู้รับเหมาตามปกติ จึงไม่กรองออก
+            q = excludeBillingTypes(q.eq('contractor', session.displayName).eq('sent_to_contractor', true), BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
           }
         } else {
           q = q.order('round_no', { ascending: true }).order('contractor', { ascending: true }).order('seq', { ascending: true }).limit(1000);
@@ -1857,7 +1894,7 @@ Deno.serve(async (req: Request) => {
             if (contractorFilter) q = q.eq('contractor', contractorFilter);
             else q = q.or('sent_to_contractor.is.null,sent_to_contractor.eq.false');
           } else {
-            q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true).is('completed_at', null).neq('billing_type', 'claim');
+            q = excludeBillingTypes(q.eq('contractor', session.displayName).eq('sent_to_contractor', true).is('completed_at', null), BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
           }
           if (jobIdsFilter && jobIdsFilter.length > 0) q = q.in('customer_case', jobIdsFilter);
         }
@@ -1890,10 +1927,10 @@ Deno.serve(async (req: Request) => {
           const unitPriceContractor = clean.unit_price_contractor ?? parseFloat(fields.unit_price_contractor) ?? 0;
           clean.total_price_contractor = (qty || 0) * (unitPriceContractor || 0);
         }
-        // billing_type เป็นคอลัมน์ NOT NULL และมี CHECK ให้รับแค่ 'normal'/'claim'
-        // ถ้าปล่อยค่าว่างหรือค่าแปลกผ่านไป การอัปเดตจะพังทั้งแถว จึงบังคับให้ลงที่ 'normal' เสมอเมื่อไม่ใช่ 'claim'
+        // billing_type เป็นคอลัมน์ NOT NULL และมี CHECK ให้รับแค่ 'normal'/'claim'/'contractor_cr'
+        // ถ้าปล่อยค่าว่างหรือค่าแปลกผ่านไป การอัปเดตจะพังทั้งแถว จึงบังคับให้ลงที่ 'normal' เสมอเมื่อไม่ใช่ค่าที่รู้จัก
         if (clean.billing_type !== undefined) {
-          clean.billing_type = (clean.billing_type === 'claim') ? 'claim' : 'normal';
+          clean.billing_type = normalizeBillingType(clean.billing_type);
         }
         const { error } = await supabase.from('billing_documents').update(clean).eq('id', id);
         if (error) return jsonResponse({ success: false, message: error.message });
@@ -1949,7 +1986,7 @@ Deno.serve(async (req: Request) => {
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ error: 'กรุณาเข้าสู่ระบบใหม่' });
         let q = supabase.from('billing_documents').select('round_no,round_period').not('round_no', 'is', null);
-        if (session.role !== 'admin') q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true).neq('billing_type', 'claim');
+        if (session.role !== 'admin') q = excludeBillingTypes(q.eq('contractor', session.displayName).eq('sent_to_contractor', true), BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
         const { data, error } = await q;
         if (error) return jsonResponse({ error: error.message });
         const seen = new Set(); const options: any[] = [];
@@ -1962,21 +1999,25 @@ Deno.serve(async (req: Request) => {
         const [username, token] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ error: 'กรุณาเข้าสู่ระบบใหม่ (session หมดอายุหรือไม่ถูกต้อง)' });
-        let q = supabase.from('billing_documents').select('round_no,round_period,contractor,total_price,total_price_contractor,sent_at,completed_at,sent_to_contractor').not('round_no', 'is', null);
+        let q = supabase.from('billing_documents').select('round_no,round_period,contractor,total_price,total_price_contractor,sent_at,completed_at,sent_to_contractor,billing_type').not('round_no', 'is', null);
         if (session.role === 'admin') {
           q = q.or('sent_to_contractor.eq.true,completed_at.not.is.null');
         } else {
-          q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true).neq('billing_type', 'claim');
+          q = excludeBillingTypes(q.eq('contractor', session.displayName).eq('sent_to_contractor', true), BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
         }
         const { data, error } = await q;
         if (error) return jsonResponse({ error: error.message });
         const groups: Record<string, any> = {};
         (data || []).forEach((r: any) => {
+          const bType = normalizeBillingType(r.billing_type);
+          // เคลม = ไม่เก็บเงินทั้ง 2 ฝั่ง จึงไม่นับเข้ายอดใด ๆ และไม่นับเป็นจำนวนรายการที่ต้องเก็บเงิน
+          if (bType === 'claim') return;
           const key = r.round_no + '||' + (r.contractor || '');
           if (!groups[key]) groups[key] = { round_no: r.round_no, round_period: r.round_period || '', contractor: r.contractor || '', item_count: 0, total_cj: 0, total_contractor: 0, sent_at: null, completed_at: null, any_completed: false, all_completed: true };
           const g = groups[key];
           g.item_count++;
-          g.total_cj += parseFloat(r.total_price) || 0;
+          // 'contractor_cr' ผู้รับเหมาไปเก็บเงินกับ CR เอง ฝั่ง CJ ไม่เก็บ จึงไม่บวกเข้ายอด CJ
+          if (BILLING_TYPES_EXCLUDED_FROM_CJ.indexOf(bType) === -1) g.total_cj += parseFloat(r.total_price) || 0;
           g.total_contractor += parseFloat(r.total_price_contractor) || 0;
           if (r.sent_at && (!g.sent_at || r.sent_at < g.sent_at)) g.sent_at = r.sent_at;
           if (r.completed_at) { g.any_completed = true; if (!g.completed_at || r.completed_at > g.completed_at) g.completed_at = r.completed_at; }
@@ -2445,9 +2486,10 @@ Deno.serve(async (req: Request) => {
             unit_price: unitPrice, total_price: qty * unitPrice, unit_price_contractor: unitPriceContractor,
             total_price_contractor: qty * unitPriceContractor, quotation_ref: item.quotationRef || '-',
             return_old_part: part ? part.return_old_part : '-', company: part ? part.company : '-',
-            // ประเภทการเก็บเงินของอะไหล่ชิ้นนี้ - 'claim' = ไม่เก็บเงินผู้รับเหมา (ซ่อนจากฝั่งผู้รับเหมาทั้งหมด)
-            // รับเฉพาะ 2 ค่าที่รู้จัก ค่าอื่นถือเป็น normal เพื่อไม่ให้ข้อมูลแปลกปลอมทำให้บิลผู้รับเหมาหาย
-            billing_type: (item.billingType === 'claim') ? 'claim' : 'normal',
+            // ประเภทการเก็บเงินของอะไหล่ชิ้นนี้ - 'claim' = ไม่เก็บเงินทั้ง CJ และผู้รับเหมา
+            // 'contractor_cr' = ผู้รับเหมาเก็บเงินกับ CR (ขึ้นเฉพาะบิลผู้รับเหมา ฝั่ง CJ ไม่เก็บ)
+            // รับเฉพาะ 3 ค่าที่รู้จัก ค่าอื่นถือเป็น normal เพื่อไม่ให้ข้อมูลแปลกปลอมทำให้บิลหาย
+            billing_type: normalizeBillingType(item.billingType),
           };
           if (emptyRowId) {
             const { error: updErr } = await supabase.from('billing_documents').update(partFields).eq('id', emptyRowId);
@@ -2833,7 +2875,13 @@ Deno.serve(async (req: Request) => {
       // ==================== PDF ตารางวางบิล / ใบเขียว (สร้างจริงด้วย pdf-lib แทน Google Docs) ====================
       case 'generateBillingPdfBase64': {
         const [rowsArg, isAdminArg] = args;
-        const result = await generateBillingPdfBase64(rowsArg, !!isAdminArg);
+        // isAdmin = true คือใบฝั่ง CJ (ใช้คอลัมน์ราคา CJ) / false คือใบฝั่งผู้รับเหมา
+        // แถวส่งมาจากหน้าแอปโดยตรง จึงกรองประเภทการเก็บเงินซ้ำอีกชั้นที่นี่ กันกรณีหน้าแอปเวอร์ชันเก่ายังไม่กรอง
+        const sideRows = filterRowsForSide(rowsArg, isAdminArg ? 'cj' : 'contractor');
+        if (!sideRows || sideRows.length === 0) {
+          return jsonResponse({ success: false, message: 'ไม่มีรายการที่ต้องเก็บเงินในฝั่งนี้ (รายการเคลม/ผู้รับเหมาเก็บกับ CR ถูกตัดออกแล้ว)' });
+        }
+        const result = await generateBillingPdfBase64(sideRows, !!isAdminArg);
         return jsonResponse(result);
       }
 
@@ -2847,8 +2895,10 @@ Deno.serve(async (req: Request) => {
         }
         if (roundNo === undefined || roundNo === null || roundNo === '') return jsonResponse({ success: false, message: 'ไม่พบเลขรอบบิล' });
         let q = supabase.from('billing_documents').select('*').eq('round_no', roundNo).eq('contractor', contractorName).order('seq', { ascending: true }).order('created_at', { ascending: true });
-        if (session.role === 'admin') q = q.or('sent_to_contractor.eq.true,completed_at.not.is.null');
-        else q = q.eq('sent_to_contractor', true);
+        // PDF ของแอดมิน = ใบวางบิลฝั่ง CJ จึงต้องตัดทั้งเคลม (ไม่เก็บทั้ง 2 ฝั่ง) และ contractor_cr (ผู้รับเหมาเก็บกับ CR เอง) ออก
+        // PDF ของผู้รับเหมา = ตัดเฉพาะเคลม (เดิมตรงนี้ไม่ได้กรองเลย ทำให้ผู้รับเหมาโหลด PDF ย้อนหลังแล้วเจอรายการเคลมโผล่มา)
+        if (session.role === 'admin') q = excludeBillingTypes(q.or('sent_to_contractor.eq.true,completed_at.not.is.null'), BILLING_TYPES_EXCLUDED_FROM_CJ);
+        else q = excludeBillingTypes(q.eq('sent_to_contractor', true), BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
         const { data, error } = await q;
         if (error) return jsonResponse({ success: false, message: 'ดึงข้อมูลรอบบิลล้มเหลว: ' + error.message });
         if (!data || data.length === 0) return jsonResponse({ success: false, message: 'ไม่พบข้อมูลของรอบบิลนี้ (อาจถูกลบหรือแก้ไขไปแล้ว)' });
@@ -2868,9 +2918,9 @@ Deno.serve(async (req: Request) => {
         const cleanJobId = (jobId || '').toString().trim();
         if (!cleanJobId) return jsonResponse({ success: false, message: 'ไม่พบเลขที่ใบแจ้งซ่อมบำรุง' });
         let q = supabase.from('billing_documents').select('*').eq('customer_case', cleanJobId).order('seq', { ascending: true }).order('created_at', { ascending: true });
-        if (session.role === 'admin') q = q.or('sent_to_contractor.eq.true,completed_at.not.is.null');
-        // ใบเขียวของผู้รับเหมาต้องไม่มีรายการเคลม เพราะเป็นรายการที่ไม่เก็บเงินผู้รับเหมา
-        else q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true).neq('billing_type', 'claim');
+        // ใบเขียวฝั่ง CJ (แอดมิน) ตัดเคลม + contractor_cr ออก / ใบเขียวผู้รับเหมาตัดเฉพาะเคลม
+        if (session.role === 'admin') q = excludeBillingTypes(q.or('sent_to_contractor.eq.true,completed_at.not.is.null'), BILLING_TYPES_EXCLUDED_FROM_CJ);
+        else q = excludeBillingTypes(q.eq('contractor', session.displayName).eq('sent_to_contractor', true), BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
         const { data, error } = await q;
         if (error) return jsonResponse({ success: false, message: 'ดึงข้อมูลบิลล้มเหลว: ' + error.message });
         if (!data || data.length === 0) return jsonResponse({ success: false, message: 'งานนี้ยังไม่มีใบวางบิล (ใบเขียว) หรือยังไม่ถูกส่งบิลให้ผู้รับเหมา' });
@@ -2890,7 +2940,7 @@ Deno.serve(async (req: Request) => {
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (!jobIds || jobIds.length === 0) return jsonResponse({ success: false, message: 'ไม่มีเลขงานให้สร้างฟอร์ม' });
         let q = supabase.from('billing_documents').select('customer_case,branch_code,branch_name,service_type,asset_id,contractor,sent_to_contractor').in('customer_case', jobIds).order('created_at', { ascending: true });
-        if (session.role !== 'admin') q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true).neq('billing_type', 'claim');
+        if (session.role !== 'admin') q = excludeBillingTypes(q.eq('contractor', session.displayName).eq('sent_to_contractor', true), BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
         const { data, error } = await q;
         if (error) return jsonResponse({ success: false, message: 'ดึงข้อมูลล้มเหลว: ' + error.message });
         // เดิม dedupe ด้วย customer_case อย่างเดียว ทำให้ 1 เลขงานที่มีหลายเลขทรัพย์สินได้ฟอร์มแค่ 1 ใบ (สูญข้อมูลเลขทรัพย์สินอื่น)
