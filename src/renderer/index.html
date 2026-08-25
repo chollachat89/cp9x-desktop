@@ -586,11 +586,14 @@
                         </div>
                         <div>
                             <label class="block text-slate-700 text-sm font-semibold mb-1">สาเหตุที่ตรวจพบ</label>
-                            <input type="text" id="ps_cause" placeholder="เช่น พบเบ้าแกนประตูแตก" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                            <!-- เป็น textarea เพราะ 1 งานอาจพบหลายสาเหตุ (ข้อความที่ดูดมาจะขึ้นบรรทัดละสาเหตุ นำหน้าด้วย "- ")
+                                 ถ้ามีสาเหตุเดียวก็พิมพ์บรรทัดเดียวได้เหมือนเดิม ไม่บังคับรูปแบบ -->
+                            <textarea id="ps_cause" rows="2" placeholder="เช่น พบเบ้าแกนประตูแตก&#10;ถ้ามีหลายสาเหตุ ให้ขึ้นบรรทัดใหม่ทีละข้อ" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm resize-y"></textarea>
                         </div>
                         <div class="md:col-span-2">
                             <label class="block text-slate-700 text-sm font-semibold mb-1">รายการที่ขออนุมัติ</label>
-                            <input type="text" id="ps_request" placeholder="เช่น เปลี่ยน บานประตูตู้แช่ใหม่" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                            <!-- เหตุผลเดียวกับช่องสาเหตุ: ขออนุมัติเปลี่ยนได้หลายรายการในงานเดียว -->
+                            <textarea id="ps_request" rows="2" placeholder="เช่น เปลี่ยน บานประตูตู้แช่ใหม่&#10;ถ้ามีหลายรายการ ให้ขึ้นบรรทัดใหม่ทีละรายการ" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm resize-y"></textarea>
                         </div>
                         <div class="md:col-span-2">
                             <label class="block text-slate-700 text-sm font-semibold mb-1">เหตุผลที่พักงาน <span class="text-red-500">*</span></label>
@@ -1589,11 +1592,12 @@
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                             <label class="block text-slate-700 text-xs font-semibold mb-1">สาเหตุที่ตรวจพบ</label>
-                            <input type="text" id="ep_cause" class="w-full px-3 py-1.5 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
+                            <!-- ต้องเป็น textarea เหมือนหน้าพักงาน ไม่งั้นงานที่มีหลายสาเหตุจะแก้ไขในหน้านี้แล้วบรรทัดหายไป -->
+                            <textarea id="ep_cause" rows="2" class="w-full px-3 py-1.5 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm resize-y"></textarea>
                         </div>
                         <div>
                             <label class="block text-slate-700 text-xs font-semibold mb-1">รายการที่ขออนุมัติ</label>
-                            <input type="text" id="ep_request" class="w-full px-3 py-1.5 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
+                            <textarea id="ep_request" rows="2" class="w-full px-3 py-1.5 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm resize-y"></textarea>
                         </div>
                         <div class="md:col-span-2">
                             <label class="block text-slate-700 text-xs font-semibold mb-1">เหตุผลที่พักงาน <span class="text-red-500">*</span></label>
@@ -2624,7 +2628,21 @@
                 //   แบบ ข "ใบแจ้งซ่อมบำรุง"   -> ไม่มีเลขข้อ ไม่มี ":" ค่าอยู่หลังหัวข้อโดยเว้นวรรค เช่น  เลขที่ใบแจ้งซ่อมบำรุง CM...
                 // จึงใช้วิธีค้นหาหัวข้อในบรรทัดแล้วตัดทุกอย่างข้างหน้าทิ้ง เหลือเฉพาะค่า
                 // ตัวคั่นที่ยอมรับได้คือ ":" "：" "*" "-" หรือเว้นวรรคเปล่า ๆ
+                //
+                // ข้อ 4 (สาเหตุที่ตรวจพบ) และข้อ 5 (รายการอะไหล่ที่ขออนุมัติเปลี่ยน) มีได้หลายข้อย่อย
+                // โดยเขียนเป็นบรรทัดย่อยขึ้นต้นด้วย "-" ไล่ลงมา เช่น
+                //   4.สาเหตุที่ตรวจพบ:
+                //   - คอมเพรสเซอร์ไม่ทำงาน
+                //   - น้ำยาแอร์รั่ว
+                //   5.รายการอะไหล่ที่ขออนุมัติเปลี่ยน:
+                //   - คอมเพรสเซอร์ 1 ตัว
+                // เขียนแบบบรรทัดเดียวต่อท้ายหัวข้อเหมือนเดิมก็ยังใช้ได้ และผสมกันได้ (มีค่าท้ายหัวข้อแล้วมี "-" ต่อท้ายอีก)
+                //
+                // วิธีทำ: จำไว้ว่าตอนนี้กำลังอยู่ใต้หัวข้อไหน (activeField) บรรทัดที่ขึ้นต้นด้วย "-" จะถูกต่อเข้าหัวข้อนั้น
+                // บรรทัดที่ไม่ได้ขึ้นต้นด้วย "-" จะล้าง activeField เสมอ เพื่อไม่ให้ข้อย่อยของหัวข้ออื่น
+                // (เช่นข้อ 6 รูปถ่ายอะไหล่ที่ชำรุด) ไหลไปรวมกับข้อ 5 โดยไม่ตั้งใจ
                 const data = { mainId: '', branch: '', serviceType: '', cause: '', request: '', reasonStatus: '' };
+                let activeField = null; // 'cause' | 'request' | null
 
                 function valueAfter(content, labels) {
                     for (const lb of labels) {
@@ -2635,7 +2653,32 @@
                     return null;
                 }
 
+                // ต่อข้อย่อยเข้ากับหัวข้อที่กำลังอยู่ ให้ผลลัพธ์เป็นบรรทัดละข้อ นำหน้าด้วย "- " ทุกข้อเมื่อมีมากกว่า 1 ข้อ
+                function appendItem(field, text) {
+                    const t = (text || '').trim();
+                    if (!t) return;
+                    if (!data[field]) {
+                        data[field] = t;
+                    } else {
+                        // พอมีข้อที่ 2 ขึ้นไป ให้ใส่ "- " หน้าข้อแรกด้วย เพื่อให้อ่านเป็นรายการเหมือนกันทั้งก้อน
+                        if (data[field].indexOf('\n') === -1 && data[field].charAt(0) !== '-') {
+                            data[field] = '- ' + data[field];
+                        }
+                        data[field] += '\n- ' + t;
+                    }
+                }
+
                 lines.forEach(line => {
+                    // บรรทัดข้อย่อย: ขึ้นต้นด้วย - – — • หรือ * (รองรับทุกแบบที่พิมพ์มาจริง)
+                    // ต้องเช็คก่อนการจับหัวข้อ เพราะข้อความในข้อย่อยอาจบังเอิญมีคำที่ตรงกับหัวข้ออื่น
+                    const bullet = line.match(/^[\s]*[-–—•*]\s*(.+)$/);
+                    if (bullet && activeField) {
+                        appendItem(activeField, bullet[1]);
+                        return;
+                    }
+                    // บรรทัดปกติ = จบรายการของหัวข้อก่อนหน้า
+                    activeField = null;
+
                     // ตัดเลขลำดับ "1." "2." ที่ขึ้นต้นบรรทัดออกก่อน (ถ้ามี)
                     const content = line.replace(/^\d+[.)]\s*/, '');
                     let v;
@@ -2650,9 +2693,19 @@
                     } else if ((v = valueAfter(content, ['รหัส-ชื่อสาขา', 'ชื่อสาขา'])) !== null) {
                         if (v) data.branch = v;
                     } else if ((v = valueAfter(content, ['สาเหตุที่ตรวจพบ', 'รายละเอียดปัญหาที่พบ'])) !== null) {
-                        if (v) data.cause = v;
+                        // ตั้ง activeField เสมอ แม้ค่าท้ายหัวข้อจะว่าง เพราะรูปแบบที่มีหลายข้อมักเว้นท้ายหัวข้อไว้
+                        // แล้วไล่เขียนเป็นบรรทัด "-" ข้างล่างแทน
+                        activeField = 'cause';
+                        if (v) appendItem('cause', v);
                     } else if (content.includes('รายการ') && content.includes('อนุมัติ')) {
-                        data.request = content.replace(/^.*อนุมัติ\s*/, '').trim();
+                        activeField = 'request';
+                        const head = content.replace(/^.*อนุมัติ\s*/, '').trim();
+                        // หัวข้อเต็มคือ "...ขออนุมัติเปลี่ยน:" คำว่า "เปลี่ยน" ที่ติดมากับหัวข้อจึงไม่ใช่ค่าจริง
+                        // ตัดออกเฉพาะตอนที่ตามด้วย ":" หรือยืนอยู่คำเดียวเท่านั้น
+                        // (ถ้าเป็น "เปลี่ยนคอมเพรสเซอร์" ต้องเก็บคำว่า "เปลี่ยน" ไว้ ไม่งั้นความหมายหาย)
+                        let headValue = head.replace(/^เปลี่ยน\s*[:：]\s*/, '').replace(/^[:：\s]+/, '').trim();
+                        if (headValue === 'เปลี่ยน') headValue = '';
+                        if (headValue) appendItem('request', headValue);
                     } else if ((v = valueAfter(content, ['พักงาน'])) !== null) {
                         // แบบ ข ปิดท้ายด้วยบรรทัด "พักงาน <สิ่งที่ตรวจพบ + สิ่งที่ขออนุมัติ>"
                         // ใส่ข้อความเต็มเป็นเหตุผลที่พัก และถ้ามีคำว่า "ขออนุมัติ" ให้แยกท่อนหลังไปเป็นรายการที่ขออนุมัติด้วย
@@ -6016,8 +6069,8 @@
                     <div>
                         <div class="font-bold text-slate-800">${it.main_id}${it.branch ? ' <span class="text-slate-400 font-normal">— ' + it.branch + '</span>' : ''}</div>
                         ${it.service_type ? '<div class="text-xs text-slate-500 mt-0.5">ประเภทงาน: ' + it.service_type + '</div>' : ''}
-                        ${it.cause ? '<div class="text-xs text-slate-500 mt-0.5">สาเหตุที่ตรวจพบ: ' + it.cause + '</div>' : ''}
-                        ${it.requested_item ? '<div class="text-xs text-slate-500 mt-0.5">รายการที่ขออนุมัติ: ' + it.requested_item + '</div>' : ''}
+                        ${it.cause ? '<div class="text-xs text-slate-500 mt-0.5 whitespace-pre-line">สาเหตุที่ตรวจพบ: ' + it.cause + '</div>' : ''}
+                        ${it.requested_item ? '<div class="text-xs text-slate-500 mt-0.5 whitespace-pre-line">รายการที่ขออนุมัติ: ' + it.requested_item + '</div>' : ''}
                         <div class="text-sm text-slate-600 mt-1">${it.reason}${it.note ? ' — ' + it.note : ''}</div>
                         <div class="text-xs text-slate-400 mt-1">พักเมื่อ ${formatTimestamp(it.paused_at)} โดย ${it.paused_by || '-'}</div>
                     </div>
@@ -6253,8 +6306,8 @@
                         ${isPaused ? '🔴 กำลังพักอยู่' : '🟢 กลับมาทำงานแล้ว'}${it.branch ? ' <span class="text-slate-400 font-normal">— ' + it.branch + '</span>' : ''}
                     </div>
                     ${it.service_type ? '<div class="text-xs text-slate-500 mt-0.5">ประเภทงาน: ' + it.service_type + '</div>' : ''}
-                    ${it.cause ? '<div class="text-xs text-slate-500 mt-0.5">สาเหตุที่ตรวจพบ: ' + it.cause + '</div>' : ''}
-                    ${it.requested_item ? '<div class="text-xs text-slate-500 mt-0.5">รายการที่ขออนุมัติ: ' + it.requested_item + '</div>' : ''}
+                    ${it.cause ? '<div class="text-xs text-slate-500 mt-0.5 whitespace-pre-line">สาเหตุที่ตรวจพบ: ' + it.cause + '</div>' : ''}
+                    ${it.requested_item ? '<div class="text-xs text-slate-500 mt-0.5 whitespace-pre-line">รายการที่ขออนุมัติ: ' + it.requested_item + '</div>' : ''}
                     <div class="text-sm text-slate-600 mt-1">${it.reason}${it.note ? ' — ' + it.note : ''}</div>
                     <div class="text-xs text-slate-400 mt-1">
                         พัก: ${formatTimestamp(it.paused_at)} โดย ${it.paused_by || '-'}
