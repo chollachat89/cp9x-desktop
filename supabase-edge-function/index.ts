@@ -43,6 +43,16 @@ const NOT_SUPPORTED_PREFIX = 'ฟังก์ชันนี้ต้องใ�
 // หมายเหตุ: ค่าที่เก็บในฐานข้อมูลยังเป็น 'claim' / 'contractor_cr' เหมือนเดิม เปลี่ยนแค่ "ชื่อที่แสดง"
 // จึงไม่ต้องแก้ข้อมูลเก่าหรือรัน SQL ใหม่ตอนเปลี่ยนชื่อ (ถ้าเปลี่ยนค่าจริงจะต้องไล่แก้ CHECK + ข้อมูลทุกแถว)
 // แถวยังคงอยู่ในฐานข้อมูลและในตารางของแอดมินเสมอ เพื่อให้แอดมินเห็น/แก้ประเภทได้ - ที่ถูกกรองคือ "ผลลัพธ์ที่ออกบิล" เท่านั้น
+// ==================== อะไหล่นอกระบบ (รหัสขึ้นต้นด้วย NP) ====================
+// อะไหล่บางชิ้นไม่มีอยู่ในตาราง parts (สั่งพิเศษ/ซื้อนอก) แอดมินจึงต้องกรอกรายละเอียดและราคาเองทั้งหมด
+// ใช้ "รหัสขึ้นต้นด้วย NP" เป็นตัวสลับโหมด เพราะเป็นรหัสที่ทีมใช้เรียกอะไหล่กลุ่มนี้อยู่แล้ว
+// บริษัทของอะไหล่กลุ่มนี้ล็อกไว้ตายตัว ไม่ให้แก้ เพราะเป็นของบริษัทเราเองเสมอ
+const MANUAL_PART_COMPANY = 'บริษัท ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด';
+
+function isManualPartCode(code: any): boolean {
+  return /^NP/i.test((code === null || code === undefined) ? '' : code.toString().trim());
+}
+
 const BILLING_TYPE_VALUES = ['normal', 'claim', 'contractor_cr'];
 // ประเภทที่ต้องไม่ปรากฏในเอกสาร/ยอดของแต่ละฝั่ง
 const BILLING_TYPES_EXCLUDED_FROM_CJ = ['claim', 'contractor_cr'];
@@ -2485,23 +2495,61 @@ Deno.serve(async (req: Request) => {
         for (const item of (items || [])) {
           const partCode = (item.partCode || '').toString().trim();
           if (!partCode) continue;
-          const { data: partData } = await supabase.from('parts').select('*').ilike('code_cj', partCode).limit(1);
-          const part = (partData && partData.length > 0) ? partData[0] : null;
           const qty = parseFloat(item.qty) || 0;
-          const unitPrice = part ? (parseFloat(part.unit_price) || 0) : 0;
-          const unitPriceContractor = part ? (parseFloat(part['Unit Custumer']) || 0) : 0;
-          const partFields: any = {
-            part_code: partCode,
-            part_detail: part ? [part.name, part.brand, part.model].filter(Boolean).join(' - ') : '-',
-            warranty_months: part ? part.warranty_months : '-', qty, unit: part ? part.unit : '-',
-            unit_price: unitPrice, total_price: qty * unitPrice, unit_price_contractor: unitPriceContractor,
-            total_price_contractor: qty * unitPriceContractor, quotation_ref: item.quotationRef || '-',
-            return_old_part: part ? part.return_old_part : '-', company: part ? part.company : '-',
-            // ประเภทการเก็บเงินของอะไหล่ชิ้นนี้ - 'claim' = ไม่เก็บเงินทั้ง CJ และผู้รับเหมา
-            // 'contractor_cr' = เคลมอะไหล่ (ขึ้นเฉพาะบิลผู้รับเหมา ฝั่ง CJ ไม่เก็บ)
-            // รับเฉพาะ 3 ค่าที่รู้จัก ค่าอื่นถือเป็น normal เพื่อไม่ให้ข้อมูลแปลกปลอมทำให้บิลหาย
-            billing_type: normalizeBillingType(item.billingType),
-          };
+          let partFields: any;
+
+          if (isManualPartCode(partCode)) {
+            // ---------- อะไหล่นอกระบบ (รหัสขึ้นต้นด้วย NP) ----------
+            // ไม่ต้องค้นตาราง parts เพราะไม่มีอยู่ในนั้นอยู่แล้ว ใช้ค่าที่แอดมินกรอกเองทั้งหมด
+            // ตรวจซ้ำที่ฝั่งเซิร์ฟเวอร์อีกชั้น กันกรณีหน้าแอปเวอร์ชันเก่าส่งข้อมูลไม่ครบมา
+            // แล้วได้แถวบิลที่รายละเอียด/ราคาเป็นค่าว่าง ซึ่งตามแก้ย้อนหลังยาก
+            const manualDetail = (item.partDetail || '').toString().trim();
+            if (!manualDetail) {
+              errors.push(partCode + ': ต้องกรอกรายละเอียดอะไหล่ (รหัสขึ้นต้นด้วย NP ต้องกรอกเองทุกช่อง)');
+              continue;
+            }
+            const manualUnitPrice = parseFloat(item.unitPrice);
+            const manualUnitPriceContractor = parseFloat(item.unitPriceContractor);
+            if (!isFinite(manualUnitPrice) || !isFinite(manualUnitPriceContractor)) {
+              errors.push(partCode + ': ต้องกรอกทั้งราคาขาย CJ และราคาขายผู้รับเหมาให้เป็นตัวเลข');
+              continue;
+            }
+            partFields = {
+              part_code: partCode,
+              part_detail: manualDetail,
+              warranty_months: (item.warrantyMonths || '').toString().trim() || '-',
+              qty,
+              unit: (item.unit || '').toString().trim() || '-',
+              unit_price: manualUnitPrice,
+              total_price: qty * manualUnitPrice,
+              unit_price_contractor: manualUnitPriceContractor,
+              total_price_contractor: qty * manualUnitPriceContractor,
+              quotation_ref: item.quotationRef || '-',
+              // อะไหล่เก่าคืน CJ รับได้แค่ YES/NO เท่านั้น ค่าอื่นถือเป็น NO
+              return_old_part: ((item.returnOldPart || '').toString().trim().toUpperCase() === 'YES') ? 'YES' : 'NO',
+              // บริษัทล็อกไว้ที่ฝั่งเซิร์ฟเวอร์เสมอ ไม่รับค่าจากหน้าแอป (หน้าแอปโชว์เป็นช่องอ่านอย่างเดียว)
+              company: MANUAL_PART_COMPANY,
+              billing_type: normalizeBillingType(item.billingType),
+            };
+          } else {
+            // ---------- อะไหล่ที่มีในตาราง parts ตามปกติ ----------
+            const { data: partData } = await supabase.from('parts').select('*').ilike('code_cj', partCode).limit(1);
+            const part = (partData && partData.length > 0) ? partData[0] : null;
+            const unitPrice = part ? (parseFloat(part.unit_price) || 0) : 0;
+            const unitPriceContractor = part ? (parseFloat(part['Unit Custumer']) || 0) : 0;
+            partFields = {
+              part_code: partCode,
+              part_detail: part ? [part.name, part.brand, part.model].filter(Boolean).join(' - ') : '-',
+              warranty_months: part ? part.warranty_months : '-', qty, unit: part ? part.unit : '-',
+              unit_price: unitPrice, total_price: qty * unitPrice, unit_price_contractor: unitPriceContractor,
+              total_price_contractor: qty * unitPriceContractor, quotation_ref: item.quotationRef || '-',
+              return_old_part: part ? part.return_old_part : '-', company: part ? part.company : '-',
+              // ประเภทการเก็บเงินของอะไหล่ชิ้นนี้ - 'claim' = ไม่เก็บเงินทั้ง CJ และผู้รับเหมา
+              // 'contractor_cr' = เคลมอะไหล่ (ขึ้นเฉพาะบิลผู้รับเหมา ฝั่ง CJ ไม่เก็บ)
+              // รับเฉพาะ 3 ค่าที่รู้จัก ค่าอื่นถือเป็น normal เพื่อไม่ให้ข้อมูลแปลกปลอมทำให้บิลหาย
+              billing_type: normalizeBillingType(item.billingType),
+            };
+          }
           if (emptyRowId) {
             const { error: updErr } = await supabase.from('billing_documents').update(partFields).eq('id', emptyRowId);
             if (!updErr) created++; else errors.push(partCode + ': ' + updErr.message);
