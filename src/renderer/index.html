@@ -736,6 +736,15 @@
                                     <i class="fa-solid fa-file-pdf mr-1"></i> PDF<span id="billingCountPdfContractor" class="ml-1.5 px-1.5 rounded-full text-[11px] tabular-nums bg-white/25">0</span>
                                 </button>
                             </div>
+                            <!-- งานเคลมประกัน 3 เดือน ไม่เก็บเงินทั้ง 2 ฝั่ง จึงไม่โผล่ในบิล CJ และบิลผู้รับเหมาเลย
+                                 ต้องมีปุ่มแยกของตัวเอง ไม่งั้นงานกลุ่มนี้จะไม่มีเอกสารสรุปให้เก็บไว้อ้างอิงเลย
+                                 รูปแบบคอลัมน์เหมือนใบเขียว (ฝั่งผู้รับเหมา) ทุกประการ -->
+                            <div class="flex items-center gap-1.5 border border-amber-300 bg-amber-50/70 rounded-lg pl-2.5 pr-1.5 py-1">
+                                <span class="text-xs font-semibold text-amber-700 whitespace-nowrap">เคลมประกัน 3 เดือน<span class="block text-[10px] font-normal text-amber-600 leading-tight">ไม่เก็บเงินทั้ง 2 ฝั่ง</span></span>
+                                <button type="button" onclick="exportBillingCSV('claim')" title="ออกไฟล์ CSV สรุปงานเคลมประกัน 3 เดือน หน้าตาคอลัมน์เหมือนใบเขียว (เอาไว้เก็บอ้างอิง ไม่ใช่เอกสารเก็บเงิน)" class="bg-amber-600 text-white text-sm font-semibold py-1.5 px-3 rounded-md hover:bg-amber-700 transition-colors">
+                                    <i class="fa-solid fa-file-csv mr-1"></i> CSV<span id="billingCountCsvClaim" class="ml-1.5 px-1.5 rounded-full text-[11px] tabular-nums bg-white/25">0</span>
+                                </button>
+                            </div>
                         </div>
                         <button type="button" onclick="openBillingHistoryModal()" id="btn_billingHistory" class="bg-indigo-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-indigo-700 transition-colors">
                             <i class="fa-solid fa-clock-rotate-left mr-1"></i> ประวัติรอบบิล
@@ -3915,8 +3924,10 @@
         function updateBillingExportButtonCounts() {
             const cjCount = getBillingRowsForDisplay('cj').length;
             const contractorCount = getBillingRowsForDisplay('contractor').length;
+            const claimCount = getBillingRowsForDisplay('claim').length;
             [['billingCountCsvCj', cjCount], ['billingCountPdfCj', cjCount],
-             ['billingCountCsvContractor', contractorCount], ['billingCountPdfContractor', contractorCount]].forEach(function (pair) {
+             ['billingCountCsvContractor', contractorCount], ['billingCountPdfContractor', contractorCount],
+             ['billingCountCsvClaim', claimCount]].forEach(function (pair) {
                 const el = document.getElementById(pair[0]);
                 if (!el) return;
                 el.textContent = pair[1];
@@ -3931,12 +3942,17 @@
         // billingSide: ไม่ใส่ = ตารางในแอป (โชว์ทุกแถวเสมอ เพื่อให้แอดมินเห็นและแก้ประเภทได้)
         //              'cj' = เอกสารฝั่ง CJ (ตัดเคลมประกัน 3 เดือน + เคลมอะไหล่ ออก)
         //              'contractor' = เอกสารฝั่งผู้รับเหมา (ตัดเฉพาะเคลมประกัน 3 เดือน)
+        //              'claim' = เอาเฉพาะเคลมประกัน 3 เดือน อย่างเดียว (ตรงข้ามกับ 2 แบบบน)
+        //                        ใช้กับเอกสารสรุปงานเคลมที่ไม่เก็บเงินทั้ง 2 ฝั่ง ซึ่งไม่มีทางโผล่ในบิลปกติเลย
+        //                        ถ้าไม่มีเอกสารตัวนี้ งานเคลมจะไม่ถูกบันทึกไว้ที่ไหนเลยนอกจากในตารางแอป
         function getBillingRowsForDisplay(billingSide) {
             const roundFilterEl = document.getElementById('billingRoundFilter');
             const roundFilter = roundFilterEl ? roundFilterEl.value : '';
             let baseData = roundFilter ? currentBillingData.filter(row => String(row.round_no) === roundFilter) : currentBillingData;
 
-            if (billingSide === 'cj' || billingSide === 'contractor') {
+            if (billingSide === 'claim') {
+                baseData = baseData.filter(row => normalizeBillingType(row.billing_type) === 'claim');
+            } else if (billingSide === 'cj' || billingSide === 'contractor') {
                 const excluded = billingSide === 'cj' ? BILLING_TYPES_EXCLUDED_FROM_CJ : BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR;
                 baseData = baseData.filter(row => excluded.indexOf(normalizeBillingType(row.billing_type)) === -1);
             }
@@ -5486,12 +5502,17 @@
             }
 
             const isAdmin = currentSession && currentSession.role === 'admin';
-            const useContractorPricing = pricingMode ? (pricingMode === 'contractor') : !isAdmin;
+            // 'claim' = เอกสารสรุปงานเคลมประกัน 3 เดือน (ไม่เก็บเงินทั้ง 2 ฝั่ง)
+            // ใช้หน้าตาคอลัมน์เหมือนใบเขียว (ฝั่งผู้รับเหมา) ทุกประการ ต่างแค่เลือกเฉพาะแถวเคลม
+            const isClaimReport = pricingMode === 'claim';
+            const useContractorPricing = isClaimReport ? true : (pricingMode ? (pricingMode === 'contractor') : !isAdmin);
             // CSV เป็นเอกสารวางบิลจริง จึงต้องกรองประเภทการเก็บเงินตามฝั่งที่กำลังออก
-            const billingSide = useContractorPricing ? 'contractor' : 'cj';
+            const billingSide = isClaimReport ? 'claim' : (useContractorPricing ? 'contractor' : 'cj');
             const displayRows = getBillingRowsForDisplay(billingSide);
             if (displayRows.length === 0) {
-                showAlert('error', explainNoRowsForSide(getBillingRowsForDisplay(), billingSide));
+                showAlert('error', isClaimReport
+                    ? 'ไม่มีรายการ "เคลมประกัน 3 เดือน" ในตารางตอนนี้ · ถ้าต้องการออกเอกสารนี้ ให้แก้คอลัมน์ "ประเภทเก็บเงิน" ของแถวที่เป็นงานเคลมให้เป็น "เคลมประกัน 3 เดือน" ก่อน'
+                    : explainNoRowsForSide(getBillingRowsForDisplay(), billingSide));
                 return;
             }
 
@@ -5545,13 +5566,15 @@
             const roundPart = (roundFilterEl && roundFilterEl.value) ? ('_รอบ' + roundFilterEl.value) : '';
             const contractorFilterElForName = document.getElementById('billingContractorFilter');
             const contractorPart = (contractorFilterElForName && contractorFilterElForName.value) ? ('_' + contractorFilterElForName.value.replace(/[\\\/:*?"<>|]/g, '_')) : '';
-            const pricingPart = pricingMode ? (pricingMode === 'cj' ? '_CJ' : '_ผู้รับเหมา') : '';
+            const pricingPart = isClaimReport ? '' : (pricingMode ? (pricingMode === 'cj' ? '_CJ' : '_ผู้รับเหมา') : '');
+            // เอกสารเคลมตั้งชื่อไฟล์แยกให้ชัด กันเอาไปปนกับไฟล์วางบิลที่เก็บเงินจริง
+            const baseName = isClaimReport ? 'สรุปงานเคลมประกัน3เดือน' : 'ตารางวางบิล';
 
             const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'ตารางวางบิล' + pricingPart + contractorPart + roundPart + '_' + new Date().toISOString().slice(0,10) + '.csv';
+            a.download = baseName + pricingPart + contractorPart + roundPart + '_' + new Date().toISOString().slice(0,10) + '.csv';
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
