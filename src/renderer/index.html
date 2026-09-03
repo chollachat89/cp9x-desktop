@@ -4254,7 +4254,10 @@
                             ? `<td data-col="${key}" class="p-2 whitespace-nowrap${hiddenCls}"><span class="text-xs font-semibold px-2 py-1 rounded-full bg-emerald-100 text-emerald-700">✓ ส่งแล้ว</span></td>`
                             : `<td data-col="${key}" class="p-2 whitespace-nowrap${hiddenCls}"><span class="text-xs font-semibold px-2 py-1 rounded-full bg-slate-100 text-slate-500">ยังไม่ส่ง</span></td>`;
                     } else {
-                        cellsHtml += `<td data-col="${key}" class="p-1${hiddenCls}"><input type="${effectiveType}" data-field="${key}" value="${String(val).replace(/"/g,'&quot;')}" class="grid-input w-full px-2 py-1 rounded border border-slate-200 text-xs"></td>`;
+                        // step="any" กับช่องตัวเลข (จำนวน / ราคา) เพราะจำนวนที่ใช้จริงมีทศนิยมได้
+                        // เช่น น้ำยา 1.6 กก. หรือ ท่อ 0.7 เมตร ถ้าไม่ใส่ เบราว์เซอร์จะบังคับเป็นจำนวนเต็ม
+                        const stepAttr = effectiveType === 'number' ? ' step="any"' : '';
+                        cellsHtml += `<td data-col="${key}" class="p-1${hiddenCls}"><input type="${effectiveType}"${stepAttr} data-field="${key}" value="${String(val).replace(/"/g,'&quot;')}" class="grid-input w-full px-2 py-1 rounded border border-slate-200 text-xs"></td>`;
                     }
                 });
                 if (isAdmin) {
@@ -4367,7 +4370,9 @@
                     </div>
                     <div>
                         <label class="block text-slate-700 text-sm font-semibold mb-1">จำนวน <span class="text-red-500">*</span></label>
-                        <input type="number" min="0" step="1" value="1" class="modal_qty w-full px-3 py-1.5 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
+                        <!-- step="any" เพราะอะไหล่ที่ขายเป็น เมตร / กก. ใช้จริงไม่ลงตัวเสมอ (เช่น น้ำยา 1.6 กก. หรือ ท่อ 0.7 เมตร)
+                             เดิม step="1" ทำให้เบราว์เซอร์ปฏิเสธค่าทศนิยม กรอกได้แต่จำนวนเต็มเท่านั้น -->
+                        <input type="number" min="0" step="any" value="1" class="modal_qty w-full px-3 py-1.5 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm" placeholder="เช่น 1 หรือ 1.6">
                     </div>
                     <div>
                         <label class="block text-slate-700 text-sm font-semibold mb-1">Quotation</label>
@@ -6491,7 +6496,9 @@
                     } else if (type === 'partcode') {
                         cellsHtml += `<td class="p-1"><input type="text" data-field="${key}" value="${String(val).replace(/"/g,'&quot;')}" class="grid-input completed-part-code-input w-full px-2 py-1 rounded border border-slate-200 text-xs" placeholder="เช่น P003"></td>`;
                     } else {
-                        cellsHtml += `<td class="p-1"><input type="${type}" data-field="${key}" value="${String(val).replace(/"/g,'&quot;')}" class="grid-input w-full px-2 py-1 rounded border border-slate-200 text-xs"></td>`;
+                        // เหตุผลเดียวกับตารางวางบิลหลัก: ช่องตัวเลขต้องรับทศนิยมได้ (เมตร/กก. ใช้จริงไม่ลงตัว)
+                        const stepAttr2 = type === 'number' ? ' step="any"' : '';
+                        cellsHtml += `<td class="p-1"><input type="${type}"${stepAttr2} data-field="${key}" value="${String(val).replace(/"/g,'&quot;')}" class="grid-input w-full px-2 py-1 rounded border border-slate-200 text-xs"></td>`;
                     }
                 });
 
