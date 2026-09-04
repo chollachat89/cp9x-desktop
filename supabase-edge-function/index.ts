@@ -1713,6 +1713,28 @@ Deno.serve(async (req: Request) => {
         return jsonResponse(await verifySession(username, token));
       }
 
+      // ทะเบียนเลขทรัพย์สินของสาขา - ใช้ทำ dropdown ในหน้าปิดงาน กันกรอกเลขทรัพย์สินผิด
+      // ส่งกลับทุกแถวของสาขานั้น รวมถึงเลขที่ซ้ำกันแต่คำอธิบายต่างกัน (ตั้งใจให้เห็นแยกบรรทัด)
+      case 'getBranchAssets': {
+        const [branchCodeRaw] = args;
+        const branchCode = (branchCodeRaw || '').toString().trim();
+        if (!branchCode) return jsonResponse({ assets: [] });
+        // รหัสสาขาในทะเบียนเก็บเป็นเลข 4 หลักมี 0 นำหน้า (เช่น '0064') แต่ผู้ใช้อาจพิมพ์ '64' มา
+        // จึงเติม 0 ให้ครบ 4 หลักก่อนค้น ไม่งั้นจะหาไม่เจอทั้งที่มีข้อมูลอยู่
+        const padded = branchCode.replace(/\D/g, '').padStart(4, '0');
+        const { data, error } = await supabase
+          .from('branch_assets')
+          .select('asset_no,description')
+          .eq('branch_code', padded)
+          .order('asset_no', { ascending: true })
+          .limit(500);
+        if (error) return jsonResponse({ error: error.message, assets: [] });
+        return jsonResponse({
+          branchCode: padded,
+          assets: (data || []).map((r: any) => ({ assetNo: r.asset_no, description: r.description || '' })),
+        });
+      }
+
       case 'getContractorsList': {
         const { data, error } = await supabase.from('contractors').select('display_name').eq('role', 'contractor').order('display_name');
         if (error) return jsonResponse({ error: error.message });

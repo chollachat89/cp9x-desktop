@@ -462,7 +462,8 @@
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">รหัสสาขา</label>
-                                <input type="text" id="cl_branchCode" onblur="doLookupBranchGeneric('cl_branchCode','cl_branchName','cl_branchStatus')" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm" placeholder="เช่น 0002">
+                                <!-- พอกรอกรหัสสาขาเสร็จ ให้โหลดทะเบียนทรัพย์สินของสาขานั้นมาใส่ dropdown ด้านล่างทันที -->
+                                <input type="text" id="cl_branchCode" onblur="doLookupBranchGeneric('cl_branchCode','cl_branchName','cl_branchStatus'); loadBranchAssets(this.value.trim(), '');" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm" placeholder="เช่น 0002">
                                 <p id="cl_branchStatus" class="text-xs mt-1 text-slate-400"></p>
                             </div>
                             <div>
@@ -471,7 +472,14 @@
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">เลขทรัพย์สิน</label>
-                                <input type="text" id="cl_assetId" inputmode="numeric" maxlength="12" pattern="\d{12}" placeholder="ตัวเลข 12 หลัก" oninput="enforceAssetIdDigits(this)" onblur="checkJobNumberExists(document.getElementById('cl_kissflowId').value.trim(), this.value.trim())" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                                <!-- เลือกจากทะเบียนทรัพย์สินของสาขาที่กรอกไว้ กันกรอกเลขผิดสาขา
+                                     รายการจะโหลดอัตโนมัติหลังกรอก/ดูดรหัสสาขามาแล้ว
+                                     ถ้าไม่มีในลิสต์ให้เลือก "อื่นๆ" แล้วพิมพ์เอง 12 หลัก
+                                     ค่าจริงที่ระบบใช้บันทึกยังอยู่ที่ช่อง cl_assetId เหมือนเดิมทุกอย่าง -->
+                                <select id="cl_assetSelect" onchange="onAssetSelectChange()" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                                    <option value="">-- กรอกรหัสสาขาก่อน แล้วเลือกเลขทรัพย์สิน --</option>
+                                </select>
+                                <input type="text" id="cl_assetId" inputmode="numeric" maxlength="12" pattern="\d{12}" placeholder="ตัวเลข 12 หลัก" oninput="enforceAssetIdDigits(this)" onblur="checkJobNumberExists(document.getElementById('cl_kissflowId').value.trim(), this.value.trim())" class="hidden w-full mt-2 px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
                                 <p id="cl_assetIdStatus" class="text-xs mt-1 text-slate-400">ต้องเป็นตัวเลข 12 หลักเท่านั้น</p>
                             </div>
                         </div>
@@ -2359,6 +2367,105 @@
 
         // บังคับให้ช่อง "เลขทรัพย์สิน" รับเฉพาะตัวเลข 12 หลักเท่านั้น
         // ตัดอักขระที่ไม่ใช่ตัวเลขออกทันทีที่พิมพ์/วาง และแจ้งสถานะให้เห็นว่าครบ 12 หลักหรือยัง
+        // ==================== dropdown เลขทรัพย์สินรายสาขา (หน้าปิดงาน) ====================
+        // เก็บรายการทรัพย์สินของสาขาที่โหลดมาล่าสุด ใช้เช็คว่าเลขที่ดูดข้อความมามีอยู่จริงไหม
+        let currentBranchAssets = [];
+        const ASSET_OTHER = '__other__';
+
+        // โหลดทะเบียนทรัพย์สินของสาขา แล้วเติมลง dropdown
+        // preferAssetNo = เลขที่ดูดข้อความมา (ถ้ามี) จะพยายามเลือกให้อัตโนมัติ
+        function loadBranchAssets(branchCode, preferAssetNo) {
+            const sel = document.getElementById('cl_assetSelect');
+            const manual = document.getElementById('cl_assetId');
+            const statusEl = document.getElementById('cl_assetIdStatus');
+            if (!sel) return;
+
+            const code = (branchCode || '').toString().trim();
+            if (!code) {
+                sel.innerHTML = '<option value="">-- กรอกรหัสสาขาก่อน แล้วเลือกเลขทรัพย์สิน --</option>';
+                sel.value = '';
+                currentBranchAssets = [];
+                manual.value = '';
+                manual.classList.add('hidden');
+                return;
+            }
+            // ล้างเลขเดิมทิ้งทุกครั้งที่เปลี่ยนสาขา
+            // ถ้าไม่ล้าง เลขทรัพย์สินของสาขาก่อนหน้าจะค้างอยู่แล้วถูกบันทึกไปกับสาขาใหม่โดยไม่มีใครทันสังเกต
+            // (ตรงกับปัญหาที่ฟีเจอร์นี้ตั้งใจจะกันตั้งแต่แรก)
+            manual.value = '';
+
+            sel.innerHTML = '<option value="">กำลังโหลดทะเบียนทรัพย์สินของสาขา...</option>';
+
+            runServerCall('getBranchAssets', [code], function (res) {
+                currentBranchAssets = (res && res.assets) ? res.assets : [];
+                // เลขที่ซ้ำกันแต่คำอธิบายต่างกัน ตั้งใจให้แสดงแยกบรรทัด ผู้ใช้จะได้เห็นว่าเป็นคนละชิ้น
+                let html = '<option value="">-- เลือกเลขทรัพย์สิน (' + currentBranchAssets.length + ' รายการในสาขานี้) --</option>';
+                currentBranchAssets.forEach(function (a) {
+                    const label = a.assetNo + (a.description ? ' — ' + a.description : '');
+                    html += '<option value="' + a.assetNo + '">' + label.replace(/</g, '&lt;') + '</option>';
+                });
+                html += '<option value="' + ASSET_OTHER + '">อื่นๆ (ไม่มีในลิสต์ — พิมพ์เลขเอง)</option>';
+                sel.innerHTML = html;
+
+                if (currentBranchAssets.length === 0) {
+                    // สาขานี้ไม่มีข้อมูลในทะเบียนเลย ให้พิมพ์เองไปก่อน ไม่งั้นจะปิดงานไม่ได้
+                    sel.value = ASSET_OTHER;
+                    onAssetSelectChange();
+                    statusEl.textContent = 'ไม่พบทะเบียนทรัพย์สินของสาขานี้ กรุณาพิมพ์เลข 12 หลักเอง';
+                    statusEl.className = 'text-xs mt-1 text-amber-600';
+                    return;
+                }
+
+                const want = (preferAssetNo || '').toString().replace(/\D/g, '');
+                if (!want) { onAssetSelectChange(); return; }
+
+                const match = currentBranchAssets.filter(function (a) { return a.assetNo === want; });
+                if (match.length > 0) {
+                    sel.value = want;
+                    onAssetSelectChange();
+                    // เลขซ้ำหลายคำอธิบาย ต้องบอกให้ไปเลือกบรรทัดที่ถูก ไม่งั้นจะได้คำอธิบายผิดชิ้น
+                    if (match.length > 1) {
+                        statusEl.textContent = '⚠ เลขนี้มี ' + match.length + ' รายการในสาขา คำอธิบายต่างกัน กรุณาเลือกบรรทัดที่ตรงกับของจริง';
+                        statusEl.className = 'text-xs mt-1 text-amber-600 font-semibold';
+                    }
+                } else {
+                    // ตามที่ตกลงไว้: ไม่เติมค่าให้เอง ต้องให้ผู้ใช้กดเลือก "อื่นๆ" เองเพื่อยืนยันว่าตั้งใจ
+                    sel.value = '';
+                    manual.value = '';
+                    manual.classList.add('hidden');
+                    statusEl.textContent = '⚠ เลข ' + want + ' ที่ดูดมา ไม่มีในทะเบียนทรัพย์สินของสาขา ' + code
+                        + ' — ถ้ายืนยันว่าถูกต้อง ให้เลือก "อื่นๆ" แล้วพิมพ์เอง';
+                    statusEl.className = 'text-xs mt-1 text-red-500 font-semibold';
+                }
+            }, function () {
+                sel.innerHTML = '<option value="' + ASSET_OTHER + '">อื่นๆ (โหลดทะเบียนไม่สำเร็จ — พิมพ์เลขเอง)</option>';
+                sel.value = ASSET_OTHER;
+                currentBranchAssets = [];
+                onAssetSelectChange();
+            });
+        }
+
+        // สลับระหว่าง "เลือกจากลิสต์" กับ "พิมพ์เอง" และคัดค่าลงช่อง cl_assetId ที่ระบบใช้บันทึกจริง
+        function onAssetSelectChange() {
+            const sel = document.getElementById('cl_assetSelect');
+            const manual = document.getElementById('cl_assetId');
+            if (!sel || !manual) return;
+
+            if (sel.value === ASSET_OTHER) {
+                manual.classList.remove('hidden');
+                manual.focus();
+                enforceAssetIdDigits(manual);
+            } else {
+                manual.classList.add('hidden');
+                manual.value = sel.value || '';
+                enforceAssetIdDigits(manual);
+                // เลือกเลขจากลิสต์แล้วต้องเช็คซ้ำทันที (เดิมเช็คตอน blur ของช่องพิมพ์)
+                if (manual.value) {
+                    checkJobNumberExists(document.getElementById('cl_kissflowId').value.trim(), manual.value);
+                }
+            }
+        }
+
         function enforceAssetIdDigits(input) {
             const digitsOnly = input.value.replace(/\D/g, '').slice(0, 12);
             if (input.value !== digitsOnly) input.value = digitsOnly;
@@ -2625,6 +2732,10 @@
                 // เลขทรัพย์สินต้องเป็นตัวเลข 12 หลักเท่านั้น - ตัดอักขระอื่นที่ติดมากับข้อความออกให้อัตโนมัติ
                 const assetInput = document.getElementById('cl_assetId');
                 assetInput.value = (data.asset || '').replace(/\D/g, '').slice(0, 12);
+                // โหลดทะเบียนทรัพย์สินของสาขา แล้วให้ตัวโหลดเป็นคนตัดสินว่าเลขที่ดูดมาเลือกได้ไหม
+                // ถ้าเลขนั้นไม่มีในสาขา จะขึ้นเตือนสีแดงและล้างค่าทิ้ง เพื่อบังคับให้เลือก "อื่นๆ" เองถ้ายืนยันว่าถูก
+                const pastedBranchCode = (data.branch || '').toString().match(/\d+/);
+                loadBranchAssets(pastedBranchCode ? pastedBranchCode[0] : '', assetInput.value);
                 enforceAssetIdDigits(assetInput); // อัปเดตข้อความสถานะใต้ช่องให้ตรงกับค่าที่เพิ่งดูดมา
                 document.getElementById('cl_actionTaken').value = data.action || '';
                 // แยกข้อความแล้วได้เลขงานมา เช็คซ้ำให้ทันที ไม่ต้องรอผู้ใช้คลิกออกจากช่อง
@@ -5889,7 +6000,16 @@
                                 showAlert('success', res.message);
                                 form.reset();
                                 if (mode === 'open') { document.getElementById('rawTextOpen').value = ''; document.getElementById('op_branchStatus').textContent = ''; setDefaultOpenDateTime(); }
-                                if (mode === 'close') { document.getElementById('rawTextClose').value = ''; clearPartsRows(); addPartRow(); document.getElementById('cl_branchStatus').textContent = ''; setDefaultCloseDateTime(); }
+                                if (mode === 'close') {
+                                    document.getElementById('rawTextClose').value = ''; clearPartsRows(); addPartRow();
+                                    document.getElementById('cl_branchStatus').textContent = ''; setDefaultCloseDateTime();
+                                    // form.reset() ล้างค่าใน select แต่ตัวเลือกที่โหลดมายังค้างอยู่ และช่องพิมพ์เองยังโชว์อยู่
+                                    // ต้องล้างกลับเป็นสถานะเริ่มต้นเอง ไม่งั้นงานถัดไปจะเห็นลิสต์ทรัพย์สินของสาขาเก่า
+                                    loadBranchAssets('', '');
+                                    document.getElementById('cl_assetId').classList.add('hidden');
+                                    document.getElementById('cl_assetIdStatus').textContent = 'ต้องเป็นตัวเลข 12 หลักเท่านั้น';
+                                    document.getElementById('cl_assetIdStatus').className = 'text-xs mt-1 text-slate-400';
+                                }
                                 if (currentSession.role === 'admin') pollAdminBadgeCounts(); // อัปเดต badge รอดำเนินการทันทีหลังปิด/เปิดงานสำเร็จ
                             } else {
                                 showAlert('error', res.message);
