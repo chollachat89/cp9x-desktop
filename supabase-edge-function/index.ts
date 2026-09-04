@@ -77,6 +77,37 @@ function excludeBillingTypes(q: any, types: string[]) {
   return q;
 }
 
+// ==================== เรียงลำดับ + ใส่เลขลำดับใหม่ก่อนออกเอกสาร ====================
+// ต้องใช้กติกาเดียวกับฝั่งหน้าแอป (renumberBillingRows ใน index.html) เป๊ะ ๆ
+// ไม่งั้นเลขลำดับใน PDF จะไม่ตรงกับที่เห็นในตารางและใน CSV
+//
+// เหตุผลที่ต้องนับใหม่ ไม่ใช้ seq จากฐานข้อมูลตรง ๆ:
+//   - seq เริ่มนับ 1 ใหม่ทุกรอบบิลและทุกผู้รับเหมา เอกสารที่รวมหลายรอบจึงเห็นเลขซ้ำวนไปมา
+//   - พอกรองรายการเคลมออก เลขจะเป็นรู (1,2,4,5)
+//   - อะไหล่หลายชิ้นของทรัพย์สินเดียวใช้ seq เดียวกัน ไม่มีตัวตัดสินลำดับ ผลลัพธ์จึงไม่นิ่ง
+//
+// กติกา: เรียง รอบบิล -> ผู้รับเหมา -> seq เดิม -> เลขงาน -> เลขทรัพย์สิน -> เวลาที่สร้าง
+//        แล้วนับต่อเนื่อง 1..N โดย 1 เลขงาน = 1 ลำดับ (ไม่ว่าจะมีกี่เลขทรัพย์สิน/กี่อะไหล่)
+function renumberBillingRowsForDocument(rows: any[]): any[] {
+  const s = (v: any) => (v === null || v === undefined) ? '' : String(v);
+  const n = (v: any) => (v === null || v === undefined || v === '') ? Number.MAX_SAFE_INTEGER : Number(v);
+  const sorted = (rows || []).slice().sort((a: any, b: any) =>
+    (n(a.round_no) - n(b.round_no))
+    || s(a.contractor).localeCompare(s(b.contractor), 'th')
+    || (n(a.seq) - n(b.seq))
+    || s(a.customer_case).localeCompare(s(b.customer_case), 'th')
+    || s(a.asset_id).localeCompare(s(b.asset_id), 'th')
+    || s(a.created_at).localeCompare(s(b.created_at))
+    || s(a.id).localeCompare(s(b.id))
+  );
+  let counter = 0;
+  let prevJob: any = null;
+  return sorted.map((row: any) => {
+    if (row.customer_case !== prevJob) { counter++; prevJob = row.customer_case; }
+    return { ...row, seq: counter };
+  });
+}
+
 // กรองแถวฝั่ง client-side (ใช้กับข้อมูลที่ถืออยู่ในมือแล้ว ไม่ได้ query ใหม่)
 function filterRowsForSide(rows: any[], side: 'cj' | 'contractor'): any[] {
   const excluded = side === 'cj' ? BILLING_TYPES_EXCLUDED_FROM_CJ : BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR;
@@ -1914,7 +1945,7 @@ Deno.serve(async (req: Request) => {
         const isHistoryMode = roundFilter !== undefined && roundFilter !== null && roundFilter !== '';
         let q = supabase.from('billing_documents').select('*');
         if (isHistoryMode) {
-          q = q.eq('round_no', roundFilter).order('contractor', { ascending: true }).order('seq', { ascending: true });
+          q = q.eq('round_no', roundFilter).order('contractor', { ascending: true }).order('seq', { ascending: true }).order('customer_case', { ascending: true }).order('created_at', { ascending: true });
           if (session.role === 'admin') {
             if (contractorFilter) q = q.eq('contractor', contractorFilter);
           } else {
@@ -1923,7 +1954,7 @@ Deno.serve(async (req: Request) => {
             q = excludeBillingTypes(q.eq('contractor', session.displayName).eq('sent_to_contractor', true), BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
           }
         } else {
-          q = q.order('round_no', { ascending: true }).order('contractor', { ascending: true }).order('seq', { ascending: true }).limit(1000);
+          q = q.order('round_no', { ascending: true }).order('contractor', { ascending: true }).order('seq', { ascending: true }).order('customer_case', { ascending: true }).order('created_at', { ascending: true }).limit(1000);
           if (session.role === 'admin') {
             q = q.is('completed_at', null);
             if (contractorFilter) q = q.eq('contractor', contractorFilter);
@@ -2619,7 +2650,7 @@ Deno.serve(async (req: Request) => {
         if (!session.valid) return jsonResponse({ error: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ error: 'เฉพาะแอดมินเท่านั้นที่ดูรายการนี้ได้' });
         if (roundNo === undefined || roundNo === null || roundNo === '') return jsonResponse({ error: 'ไม่พบเลขรอบบิล' });
-        const { data, error } = await supabase.from('billing_documents').select('*').eq('round_no', roundNo).eq('contractor', contractor || '').not('completed_at', 'is', null).order('seq', { ascending: true });
+        const { data, error } = await supabase.from('billing_documents').select('*').eq('round_no', roundNo).eq('contractor', contractor || '').not('completed_at', 'is', null).order('seq', { ascending: true }).order('customer_case', { ascending: true }).order('created_at', { ascending: true });
         if (error) return jsonResponse({ error: error.message });
         const rows = data || [];
         const jobIds = Array.from(new Set(rows.map((r: any) => r.customer_case).filter(Boolean)));
@@ -2967,7 +2998,8 @@ Deno.serve(async (req: Request) => {
         if (!sideRows || sideRows.length === 0) {
           return jsonResponse({ success: false, message: 'ไม่มีรายการที่ต้องเก็บเงินในฝั่งนี้ (รายการเคลมประกัน 3 เดือน / เคลมอะไหล่ ถูกตัดออกแล้ว)' });
         }
-        const result = await generateBillingPdfBase64(sideRows, !!isAdminArg);
+        // หน้าแอปนับเลขลำดับมาให้แล้ว แต่นับซ้ำอีกชั้นเพื่อกันกรณีหน้าแอปเวอร์ชันเก่าส่งลำดับดิบมา
+        const result = await generateBillingPdfBase64(renumberBillingRowsForDocument(sideRows), !!isAdminArg);
         return jsonResponse(result);
       }
 
@@ -2989,7 +3021,9 @@ Deno.serve(async (req: Request) => {
         if (error) return jsonResponse({ success: false, message: 'ดึงข้อมูลรอบบิลล้มเหลว: ' + error.message });
         if (!data || data.length === 0) return jsonResponse({ success: false, message: 'ไม่พบข้อมูลของรอบบิลนี้ (อาจถูกลบหรือแก้ไขไปแล้ว)' });
         const isAdmin = session.role === 'admin';
-        const pdfResult = await generateBillingPdfBase64(data, isAdmin);
+        // นับเลขลำดับใหม่ก่อนออก PDF ย้อนหลัง เดิมใช้ seq ดิบจากฐานข้อมูลซึ่งเริ่มนับ 1 ใหม่ทุกผู้รับเหมา
+        // และเป็นรูตรงแถวที่ถูกกรองออก ทำให้ลำดับในเอกสารไม่ตรงกับที่เห็นในตาราง
+        const pdfResult = await generateBillingPdfBase64(renumberBillingRowsForDocument(data), isAdmin);
         if (pdfResult.success) {
           const safeContractor = contractorName ? contractorName.replace(/[\\/:*?"<>|]/g, '_') : 'ไม่มีผู้รับเหมา';
           pdfResult.filename = 'ตารางวางบิล_รอบ' + roundNo + '_' + safeContractor + '.pdf';
@@ -3011,7 +3045,7 @@ Deno.serve(async (req: Request) => {
         if (error) return jsonResponse({ success: false, message: 'ดึงข้อมูลบิลล้มเหลว: ' + error.message });
         if (!data || data.length === 0) return jsonResponse({ success: false, message: 'งานนี้ยังไม่มีใบวางบิล (ใบเขียว) หรือยังไม่ถูกส่งบิลให้ผู้รับเหมา' });
         const isAdmin = session.role === 'admin';
-        const pdfResult = await generateBillingPdfBase64(data, isAdmin);
+        const pdfResult = await generateBillingPdfBase64(renumberBillingRowsForDocument(data), isAdmin);
         if (pdfResult.success) {
           const safeJobId = cleanJobId.replace(/[\\/:*?"<>|]/g, '_');
           pdfResult.filename = 'ใบเขียว_' + safeJobId + '.pdf';

@@ -4068,13 +4068,41 @@
                 baseData = baseData.filter(row => excluded.indexOf(normalizeBillingType(row.billing_type)) === -1);
             }
 
-            const contractorFilterEl = document.getElementById('billingContractorFilter');
-            const isCombinedView = currentSession && currentSession.role === 'admin' && contractorFilterEl && !contractorFilterEl.value;
-            if (!isCombinedView) return baseData;
+            return renumberBillingRows(baseData);
+        }
+
+        // เรียงลำดับและใส่เลขลำดับใหม่ให้ทุกครั้งที่แสดง/ดาวน์โหลด
+        //
+        // ทำไมต้องทำ (ปัญหาเดิม 3 ข้อ):
+        //   1) เลข seq ในฐานข้อมูล "เริ่มนับ 1 ใหม่ทุกรอบบิลและทุกผู้รับเหมา" พอดูหลายรอบพร้อมกัน
+        //      จะเห็นเป็น 1,2,3, 1,2, 1,2,3 สลับกันมั่ว
+        //   2) พอกรองรายการเคลมออก เลขจะเป็นรู เช่น 1,2,4,5
+        //   3) อะไหล่หลายชิ้นในทรัพย์สินเดียวถูกบันทึกด้วย seq เดียวกัน ไม่มีตัวตัดสินลำดับ
+        //      ฐานข้อมูลจึงสลับลำดับได้อิสระ ทำให้ลำดับไม่นิ่งในแต่ละครั้งที่ดึงข้อมูล
+        //
+        // กติกาที่ใช้ (ตามที่ตกลงกันไว้):
+        //   - เรียงด้วย รอบบิล -> ผู้รับเหมา -> seq เดิม -> เลขงาน -> เลขทรัพย์สิน -> เวลาที่สร้างแถว
+        //     (ใส่ตัวตัดสินท้ายสุดให้ครบ เพื่อให้ผลออกมาเหมือนเดิมทุกครั้ง ไม่ขึ้นกับลำดับที่ฐานข้อมูลคืนมา)
+        //   - นับเลขต่อเนื่อง 1..N ทั้งไฟล์ ไม่รีเซ็ตตามรอบ
+        //   - 1 เลขงาน = 1 ลำดับ ไม่ว่าจะมีกี่เลขทรัพย์สินหรือกี่อะไหล่
+        //   - ไม่แตะค่า seq จริงในฐานข้อมูล (แก้แค่ค่าที่แสดง)
+        function renumberBillingRows(rows) {
+            const cmp = (a, b) => {
+                const s = (v) => (v === null || v === undefined) ? '' : String(v);
+                const n = (v) => (v === null || v === undefined || v === '') ? Number.MAX_SAFE_INTEGER : Number(v);
+                return (n(a.round_no) - n(b.round_no))
+                    || s(a.contractor).localeCompare(s(b.contractor), 'th')
+                    || (n(a.seq) - n(b.seq))
+                    || s(a.customer_case).localeCompare(s(b.customer_case), 'th')
+                    || s(a.asset_id).localeCompare(s(b.asset_id), 'th')
+                    || s(a.created_at).localeCompare(s(b.created_at))
+                    || s(a.id).localeCompare(s(b.id));
+            };
+            const sorted = (rows || []).slice().sort(cmp);
 
             let counter = 0;
             let prevJob = null;
-            return baseData.map(row => {
+            return sorted.map(row => {
                 if (row.customer_case !== prevJob) {
                     counter++;
                     prevJob = row.customer_case;
