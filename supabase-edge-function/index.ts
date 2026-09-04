@@ -1516,14 +1516,16 @@ Deno.serve(async (req: Request) => {
   // และตอน "ยืนยันบันทึกรอบบิล" (generateBillingDocumentsForAllClosedJobs) เพื่อให้ผลลัพธ์ตรงกันเป๊ะทั้งสองขั้น)
   // เดิมฟังก์ชันนี้คืนแค่ "เลขงาน" (1 เลขงาน = 1 บิลเสมอ) แต่ตอนนี้ 1 เลขงานปิดงานได้หลายครั้ง (คนละเลขทรัพย์สิน)
   // แต่ละครั้งที่ปิดงานควรนับเป็นข้อมูลที่ต้องจับคู่แยกกัน จึงเปลี่ยนมาคืนเป็นคู่ (เลขงาน, เลขทรัพย์สิน) แทน
-  // includeBacklog = รวม "งานตกค้าง" คืองานที่ปิดไปก่อนวันเริ่มรอบ แต่ยังไม่เคยถูกออกบิลเลย
+  // ช่วงวันที่ที่แอดมินกรอก "มีผลเสมอ" ทั้งวันเริ่มต้นและวันสิ้นสุด
   //
-  // ทำไมต้องมี: ตัวกรองปกติใช้ "วันที่เข้าแก้ไข (fix_date)" ตัดสินว่างานอยู่ในรอบไหน
-  // ถ้าเลขงานถูกเปิดไว้นานแล้วเพิ่งมาปิดทีหลัง fix_date อาจตกอยู่ในรอบที่ตัดบิลไปแล้ว
-  // พอถึงรอบใหม่ งานนั้นจะอยู่นอกช่วงวันที่ทุกครั้ง = ไม่มีวันถูกดึงมาวางบิลเลย เงินหลุดถาวรโดยไม่มีใครรู้
-  // เปิดตัวเลือกนี้แล้วจะไม่สนใจวันเริ่มต้น ดึงทุกงานที่ปิดแล้วจนถึงวันสิ้นสุดรอบมาพิจารณาแทน
-  // ส่วนงานที่เคยออกบิลไปแล้วยังถูกกันซ้ำด้วยกลไกเดิม (billing_documents + claim_billing_jobs) อยู่ดี
-  async function resolveBillingCandidatePairs(startDate: string | null, endDate: string | null, jobIds: string[] | null, includeBacklog?: boolean): Promise<{ candidatePairs: { jobId: string; assetId: string }[]; roundPeriod: string; error?: string }> {
+  // เดิมมีตัวเลือก "รวมงานตกค้าง" ที่ทำให้ระบบข้ามวันเริ่มต้นไปดึงทุกงานตั้งแต่อดีตมารวมในรอบเดียว
+  // ปัญหาคือแอดมินกรอกช่วงวันที่ไว้แต่ได้ผลลัพธ์นอกช่วงติดมาด้วย คุมไม่ได้ว่ารอบบิลจะมีอะไรบ้าง
+  // ตอนนี้ตัดพฤติกรรมนั้นออก ระบบจะเอาเฉพาะงานที่ปิดในช่วงวันที่ที่กรอกเท่านั้น
+  //
+  // ถ้าต้องการดึงงานตกค้างของเดือนก่อน ๆ ให้กรอกช่วงวันที่ให้ครอบเดือนนั้นตรง ๆ
+  // งานที่เคยออกบิลไปแล้วยังถูกกันซ้ำอัตโนมัติเหมือนเดิม (เช็คจาก billing_documents + claim_billing_jobs)
+  // จึงกรอกช่วงกว้างได้โดยไม่ต้องกลัวออกบิลซ้ำ
+  async function resolveBillingCandidatePairs(startDate: string | null, endDate: string | null, jobIds: string[] | null): Promise<{ candidatePairs: { jobId: string; assetId: string }[]; roundPeriod: string; error?: string }> {
     if ((!jobIds || jobIds.length === 0) && (!startDate || !endDate)) {
       return { candidatePairs: [], roundPeriod: '', error: 'ต้องระบุช่วงวันที่ (ตั้งแต่วันที่ และ ถึงวันที่) หรือระบุเลขงานเจาะจง ก่อนถึงจะจับคู่ข้อมูลได้' };
     }
@@ -1546,7 +1548,7 @@ Deno.serve(async (req: Request) => {
       });
       return { candidatePairs, roundPeriod };
     }
-    const roundPeriod = startDate + ' ถึง ' + endDate + (includeBacklog ? ' (รวมงานตกค้างก่อนหน้า)' : '');
+    const roundPeriod = startDate + ' ถึง ' + endDate;
     const { data: closeData, error: closeErr } = await supabase.from('close_issues').select('job_id,asset_id,fix_date').order('created_at', { ascending: true });
     if (closeErr) return { candidatePairs: [], roundPeriod: '', error: 'ดึงข้อมูล close_issues ล้มเหลว: ' + closeErr.message };
     const startD = new Date(startDate + 'T00:00:00');
@@ -1556,9 +1558,8 @@ Deno.serve(async (req: Request) => {
     (closeData || []).forEach((r: any) => {
       if (!r.job_id) return;
       const fx = parseFixDateString(r.fix_date);
-      // โหมดรวมงานตกค้าง: ไม่สนใจวันเริ่มต้น เอาทุกงานที่ปิดก่อนวันสิ้นสุดรอบ
-      if (!fx || fx > endD) return;
-      if (!includeBacklog && fx < startD) return;
+      // เอาเฉพาะงานที่ "วันที่เข้าแก้ไข" อยู่ในช่วงที่แอดมินกรอกเท่านั้น ทั้งขอบล่างและขอบบน
+      if (!fx || fx > endD || fx < startD) return;
       const assetId = r.asset_id || '-';
       const key = r.job_id + '||' + assetId;
       if (seenPair.has(key)) return;
@@ -2102,11 +2103,11 @@ Deno.serve(async (req: Request) => {
       // ดูตัวอย่างก่อนบันทึกรอบบิลจริง (ไม่เขียนอะไรลงฐานข้อมูลเลย - อ่านอย่างเดียว)
       // ใช้เงื่อนไขจับคู่แบบเดียวกับตอนบันทึกจริงเป๊ะ (resolveBillingCandidatePairs) เพื่อให้สิ่งที่เห็นตรงกับสิ่งที่จะถูกบันทึก
       case 'previewBillingCandidates': {
-        const [username, token, startDate, endDate, jobIds, includeBacklog] = args;
+        const [username, token, startDate, endDate, jobIds] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ทำรายการนี้ได้' });
-        const candResult = await resolveBillingCandidatePairs(startDate, endDate, jobIds, !!includeBacklog);
+        const candResult = await resolveBillingCandidatePairs(startDate, endDate, jobIds);
         if (candResult.error) return jsonResponse({ success: false, message: candResult.error });
         const candidatePairs = candResult.candidatePairs;
         const roundPeriod = candResult.roundPeriod;
@@ -2160,14 +2161,14 @@ Deno.serve(async (req: Request) => {
       }
 
       case 'generateBillingDocumentsForAllClosedJobs': {
-        const [username, token, startDate, endDate, jobIds, includeBacklog] = args;
+        const [username, token, startDate, endDate, jobIds] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ทำรายการนี้ได้' });
         if ((!jobIds || jobIds.length === 0) && (!startDate || !endDate)) {
           return jsonResponse({ success: false, message: 'ต้องระบุช่วงวันที่ (ตั้งแต่วันที่ และ ถึงวันที่) หรือระบุเลขงานเจาะจง ก่อนถึงจะจับคู่ข้อมูลได้' });
         }
-        const candResult = await resolveBillingCandidatePairs(startDate, endDate, jobIds, !!includeBacklog);
+        const candResult = await resolveBillingCandidatePairs(startDate, endDate, jobIds);
         if (candResult.error) return jsonResponse({ success: false, message: candResult.error });
         const candidatePairs = candResult.candidatePairs;
         const roundPeriod = candResult.roundPeriod;

@@ -677,13 +677,14 @@
                         <button type="button" onclick="clearBillingDateRange()" class="text-slate-500 text-xs underline hover:text-slate-700 pb-2">
                             ล้างช่วงวันที่
                         </button>
-                        <label class="flex items-start gap-2 pb-1 cursor-pointer max-w-xs" title="ดึงงานที่ปิดก่อนวันเริ่มรอบ แต่ยังไม่เคยออกบิล">
-                            <input type="checkbox" id="billingIncludeBacklog" class="mt-0.5 rounded border-slate-300">
-                            <span class="text-xs text-slate-700 leading-snug">
-                                <span class="font-semibold">รวมงานตกค้าง</span>
-                                <span class="block text-slate-400">งานที่ปิดก่อนวันเริ่มรอบแต่ยังไม่เคยออกบิล จะถูกดึงมาด้วย</span>
-                            </span>
-                        </label>
+                        <!-- เดิมมีช่องติ๊ก "รวมงานตกค้าง" ที่ทำให้ระบบข้ามวันเริ่มต้นไปดึงงานเก่าทั้งหมดมาด้วย
+                             เอาออกแล้ว เพราะทำให้ช่วงวันที่ที่กรอกไว้ไม่มีผลจริง คุมไม่ได้ว่ารอบบิลจะมีงานอะไรบ้าง
+                             ตอนนี้ระบบเอาเฉพาะงานที่ปิดในช่วงวันที่ที่กรอกเท่านั้น
+                             ถ้าต้องการงานตกค้างของเดือนก่อน ให้กรอกช่วงวันที่ให้ครอบเดือนนั้นตรง ๆ -->
+                        <p class="text-xs text-slate-400 pb-1 max-w-xs leading-snug">
+                            ระบบจะดึงเฉพาะงานที่ <span class="font-semibold text-slate-600">ปิดงานในช่วงวันที่ที่กรอก</span> เท่านั้น
+                            · งานตกค้างของเดือนก่อน ให้กรอกช่วงวันที่ให้ครอบเดือนนั้น (งานที่ออกบิลไปแล้วระบบกันซ้ำให้อัตโนมัติ)
+                        </p>
                         <div class="text-slate-400 text-xs font-semibold pb-2">หรือ</div>
                         <div>
                             <label class="block text-slate-700 text-xs font-semibold mb-1">ระบุเลขงานเจาะจง (ไม่ต้องใส่ช่วงวันที่ — ใส่ได้หลายเลขงาน คั่นด้วย , หรือขึ้นบรรทัดใหม่)</label>
@@ -2995,8 +2996,7 @@
                 statusEl.textContent = '';
             }
 
-            const includeBacklog = document.getElementById('billingIncludeBacklog').checked;
-            runServerCall('previewBillingCandidates', [currentSession.username, currentSession.token, startDate, endDate, jobIds, includeBacklog], function(res) {
+            runServerCall('previewBillingCandidates', [currentSession.username, currentSession.token, startDate, endDate, jobIds], function(res) {
                 resetBtn();
                 if (res && res.success) {
                     renderBillingPreview(res);
@@ -3079,8 +3079,7 @@
             confirmBtn.classList.add('opacity-60', 'cursor-not-allowed');
             textEl.textContent = 'กำลังบันทึกรอบบิล...';
 
-            const includeBacklog = document.getElementById('billingIncludeBacklog').checked;
-            runServerCall('generateBillingDocumentsForAllClosedJobs', [currentSession.username, currentSession.token, startDate, endDate, jobIds, includeBacklog], function(res) {
+            runServerCall('generateBillingDocumentsForAllClosedJobs', [currentSession.username, currentSession.token, startDate, endDate, jobIds], function(res) {
                 confirmBtn.disabled = false;
                 confirmBtn.classList.remove('opacity-60', 'cursor-not-allowed');
                 textEl.textContent = 'ยืนยันบันทึกรอบบิล';
