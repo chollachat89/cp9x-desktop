@@ -677,14 +677,17 @@
                         <button type="button" onclick="clearBillingDateRange()" class="text-slate-500 text-xs underline hover:text-slate-700 pb-2">
                             ล้างช่วงวันที่
                         </button>
-                        <!-- เดิมมีช่องติ๊ก "รวมงานตกค้าง" ที่ทำให้ระบบข้ามวันเริ่มต้นไปดึงงานเก่าทั้งหมดมาด้วย
-                             เอาออกแล้ว เพราะทำให้ช่วงวันที่ที่กรอกไว้ไม่มีผลจริง คุมไม่ได้ว่ารอบบิลจะมีงานอะไรบ้าง
-                             ตอนนี้ระบบเอาเฉพาะงานที่ปิดในช่วงวันที่ที่กรอกเท่านั้น
-                             ถ้าต้องการงานตกค้างของเดือนก่อน ให้กรอกช่วงวันที่ให้ครอบเดือนนั้นตรง ๆ -->
-                        <p class="text-xs text-slate-400 pb-1 max-w-xs leading-snug">
-                            ระบบจะดึงเฉพาะงานที่ <span class="font-semibold text-slate-600">ปิดงานในช่วงวันที่ที่กรอก</span> เท่านั้น
-                            · งานตกค้างของเดือนก่อน ให้กรอกช่วงวันที่ให้ครอบเดือนนั้น (งานที่ออกบิลไปแล้วระบบกันซ้ำให้อัตโนมัติ)
-                        </p>
+                        <!-- ค่าเริ่มต้น (ไม่ติ๊ก) = เอาเฉพาะงานที่ปิดในช่วงวันที่ที่กรอกเท่านั้น
+                             ติ๊กแล้ว = เพิ่มงานตกค้าง (ปิดก่อนวันเริ่มต้น และยังไม่เคยออกบิล) เข้ามาด้วย
+                             ต่างจากเวอร์ชันเก่าตรงที่ตอนนี้หน้าตัวอย่างจะติดป้ายบอกว่าแถวไหนเป็นงานตกค้าง
+                             แอดมินจึงเห็นชัดว่ารอบบิลนี้มีอะไรบ้าง ไม่ปนกันจนคุมไม่ได้ -->
+                        <label class="flex items-start gap-2 pb-1 cursor-pointer max-w-xs" title="เพิ่มงานที่ปิดก่อนวันเริ่มต้น แต่ยังไม่เคยออกบิล เข้ามาในรอบนี้ด้วย">
+                            <input type="checkbox" id="billingIncludeBacklog" class="mt-0.5 rounded border-slate-300">
+                            <span class="text-xs text-slate-700 leading-snug">
+                                <span class="font-semibold">รวมงานตกค้าง</span>
+                                <span class="block text-slate-400">ปกติดึงเฉพาะงานที่ปิดในช่วงวันที่ที่กรอก · ติ๊กช่องนี้เพื่อเพิ่มงานที่ปิดก่อนวันเริ่มต้นและยังไม่เคยออกบิลเข้ามาด้วย (จะมีป้ายกำกับให้เห็นในหน้าตัวอย่าง)</span>
+                            </span>
+                        </label>
                         <div class="text-slate-400 text-xs font-semibold pb-2">หรือ</div>
                         <div>
                             <label class="block text-slate-700 text-xs font-semibold mb-1">ระบุเลขงานเจาะจง (ไม่ต้องใส่ช่วงวันที่ — ใส่ได้หลายเลขงาน คั่นด้วย , หรือขึ้นบรรทัดใหม่)</label>
@@ -1532,6 +1535,8 @@
                         <span class="font-semibold px-3 py-1.5 rounded-full bg-emerald-100 text-emerald-700">ข้อมูลใหม่ที่จะบันทึก: <span id="billingPreviewNewCount">0</span> รายการ</span>
                         <span id="billingPreviewAlreadyBadge" class="hidden font-semibold px-3 py-1.5 rounded-full bg-slate-100 text-slate-500">บันทึกไปแล้วก่อนหน้านี้ (ข้ามอัตโนมัติ): <span id="billingPreviewAlreadyCount">0</span> รายการ</span>
                     </div>
+                    <!-- แจ้งเตือนเมื่อมีงานตกค้างถูกดึงเพิ่มเข้ามาในรอบนี้ -->
+                    <p id="billingPreviewBacklogNote" class="hidden text-xs mb-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800"></p>
                     <div class="table-scroll overflow-x-auto border border-slate-200 rounded-xl">
                         <table class="w-full text-xs border-collapse">
                             <thead>
@@ -2996,7 +3001,8 @@
                 statusEl.textContent = '';
             }
 
-            runServerCall('previewBillingCandidates', [currentSession.username, currentSession.token, startDate, endDate, jobIds], function(res) {
+            const includeBacklog = document.getElementById('billingIncludeBacklog').checked;
+            runServerCall('previewBillingCandidates', [currentSession.username, currentSession.token, startDate, endDate, jobIds, includeBacklog], function(res) {
                 resetBtn();
                 if (res && res.success) {
                     renderBillingPreview(res);
@@ -3051,9 +3057,27 @@
                 alreadyBadge.classList.add('hidden');
             }
 
+            // แถวที่เป็นงานตกค้าง (ปิดก่อนวันเริ่มรอบ) ทำสีเหลืองและติดป้ายให้เห็นชัด
+            // เดิมงานตกค้างปนอยู่ในลิสต์เฉย ๆ แยกไม่ออกว่าอันไหนอยู่ในช่วงที่เลือก อันไหนถูกดึงเพิ่มมา
+            const backlogCount = candidates.filter(c => c.is_backlog).length;
+            const backlogNote = document.getElementById('billingPreviewBacklogNote');
+            if (backlogNote) {
+                if (backlogCount > 0) {
+                    backlogNote.classList.remove('hidden');
+                    backlogNote.innerHTML = '<i class="fa-solid fa-clock-rotate-left mr-1"></i> ในนี้มี <span class="font-bold">'
+                        + backlogCount + '</span> รายการที่เป็น "งานตกค้าง" (ปิดก่อนวันเริ่มต้นที่เลือก) ถูกดึงเพิ่มมาเพราะติ๊กช่องรวมงานตกค้างไว้ — แถวสีเหลืองในตารางด้านล่าง';
+                } else {
+                    backlogNote.classList.add('hidden');
+                }
+            }
+
             document.getElementById('billingPreviewTbody').innerHTML = candidates.map(c => {
-                return `<tr class="border-t border-slate-100">
-                    <td class="p-2">${c.job_id || ''}</td>
+                const rowCls = c.is_backlog ? 'border-t border-amber-200 bg-amber-50' : 'border-t border-slate-100';
+                const badge = c.is_backlog
+                    ? ' <span class="ml-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-200 text-amber-800 whitespace-nowrap">ตกค้าง</span>'
+                    : '';
+                return `<tr class="${rowCls}">
+                    <td class="p-2 whitespace-nowrap">${c.job_id || ''}${badge}</td>
                     <td class="p-2">${(c.asset_id && c.asset_id !== '-') ? c.asset_id : ''}</td>
                     <td class="p-2">${c.branch_name || c.branch_code || ''}</td>
                     <td class="p-2">${c.service_type || ''}</td>
@@ -3079,7 +3103,8 @@
             confirmBtn.classList.add('opacity-60', 'cursor-not-allowed');
             textEl.textContent = 'กำลังบันทึกรอบบิล...';
 
-            runServerCall('generateBillingDocumentsForAllClosedJobs', [currentSession.username, currentSession.token, startDate, endDate, jobIds], function(res) {
+            const includeBacklog = document.getElementById('billingIncludeBacklog').checked;
+            runServerCall('generateBillingDocumentsForAllClosedJobs', [currentSession.username, currentSession.token, startDate, endDate, jobIds, includeBacklog], function(res) {
                 confirmBtn.disabled = false;
                 confirmBtn.classList.remove('opacity-60', 'cursor-not-allowed');
                 textEl.textContent = 'ยืนยันบันทึกรอบบิล';

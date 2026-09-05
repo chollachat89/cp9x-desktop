@@ -1516,16 +1516,19 @@ Deno.serve(async (req: Request) => {
   // และตอน "ยืนยันบันทึกรอบบิล" (generateBillingDocumentsForAllClosedJobs) เพื่อให้ผลลัพธ์ตรงกันเป๊ะทั้งสองขั้น)
   // เดิมฟังก์ชันนี้คืนแค่ "เลขงาน" (1 เลขงาน = 1 บิลเสมอ) แต่ตอนนี้ 1 เลขงานปิดงานได้หลายครั้ง (คนละเลขทรัพย์สิน)
   // แต่ละครั้งที่ปิดงานควรนับเป็นข้อมูลที่ต้องจับคู่แยกกัน จึงเปลี่ยนมาคืนเป็นคู่ (เลขงาน, เลขทรัพย์สิน) แทน
-  // ช่วงวันที่ที่แอดมินกรอก "มีผลเสมอ" ทั้งวันเริ่มต้นและวันสิ้นสุด
+  // ช่วงวันที่ที่แอดมินกรอก "มีผลเสมอ" — งานหลักของรอบคืองานที่ปิดในช่วงนั้นเท่านั้น
   //
-  // เดิมมีตัวเลือก "รวมงานตกค้าง" ที่ทำให้ระบบข้ามวันเริ่มต้นไปดึงทุกงานตั้งแต่อดีตมารวมในรอบเดียว
-  // ปัญหาคือแอดมินกรอกช่วงวันที่ไว้แต่ได้ผลลัพธ์นอกช่วงติดมาด้วย คุมไม่ได้ว่ารอบบิลจะมีอะไรบ้าง
-  // ตอนนี้ตัดพฤติกรรมนั้นออก ระบบจะเอาเฉพาะงานที่ปิดในช่วงวันที่ที่กรอกเท่านั้น
+  // includeBacklog = ติ๊ก "รวมงานตกค้าง" เพิ่มงานที่ปิด "ก่อนวันเริ่มต้น" เข้ามาด้วย
+  //   ทำไมต้องมี: ระบบใช้ "วันที่เข้าแก้ไข (fix_date)" ตัดสินว่างานอยู่รอบไหน
+  //   ถ้าเลขงานเปิดไว้นานแล้วเพิ่งมาปิดทีหลัง fix_date อาจตกอยู่ในรอบที่ตัดบิลไปแล้ว
+  //   งานนั้นจะอยู่นอกช่วงวันที่ทุกครั้ง = ไม่มีวันถูกดึงมาวางบิลเลย เงินหลุดถาวรโดยไม่มีใครรู้
   //
-  // ถ้าต้องการดึงงานตกค้างของเดือนก่อน ๆ ให้กรอกช่วงวันที่ให้ครอบเดือนนั้นตรง ๆ
+  // ต่างจากเวอร์ชันก่อนตรงที่ ตอนนี้แต่ละคู่จะติดธง isBacklog กลับไปด้วย
+  // หน้าตัวอย่างจะได้แยกให้เห็นชัดว่าแถวไหนเป็นงานในช่วง แถวไหนเป็นงานตกค้างที่ดึงเพิ่มมา
+  // (ปัญหาเดิมคือปนกันจนแอดมินคุมไม่ได้ว่ารอบบิลนี้มีอะไรบ้าง)
+  //
   // งานที่เคยออกบิลไปแล้วยังถูกกันซ้ำอัตโนมัติเหมือนเดิม (เช็คจาก billing_documents + claim_billing_jobs)
-  // จึงกรอกช่วงกว้างได้โดยไม่ต้องกลัวออกบิลซ้ำ
-  async function resolveBillingCandidatePairs(startDate: string | null, endDate: string | null, jobIds: string[] | null): Promise<{ candidatePairs: { jobId: string; assetId: string }[]; roundPeriod: string; error?: string }> {
+  async function resolveBillingCandidatePairs(startDate: string | null, endDate: string | null, jobIds: string[] | null, includeBacklog?: boolean): Promise<{ candidatePairs: { jobId: string; assetId: string; isBacklog: boolean }[]; roundPeriod: string; error?: string }> {
     if ((!jobIds || jobIds.length === 0) && (!startDate || !endDate)) {
       return { candidatePairs: [], roundPeriod: '', error: 'ต้องระบุช่วงวันที่ (ตั้งแต่วันที่ และ ถึงวันที่) หรือระบุเลขงานเจาะจง ก่อนถึงจะจับคู่ข้อมูลได้' };
     }
@@ -1537,34 +1540,40 @@ Deno.serve(async (req: Request) => {
       const { data: closeData, error: closeErr } = await supabase.from('close_issues').select('job_id,asset_id').in('job_id', wantedJobIds);
       if (closeErr) return { candidatePairs: [], roundPeriod: '', error: 'ดึงข้อมูล close_issues ล้มเหลว: ' + closeErr.message };
       const seenPair = new Set<string>();
-      const candidatePairs: { jobId: string; assetId: string }[] = [];
+      const candidatePairs: { jobId: string; assetId: string; isBacklog: boolean }[] = [];
       (closeData || []).forEach((r: any) => {
         if (!r.job_id) return;
         const assetId = r.asset_id || '-';
         const key = r.job_id + '||' + assetId;
         if (seenPair.has(key)) return;
         seenPair.add(key);
-        candidatePairs.push({ jobId: r.job_id, assetId });
+        // โหมดระบุเลขงานเจาะจงไม่ได้ใช้ช่วงวันที่ จึงไม่มีแนวคิด "งานตกค้าง"
+        candidatePairs.push({ jobId: r.job_id, assetId, isBacklog: false });
       });
       return { candidatePairs, roundPeriod };
     }
-    const roundPeriod = startDate + ' ถึง ' + endDate;
+    const roundPeriod = startDate + ' ถึง ' + endDate + (includeBacklog ? ' (รวมงานตกค้างก่อนหน้า)' : '');
     const { data: closeData, error: closeErr } = await supabase.from('close_issues').select('job_id,asset_id,fix_date').order('created_at', { ascending: true });
     if (closeErr) return { candidatePairs: [], roundPeriod: '', error: 'ดึงข้อมูล close_issues ล้มเหลว: ' + closeErr.message };
     const startD = new Date(startDate + 'T00:00:00');
     const endD = new Date(endDate + 'T23:59:59');
     const seenPair = new Set<string>();
-    const candidatePairs: { jobId: string; assetId: string }[] = [];
+    const candidatePairs: { jobId: string; assetId: string; isBacklog: boolean }[] = [];
     (closeData || []).forEach((r: any) => {
       if (!r.job_id) return;
       const fx = parseFixDateString(r.fix_date);
-      // เอาเฉพาะงานที่ "วันที่เข้าแก้ไข" อยู่ในช่วงที่แอดมินกรอกเท่านั้น ทั้งขอบล่างและขอบบน
-      if (!fx || fx > endD || fx < startD) return;
+      if (!fx) return;
+      // เกินวันสิ้นสุดรอบ = ยังไม่ถึงคิวของรอบนี้ ตัดออกเสมอไม่ว่าจะติ๊กตกค้างหรือไม่
+      // (ไม่ดึงงานอนาคตมาก่อนเวลา ไม่งั้นรอบถัดไปจะไม่มีงานเหลือ)
+      if (fx > endD) return;
+      const isBacklog = fx < startD;
+      // ก่อนวันเริ่มต้น = งานตกค้าง เอาเข้ามาเฉพาะตอนติ๊กเลือกเท่านั้น
+      if (isBacklog && !includeBacklog) return;
       const assetId = r.asset_id || '-';
       const key = r.job_id + '||' + assetId;
       if (seenPair.has(key)) return;
       seenPair.add(key);
-      candidatePairs.push({ jobId: r.job_id, assetId });
+      candidatePairs.push({ jobId: r.job_id, assetId, isBacklog });
     });
     return { candidatePairs, roundPeriod };
   }
@@ -2103,11 +2112,11 @@ Deno.serve(async (req: Request) => {
       // ดูตัวอย่างก่อนบันทึกรอบบิลจริง (ไม่เขียนอะไรลงฐานข้อมูลเลย - อ่านอย่างเดียว)
       // ใช้เงื่อนไขจับคู่แบบเดียวกับตอนบันทึกจริงเป๊ะ (resolveBillingCandidatePairs) เพื่อให้สิ่งที่เห็นตรงกับสิ่งที่จะถูกบันทึก
       case 'previewBillingCandidates': {
-        const [username, token, startDate, endDate, jobIds] = args;
+        const [username, token, startDate, endDate, jobIds, includeBacklog] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ทำรายการนี้ได้' });
-        const candResult = await resolveBillingCandidatePairs(startDate, endDate, jobIds);
+        const candResult = await resolveBillingCandidatePairs(startDate, endDate, jobIds, !!includeBacklog);
         if (candResult.error) return jsonResponse({ success: false, message: candResult.error });
         const candidatePairs = candResult.candidatePairs;
         const roundPeriod = candResult.roundPeriod;
@@ -2155,20 +2164,23 @@ Deno.serve(async (req: Request) => {
             visit_date: closeRecord ? (closeRecord.fix_date || '-') : '-',
             contractor: openRecord ? (openRecord.contractor || null) : null,
             has_open_record: !!openRecord, has_close_record: !!closeRecord,
+            // ธงบอกว่าแถวนี้เป็นงานตกค้าง (ปิดก่อนวันเริ่มรอบ) ที่ถูกดึงเพิ่มมาเพราะติ๊กเลือกไว้
+            // หน้าตัวอย่างจะได้ทำป้ายกำกับให้เห็นชัด ไม่ปนกับงานในช่วงจนคุมไม่ได้
+            is_backlog: !!p.isBacklog,
           };
         });
         return jsonResponse({ success: true, roundPeriod, candidates, alreadyBilledCount });
       }
 
       case 'generateBillingDocumentsForAllClosedJobs': {
-        const [username, token, startDate, endDate, jobIds] = args;
+        const [username, token, startDate, endDate, jobIds, includeBacklog] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ทำรายการนี้ได้' });
         if ((!jobIds || jobIds.length === 0) && (!startDate || !endDate)) {
           return jsonResponse({ success: false, message: 'ต้องระบุช่วงวันที่ (ตั้งแต่วันที่ และ ถึงวันที่) หรือระบุเลขงานเจาะจง ก่อนถึงจะจับคู่ข้อมูลได้' });
         }
-        const candResult = await resolveBillingCandidatePairs(startDate, endDate, jobIds);
+        const candResult = await resolveBillingCandidatePairs(startDate, endDate, jobIds, !!includeBacklog);
         if (candResult.error) return jsonResponse({ success: false, message: candResult.error });
         const candidatePairs = candResult.candidatePairs;
         const roundPeriod = candResult.roundPeriod;
