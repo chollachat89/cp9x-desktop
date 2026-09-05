@@ -147,6 +147,27 @@ function bangkokIsoTimestamp(dateStr: any, timeStr: any): string | null {
   return dt.toISOString();
 }
 
+// เลขที่ใบแจ้งซ่อมบำรุงของระบบขึ้นต้นด้วย CM เสมอ (เช่น CM20260902-0137)
+// ถ้าไม่ขึ้นต้นด้วย CM แปลว่ากรอกผิดช่อง/ผิดระบบ ปล่อยผ่านไปจะไปโผล่เป็นงานผีในตารางวางบิล
+function isValidJobNumber(jobId: any): boolean {
+  return /^CM/i.test((jobId === null || jobId === undefined) ? '' : jobId.toString().trim());
+}
+
+// "วันที่ร้องขอ" (req_date) ที่เก็บใน open_issues เป็นข้อความรูปแบบ "DD/MM/YYYY, HH:MM"
+// (ตรวจจากข้อมูลจริงทั้ง 195 แถวแล้ว เป็นรูปแบบนี้ทั้งหมด)
+// คืนค่าเป็นวันที่อย่างเดียว ตัดเวลาทิ้ง เพราะใช้เทียบกับ fix_date ที่มีแค่วันที่
+function parseReqDateString(str: string | null): Date | null {
+  if (!str) return null;
+  const m = str.toString().trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  if (!m) return null;
+  const day = parseInt(m[1], 10);
+  const month = parseInt(m[2], 10);
+  const year = parseInt(m[3], 10);
+  if (!day || !month || !year) return null;
+  const d = new Date(year, month - 1, day);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 function parseFixDateString(str: string | null): Date | null {
   if (!str) return null;
   const parts = str.toString().trim().split(/[-\/]/);
@@ -974,32 +995,204 @@ async function generatePmQuotationXlsxBase64(rows: any[], roundNo: number | stri
   }
 }
 
+// ==================== ไฟล์ Excel รวมงานทุกประเภทเก็บเงิน (สำหรับแอดมิน) ====================
+// คอลัมน์เหมือนตารางวางบิลในแอปทุกช่อง + เปิด AutoFilter ให้กรองเองในไฟล์ได้
+// โดยเฉพาะคอลัมน์ "ประเภทเก็บเงิน" ที่แยกได้ 3 แบบ: เก็บเงินปกติ / เคลมประกัน 3 เดือน / เคลมอะไหล่
+const ALL_BILLING_XLSX_COLUMNS: { key: string; header: string; width: number; numeric?: boolean }[] = [
+  { key: 'seq', header: 'ลำดับ', width: 8, numeric: true },
+  { key: 'customer_case', header: 'Customer Case', width: 20 },
+  { key: 'branch_code', header: 'รหัสสาขา', width: 11 },
+  { key: 'branch_name', header: 'ชื่อสาขา', width: 26 },
+  { key: 'service_type', header: 'งานบริการ', width: 30 },
+  { key: 'asset_id', header: 'เลขทรัพย์สิน', width: 16 },
+  { key: 'part_code', header: 'Part Code', width: 12 },
+  { key: 'part_detail', header: 'รายละเอียดอะไหล่', width: 40 },
+  { key: 'warranty_months', header: 'ระยะเวลาประกัน(เดือน)', width: 12 },
+  { key: 'qty', header: 'จำนวน', width: 9, numeric: true },
+  { key: 'unit', header: 'หน่วย', width: 9 },
+  { key: 'unit_price', header: 'ราคา/หน่วย', width: 13, numeric: true },
+  { key: 'total_price', header: 'ราคา/รวม', width: 13, numeric: true },
+  { key: 'unit_price_contractor', header: 'ราคา/หน่วย (ผู้รับเหมา)', width: 15, numeric: true },
+  { key: 'total_price_contractor', header: 'ราคา/รวม (ผู้รับเหมา)', width: 15, numeric: true },
+  { key: 'req_date', header: 'วันที่รับแจ้ง', width: 14 },
+  { key: 'visit_date', header: 'วันที่เข้างาน', width: 14 },
+  { key: 'quotation_ref', header: 'Quotation', width: 16 },
+  { key: 'return_old_part', header: 'อะไหล่เก่าส่งคืน CJ', width: 13 },
+  { key: 'responsible', header: 'ผู้รับผิดชอบ', width: 18 },
+  { key: 'company', header: 'บริษัท', width: 30 },
+  { key: 'contractor', header: 'ผู้รับเหมา', width: 20 },
+  { key: 'round_no', header: 'รอบบิลที่', width: 10, numeric: true },
+  { key: 'round_period', header: 'ช่วงรอบบิล', width: 24 },
+  { key: '_sent', header: 'สถานะส่งบิล', width: 14 },
+  { key: '_completed', header: 'สถานะตัดบิล', width: 14 },
+  { key: '_billingTypeLabel', header: 'ประเภทเก็บเงิน', width: 20 },
+];
+
+async function generateAllBillingXlsxBase64(rows: any[]): Promise<any> {
+  try {
+    const ExcelJS = await loadExcelJS();
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('ตารางวางบิลทั้งหมด');
+
+    sheet.columns = ALL_BILLING_XLSX_COLUMNS.map((c) => ({ header: c.header, key: c.key, width: c.width }));
+
+    const headerRow = sheet.getRow(1);
+    headerRow.height = 30;
+    headerRow.eachCell((cell: any) => {
+      cell.font = { name: 'Tahoma', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF15803D' } }; // เขียวแบรนด์
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'FF999999' } }, bottom: { style: 'thin', color: { argb: 'FF999999' } },
+        left: { style: 'thin', color: { argb: 'FF999999' } }, right: { style: 'thin', color: { argb: 'FF999999' } },
+      };
+    });
+
+    // สีพื้นแยกประเภทเก็บเงินให้เห็นด้วยตา ตรงกับสีในตารางหน้าแอป
+    const FILL_BY_TYPE: Record<string, string | null> = {
+      normal: null,
+      claim: 'FFFEF3C7',          // เหลือง = เคลมประกัน 3 เดือน (ไม่เก็บเงินทั้ง 2 ฝั่ง)
+      contractor_cr: 'FFE0F2FE',  // ฟ้า = เคลมอะไหล่ (เก็บเฉพาะฝั่งผู้รับเหมา)
+    };
+
+    rows.forEach((r: any) => {
+      const bType = normalizeBillingType(r.billing_type);
+      const values: any = {};
+      ALL_BILLING_XLSX_COLUMNS.forEach((c) => {
+        if (c.key === '_billingTypeLabel') { values[c.key] = billingTypeLabel(bType); return; }
+        if (c.key === '_sent') { values[c.key] = r.sent_to_contractor ? 'ส่งบิลแล้ว' : 'ยังไม่ส่ง'; return; }
+        if (c.key === '_completed') { values[c.key] = r.completed_at ? 'ตัดบิลแล้ว' : 'ยังไม่ตัดบิล'; return; }
+        const raw = r[c.key];
+        if (c.numeric) {
+          const n = parseFloat(raw);
+          values[c.key] = isFinite(n) ? n : null;   // เก็บเป็นตัวเลขจริง เพื่อให้ Excel รวมยอด/เรียงได้
+        } else {
+          values[c.key] = (raw === null || raw === undefined) ? '' : String(raw);
+        }
+      });
+      const row = sheet.addRow(values);
+      const fill = FILL_BY_TYPE[bType];
+      row.eachCell({ includeEmpty: true }, (cell: any) => {
+        cell.font = { name: 'Tahoma', size: 10 };
+        cell.alignment = { vertical: 'middle', wrapText: false };
+        cell.border = {
+          top: { style: 'hair', color: { argb: 'FFCCCCCC' } }, bottom: { style: 'hair', color: { argb: 'FFCCCCCC' } },
+          left: { style: 'hair', color: { argb: 'FFCCCCCC' } }, right: { style: 'hair', color: { argb: 'FFCCCCCC' } },
+        };
+        if (fill) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
+      });
+      ['unit_price', 'total_price', 'unit_price_contractor', 'total_price_contractor'].forEach((k) => {
+        row.getCell(k).numFmt = '#,##0.00';
+      });
+      // เลขทรัพย์สิน 12 หลักและรหัสสาขาที่มี 0 นำหน้า ต้องเป็นข้อความ ไม่งั้น Excel ตัด 0 ทิ้ง / แปลงเป็น 1.3E+11
+      ['asset_id', 'branch_code', 'customer_case'].forEach((k) => { row.getCell(k).numFmt = '@'; });
+    });
+
+    // เปิดตัวกรองบนหัวตาราง = กดกรอง "ประเภทเก็บเงิน" หรือคอลัมน์อื่นได้เองในไฟล์
+    const lastCol = ALL_BILLING_XLSX_COLUMNS.length;
+    sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(rows.length + 1, 2), column: lastCol } };
+    // ตรึงหัวตารางไว้ เลื่อนดูข้อมูลยาว ๆ แล้วยังเห็นชื่อคอลัมน์
+    sheet.views = [{ state: 'frozen', ySplit: 1 }];
+
+    // ---- แผ่นที่ 2: สรุปยอดแยกตามประเภทเก็บเงิน ----
+    const summary = workbook.addWorksheet('สรุปตามประเภท');
+    summary.columns = [
+      { header: 'ประเภทเก็บเงิน', key: 'type', width: 24 },
+      { header: 'จำนวนแถว', key: 'rows', width: 12 },
+      { header: 'ยอดรวม CJ', key: 'cj', width: 16 },
+      { header: 'ยอดรวม ผู้รับเหมา', key: 'ct', width: 18 },
+      { header: 'เก็บเงินฝั่ง CJ', key: 'sideCj', width: 14 },
+      { header: 'เก็บเงินฝั่งผู้รับเหมา', key: 'sideCt', width: 18 },
+    ];
+    summary.getRow(1).eachCell((cell: any) => {
+      cell.font = { name: 'Tahoma', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF15803D' } };
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    });
+    BILLING_TYPE_VALUES.forEach((t) => {
+      const sub = rows.filter((r: any) => normalizeBillingType(r.billing_type) === t);
+      const sum = (k: string) => sub.reduce((a: number, r: any) => a + (parseFloat(r[k]) || 0), 0);
+      const row = summary.addRow({
+        type: billingTypeLabel(t),
+        rows: sub.length,
+        cj: sum('total_price'),
+        ct: sum('total_price_contractor'),
+        sideCj: BILLING_TYPES_EXCLUDED_FROM_CJ.indexOf(t) === -1 ? 'เก็บ' : 'ไม่เก็บ',
+        sideCt: BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR.indexOf(t) === -1 ? 'เก็บ' : 'ไม่เก็บ',
+      });
+      row.eachCell((cell: any) => { cell.font = { name: 'Tahoma', size: 10 }; });
+      const fill = FILL_BY_TYPE[t];
+      if (fill) row.eachCell({ includeEmpty: true }, (cell: any) => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } }; });
+      row.getCell('cj').numFmt = '#,##0.00';
+      row.getCell('ct').numFmt = '#,##0.00';
+    });
+    const totalRow = summary.addRow({
+      type: 'รวมทั้งหมด', rows: rows.length,
+      cj: rows.reduce((a: number, r: any) => a + (parseFloat(r.total_price) || 0), 0),
+      ct: rows.reduce((a: number, r: any) => a + (parseFloat(r.total_price_contractor) || 0), 0),
+      sideCj: '', sideCt: '',
+    });
+    totalRow.eachCell((cell: any) => { cell.font = { name: 'Tahoma', size: 10, bold: true }; });
+    totalRow.getCell('cj').numFmt = '#,##0.00';
+    totalRow.getCell('ct').numFmt = '#,##0.00';
+
+    const buffer: ArrayBuffer = await workbook.xlsx.writeBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return { success: true, base64: btoa(binary) };
+  } catch (error) {
+    return { success: false, message: 'สร้างไฟล์ Excel ล้มเหลว: ' + String(error) };
+  }
+}
+
 // ==================== สร้างไฟล์ "ฟอร์มวางบิล" .xlsx ต่อเลขงาน (แทน Google Sheets แม่แบบ) ====================
-function xlsxApplyBoxStyle(ws: any, r1: number, c1: number, r2: number, c2: number) {
+// เส้นตารางของฟอร์มวางบิล
+// ใช้ 'medium' สีดำแทน 'thin' สีเทาอ่อนแบบเดิม เพราะฟอร์มนี้ถูกปริ้นออกมาเขียนมือและถ่ายรูปส่งกลับ
+// เส้นบางสีเทาจางหายไปเวลาปริ้นขาวดำหรือถ่ายรูป ทำให้แบ่งช่องไม่ออก
+// ขอบนอกสุดใช้ 'thick' เพื่อให้เห็นกรอบฟอร์มชัดตั้งแต่มองผ่าน ๆ
+//
+// ฟอนต์ใช้ Tahoma ไม่ใช่ Arial เพราะ Arial ไม่มีสระ/วรรณยุกต์ไทยครบ
+// Excel ต้องไปหยิบฟอนต์สำรองมาแทน ทำให้สระลอยซ้อนกันจนอ่านยาก ส่วน Tahoma รองรับไทยเต็มและมีอยู่ทุกเครื่อง
+function xlsxApplyBoxStyle(ws: any, r1: number, c1: number, r2: number, c2: number, opts?: { fontSize?: number; bold?: boolean }) {
+  const fontSize = (opts && opts.fontSize) || 11;
+  const bold = !!(opts && opts.bold);
+  const line = (r: number, c: number, side: 'top' | 'bottom' | 'left' | 'right') => {
+    const outer = (side === 'top' && r === r1) || (side === 'bottom' && r === r2)
+      || (side === 'left' && c === c1) || (side === 'right' && c === c2);
+    return { style: outer ? 'thick' : 'medium', color: { argb: 'FF000000' } };
+  };
   for (let r = r1; r <= r2; r++) {
     for (let c = c1; c <= c2; c++) {
       const cell = ws.getCell(r, c);
       cell.border = {
-        top: { style: 'thin', color: { argb: 'FF999999' } },
-        bottom: { style: 'thin', color: { argb: 'FF999999' } },
-        left: { style: 'thin', color: { argb: 'FF999999' } },
-        right: { style: 'thin', color: { argb: 'FF999999' } },
+        top: line(r, c, 'top'), bottom: line(r, c, 'bottom'),
+        left: line(r, c, 'left'), right: line(r, c, 'right'),
       };
       cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-      cell.font = { name: 'Arial', size: 11 };
+      cell.font = { name: 'Tahoma', size: fontSize, bold };
     }
   }
 }
 
 // วาดฟอร์ม 1 แผ่น (แพทเทิร์นเดิมทั้งหมด) ลงใน sheet ที่ส่งเข้ามา เปลี่ยนแค่ค่า "เลขทรัพย์สิน" ตาม job.assetId
 function drawJobFormSheet(sheet: any, job: any) {
-  const colWidthsPx = [70, 95, 95, 75, 95, 75, 95, 95, 65, 60];
+  // ขยายความกว้างคอลัมน์จากของเดิมราว 25-40% เพราะหัวกระดาษเปลี่ยนเป็นตัวอักษรขนาด 14
+  // ของเดิม [70, 95, 95, 75, 95, 75, 95, 95, 65, 60] แคบเกินไป คำว่า "เลขทรัพย์สิน" กับ "ประเภทงาน"
+  // จะถูกบีบจนตัดบรรทัดหรือทับกันจนอ่านไม่ออก
+  // จัดให้ 2 ฝั่งกว้างเท่ากันพอดี (A-E = 510, F-J = 510) กรอบรูป "ก่อนทำ/หลังทำ" จะได้สมมาตร
+  // คอลัมน์ G เป็นช่องหัวข้อ "ประเภทงาน" ซึ่งสั้น จึงลดจาก 110 เหลือ 90
+  // แล้วยกที่ว่างไปให้ H-J ซึ่งเป็นช่องค่าของประเภทงาน (ค่ายาวที่สุดในฟอร์ม)
+  // ยิ่งช่องกว้าง Excel ยิ่งต้องย่อตัวอักษรน้อยลง อ่านง่ายขึ้น
+  // รวมแล้วยังเท่ากัน 2 ฝั่ง (A-E = 510, F-J = 510) กรอบรูปก่อนทำ/หลังทำจึงยังสมมาตร
+  const colWidthsPx = [95, 105, 100, 110, 100, 85, 90, 112, 112, 111];
   colWidthsPx.forEach((w, i) => { sheet.getColumn(i + 1).width = w / 7; });
 
-  sheet.getRow(1).height = 30;
-  sheet.getRow(2).height = 30;
-  sheet.getRow(3).height = 20;
-  for (let r = 4; r <= 43; r++) sheet.getRow(r).height = 26;
+  // แถวหัวกระดาษสูงขึ้นให้พอกับตัวอักษรขนาด 14 (ของเดิม 30/30/20 เตี้ยไปจนสระบนล่างโดนตัด)
+  sheet.getRow(1).height = 38;
+  sheet.getRow(2).height = 38;
+  sheet.getRow(3).height = 32;
+  for (let r = 4; r <= 43; r++) sheet.getRow(r).height = 28;
 
   function setText(addr: string, value: any) {
     sheet.getCell(addr).value = (value === null || value === undefined) ? '' : String(value);
@@ -1029,7 +1222,78 @@ function drawJobFormSheet(sheet: any, job: any) {
     sheet.getCell(startRow, 6).value = rightLabel;
   });
 
+  // วางสไตล์พื้นฐานทั้งฟอร์มก่อน (ช่องรูปภาพใช้ขนาด 11 ตามเดิม)
   xlsxApplyBoxStyle(sheet, 1, 1, 43, 10);
+
+  // แล้วทับหัวกระดาษ (แถว 1-3) ด้วยตัวอักษรขนาด 14 ตัวหนา ตามที่ขอ
+  xlsxApplyBoxStyle(sheet, 1, 1, 3, 10, { fontSize: 14, bold: true });
+
+  // บังคับให้หัวกระดาษอยู่ "บรรทัดเดียว" เสมอ
+  // ปัญหาเดิม: ตั้ง wrapText ไว้ พอเจอค่ายาว ๆ อย่าง "F01_ตู้แช่ข้าวกล่อง 1 ประตู (Frozen Food)"
+  // หรือชื่อสาขายาว ๆ ข้อความจะตัดขึ้นบรรทัดที่ 2 แต่ความสูงแถวไม่พอ เลยโดนตัดครึ่งดูเหมือนตัวหนังสือซ้อนกัน
+  //
+  // แก้ด้วย shrinkToFit: ปิด wrapText แล้วให้ Excel ย่อขนาดตัวอักษรอัตโนมัติเฉพาะช่องที่ยาวเกิน
+  // ช่องที่ข้อความสั้นยังได้ขนาด 14 เต็มตามที่ขอ ส่วนช่องที่ยาวจะย่อลงพอดีช่องแทนการตัดบรรทัด
+  // (ไม่ใช้วิธีขยายคอลัมน์ เพราะความยาวของชื่อสาขา/ประเภทงานไม่มีเพดานตายตัว ขยายเท่าไหร่ก็ยังมีเคสยาวกว่าเสมอ)
+  for (let r = 1; r <= 3; r++) {
+    for (let c = 1; c <= 10; c++) {
+      sheet.getCell(r, c).alignment = {
+        horizontal: 'center', vertical: 'middle',
+        wrapText: false, shrinkToFit: true,
+      };
+    }
+  }
+
+  // ใส่พื้นสีอ่อนให้ช่อง "ชื่อหัวข้อ" แยกจากช่องที่เป็นค่าข้อมูล จะได้กวาดตาหาข้อมูลเจอเร็วขึ้น
+  const labelCells = ['A1', 'C1', 'G1', 'A2', 'D2'];
+  labelCells.forEach((addr) => {
+    sheet.getCell(addr).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEDEDED' } };
+  });
+
+  // แถบ "ก่อนทำ / หลังทำ" ทำพื้นเข้มกว่าหน่อย เพราะเป็นตัวแบ่งครึ่งฟอร์มซ้าย-ขวา
+  ['A3', 'F3'].forEach((addr) => {
+    sheet.getCell(addr).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
+  });
+
+  // ---- ตั้งค่าหน้ากระดาษให้พิมพ์ลงกระดาษ A4 "แผ่นเดียวจบ" ----
+  // ฟอร์มนี้กว้าง 1020px สูงราว 1228px ถ้าไม่ตั้งอะไรเลย Excel จะตัดออกเป็น 4 แผ่น
+  // ผู้รับเหมาต้องมานั่งต่อกระดาษเอง หรือปริ้นมาแล้วครึ่งฟอร์มหาย
+  //
+  // ใช้ fitToPage แบบ 1x1 = บีบทั้งฟอร์มให้ลงแผ่นเดียวอัตโนมัติ ไม่ต้องไปตั้งเปอร์เซ็นต์ย่อเอง
+  // เลือกแนวตั้ง (portrait) เพราะฟอร์มสูงกว่ากว้าง ถ้าใช้แนวนอนจะต้องย่อลงเหลือราว 56%
+  // แต่แนวตั้งย่อแค่ราว 71% ตัวหนังสืออ่านง่ายกว่าชัดเจน
+  //
+  // ตั้ง printArea ไว้ชัดเจนที่ A1:J43 กันกรณี Excel ไปนับช่องว่างนอกฟอร์มรวมเข้ามาด้วยจนย่อเกินจำเป็น
+  sheet.pageSetup = {
+    paperSize: 9,               // 9 = A4
+    orientation: 'portrait',
+    fitToPage: true,
+    fitToWidth: 1,              // กว้างไม่เกิน 1 แผ่น
+    fitToHeight: 1,             // สูงไม่เกิน 1 แผ่น
+    horizontalCentered: true,   // จัดฟอร์มกลางหน้ากระดาษ
+    verticalCentered: false,
+    printArea: 'A1:J43',
+    margins: { left: 0.25, right: 0.25, top: 0.25, bottom: 0.25, header: 0.15, footer: 0.15 },
+  };
+
+  // เปิดไฟล์มาให้อยู่ในมุมมอง "ตัวอย่างก่อนพิมพ์ (Page Break Preview)" ตั้งแต่แรกเลย
+  // ผู้รับเหมาจะเห็นทันทีว่าฟอร์มลงกระดาษแผ่นเดียวพอดี มีเส้นแบ่งหน้าให้เห็นชัด
+  // ไม่ต้องไปกด View -> Page Break Preview เอง และไม่ต้องกด Print Preview เพื่อตรวจ
+  //
+  // ปิดเส้นตารางพื้นหลังของ Excel ด้วย (showGridLines: false)
+  // เพราะฟอร์มมีเส้นขอบหนาของตัวเองอยู่แล้ว เส้นจาง ๆ ของ Excel รอบนอกฟอร์มทำให้ดูรก
+  //
+  // ต้องมี zoomScaleNormal ด้วย ไม่งั้น Excel บางเวอร์ชันไม่ยอมสลับมาโหมดนี้ตอนเปิดไฟล์
+  // (ไฟล์ที่ Excel เซฟเองจะมีค่านี้เสมอ ตอนแรกเราไม่ได้ใส่ เลยเปิดมาแล้วยังเป็นมุมมองปกติอยู่)
+  // ส่วน tabSelected ต้องไปตั้งทีหลังเฉพาะ sheet แรก ไม่ตั้งตรงนี้
+  // เพราะถ้าทุก sheet ถูกเลือกพร้อมกัน Excel จะเข้าโหมด "จัดกลุ่มชีต" พิมพ์อะไรลงไปจะโดนทุกแผ่นพร้อมกัน
+  sheet.views = [{
+    style: 'pageBreakPreview',
+    showGridLines: false,
+    zoomScale: 100,
+    zoomScaleNormal: 100,
+    zoomScaleSheetLayoutView: 100,
+  }];
 }
 
 // ตั้งชื่อ sheet ให้ถูกกฎของ Excel (ห้ามอักขระ \ / ? * [ ] : ห้ามว่าง ยาวไม่เกิน 31 ตัวอักษร ห้ามชื่อซ้ำ)
@@ -1056,11 +1320,31 @@ async function generateJobFormXlsxBase64(job: any): Promise<any> {
       : [job.assetId];
 
     const usedSheetNames = new Set<string>();
+    const createdSheets: any[] = [];
     assetIdList.forEach((assetId: string) => {
       const sheetName = safeSheetName(assetId && assetId !== '-' ? assetId : 'ฟอร์ม', usedSheetNames);
       const sheet = workbook.addWorksheet(sheetName);
       drawJobFormSheet(sheet, { ...job, assetId });
+      createdSheets.push(sheet);
     });
+
+    // ---- บังคับให้ Excel "เปิดไฟล์มาแล้วอยู่ในมุมมองแบ่งหน้ากระดาษ" จริง ๆ ----
+    // ตั้งค่าที่ตัว sheet อย่างเดียวไม่พอ ไฟล์ที่ Excel เซฟเองจะมี 2 อย่างนี้เสมอ แต่ ExcelJS ไม่ได้ใส่ให้:
+    //   1) tabSelected="1" บน sheet ที่เป็นแท็บที่เปิดอยู่
+    //   2) <bookViews> ระดับไฟล์ ที่ระบุว่า activeTab คือแผ่นไหน
+    // ขาด 2 อย่างนี้ Excel จะไม่รู้ว่าต้องใช้มุมมองของ sheet ไหนตอนเปิด เลยตกกลับไปเป็นมุมมองปกติ
+    // (นี่คือสาเหตุที่รอบก่อนตั้ง pageBreakPreview แล้วเปิดมายังไม่ขึ้น)
+    //
+    // ตั้ง tabSelected เฉพาะแผ่นแรกแผ่นเดียวเท่านั้น
+    // ถ้าตั้งทุกแผ่น Excel จะเข้าโหมด "จัดกลุ่มชีต" พิมพ์อะไรลงไปจะโดนทุกแผ่นพร้อมกันโดยไม่รู้ตัว
+    if (createdSheets.length > 0) {
+      const firstView = (createdSheets[0].views && createdSheets[0].views[0]) || {};
+      createdSheets[0].views = [{ ...firstView, tabSelected: true }];
+    }
+    workbook.views = [{
+      x: 0, y: 0, width: 20000, height: 20000,
+      firstSheet: 0, activeTab: 0, visibility: 'visible',
+    }];
 
     const buffer: ArrayBuffer = await workbook.xlsx.writeBuffer();
     const bytes = new Uint8Array(buffer);
@@ -1776,6 +2060,156 @@ Deno.serve(async (req: Request) => {
         });
       }
 
+      // ดาวน์โหลด Excel รวมงานทุกประเภทเก็บเงินทั้งระบบ (แอดมินเท่านั้น)
+      // ดึงทุกแถวจริง ๆ ไม่สนตัวกรองรอบบิล/ผู้รับเหมาที่เลือกอยู่บนหน้าจอ
+      // (ดึงเป็นก้อนละ 1000 แถวจนหมด เพราะ Supabase จำกัดจำนวนแถวต่อ 1 คำขอ)
+      case 'downloadAllBillingXlsx': {
+        // roundsRaw = รายการเลขรอบบิลที่ติ๊กเลือกไว้ (array) — ว่าง/ไม่ส่ง = ทุกรอบ
+        //   รับค่าเดี่ยวแบบเดิม (string/number) ได้ด้วย เผื่อแอปเวอร์ชันเก่ายังส่งมาแบบนั้น
+        // types = รายการประเภทเก็บเงินที่ติ๊กเลือกไว้ (ไม่ส่ง = เอาครบทั้ง 3)
+        const [username, token, roundsRaw, typesRaw] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ดาวน์โหลดไฟล์นี้ได้' });
+
+        const wantedTypes: string[] = (Array.isArray(typesRaw) && typesRaw.length > 0)
+          ? typesRaw.map((t: any) => normalizeBillingType(t))
+          : BILLING_TYPE_VALUES.slice();
+        // แปลงเป็นรายการเลขรอบที่ใช้ได้จริง ตัดค่าว่าง/ค่าที่ไม่ใช่ตัวเลขทิ้ง แล้วเรียงจากน้อยไปมาก
+        const roundList: number[] = (Array.isArray(roundsRaw) ? roundsRaw : [roundsRaw])
+          .map((v: any) => (v === null || v === undefined || v === '') ? NaN : parseInt(v, 10))
+          .filter((n: number) => isFinite(n))
+          .filter((n: number, i: number, arr: number[]) => arr.indexOf(n) === i)
+          .sort((a: number, b: number) => a - b);
+
+        const allRows: any[] = [];
+        const PAGE = 1000;
+        for (let page = 0; page < 50; page++) {
+          let q = supabase
+            .from('billing_documents')
+            .select('*')
+            .order('round_no', { ascending: true })
+            .order('contractor', { ascending: true })
+            .order('seq', { ascending: true })
+            .order('customer_case', { ascending: true })
+            .order('created_at', { ascending: true });
+          if (roundList.length === 1) q = q.eq('round_no', roundList[0]);
+          else if (roundList.length > 1) q = q.in('round_no', roundList);
+          const { data, error } = await q.range(page * PAGE, page * PAGE + PAGE - 1);
+          if (error) return jsonResponse({ success: false, message: 'ดึงข้อมูลล้มเหลว: ' + error.message });
+          const chunk = data || [];
+          allRows.push(...chunk);
+          if (chunk.length < PAGE) break;
+        }
+        // กรองประเภทเก็บเงินฝั่งนี้แทนการกรองใน query เพราะแถวเก่าบางแถวอาจยังไม่มีค่า billing_type
+        // (normalizeBillingType จะถือว่าเป็น 'normal' ให้เอง ซึ่งกรองใน SQL ตรง ๆ ไม่ได้)
+        const rows = allRows.filter((r: any) => wantedTypes.indexOf(normalizeBillingType(r.billing_type)) !== -1);
+
+        // ชื่อไฟล์: 1 รอบ -> "รอบ 63" / หลายรอบ -> "รอบ 61+62+63" / ไม่เลือก -> "ทุกรอบ"
+        const scopeLabel = roundList.length === 0 ? 'ทุกรอบ' : ('รอบ ' + roundList.join('+'));
+        if (rows.length === 0) {
+          return jsonResponse({ success: false, message: 'ไม่มีข้อมูลตรงเงื่อนไขที่เลือก (' + scopeLabel + ' · ' + wantedTypes.map((t) => billingTypeLabel(t)).join(', ') + ')' });
+        }
+
+        const result = await generateAllBillingXlsxBase64(rows);
+        if (!result.success) return jsonResponse(result);
+        const typePart = (wantedTypes.length === BILLING_TYPE_VALUES.length) ? 'ทุกประเภท' : wantedTypes.map((t) => billingTypeLabel(t)).join('+');
+        return jsonResponse({
+          success: true,
+          base64: result.base64,
+          rowCount: rows.length,
+          filename: 'ตารางวางบิล_' + scopeLabel.replace(/\s/g, '') + '_' + typePart + '_' + new Date().toISOString().slice(0, 10) + '.xlsx',
+        });
+      }
+
+      // เพิ่มเลขงานเข้า "รอบบิลที่มีอยู่แล้ว" (แอดมินเท่านั้น)
+      // ปุ่มจับคู่ข้อมูลปกติจะขอเลขรอบใหม่เสมอ ใส่งานเข้ารอบเดิมไม่ได้ กรณีตกหล่นจึงต้องมีทางเติมทีหลัง
+      // ต่อท้ายรายการของรอบนั้น โดยนับเลขลำดับต่อจากที่มีอยู่ แยกตามผู้รับเหมา
+      case 'addJobToBillingRound': {
+        const [username, token, roundNoRaw, jobIdRaw] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ทำรายการนี้ได้' });
+
+        const roundNo = parseInt(roundNoRaw, 10);
+        const jobId = (jobIdRaw || '').toString().trim();
+        if (!isFinite(roundNo)) return jsonResponse({ success: false, message: 'กรุณาเลือกรอบบิลที่ต้องการเพิ่มงานเข้าไปก่อน' });
+        if (!jobId) return jsonResponse({ success: false, message: 'กรุณากรอกเลขที่ใบแจ้งซ่อมบำรุง' });
+        if (!isValidJobNumber(jobId)) return jsonResponse({ success: false, message: 'เลขที่ใบแจ้งซ่อมบำรุงต้องขึ้นต้นด้วย "CM" เท่านั้น (ที่กรอกมาคือ "' + jobId + '")' });
+
+        // ต้องมีข้อมูลเปิดงานและปิดงานครบก่อน ไม่งั้นแถวบิลจะไม่มีสาขา/ผู้รับเหมา/วันที่
+        const [openRes, closeRes, roundRes, branchesRes] = await Promise.all([
+          supabase.from('open_issues').select('main_id,branch,service_work,service_type,req_date,contractor').eq('main_id', jobId).limit(1),
+          supabase.from('close_issues').select('job_id,branch,asset_id,fix_date').eq('job_id', jobId),
+          supabase.from('billing_documents').select('round_period,contractor,seq').eq('round_no', roundNo),
+          supabase.from('branches').select('branch_code,branch_name'),
+        ]);
+        if (openRes.error) return jsonResponse({ success: false, message: openRes.error.message });
+        if (closeRes.error) return jsonResponse({ success: false, message: closeRes.error.message });
+        if (roundRes.error) return jsonResponse({ success: false, message: roundRes.error.message });
+
+        const openRecord = (openRes.data && openRes.data.length > 0) ? openRes.data[0] : null;
+        if (!openRecord) return jsonResponse({ success: false, message: 'ไม่พบการเปิดงานเลขที่ "' + jobId + '" ในระบบ' });
+        const closeRows = closeRes.data || [];
+        if (closeRows.length === 0) return jsonResponse({ success: false, message: 'เลขงาน "' + jobId + '" ยังไม่ถูกปิดงาน จึงยังวางบิลไม่ได้' });
+
+        const roundRows = roundRes.data || [];
+        if (roundRows.length === 0) return jsonResponse({ success: false, message: 'ไม่พบรอบบิลที่ ' + roundNo + ' ในระบบ' });
+        const roundPeriod = roundRows.find((r: any) => r.round_period)?.round_period || ('รอบบิลที่ ' + roundNo);
+
+        // เลขลำดับสูงสุดของรอบนี้ แยกตามผู้รับเหมา ใช้เป็นจุดเริ่มนับต่อ
+        const contractorKey = openRecord.contractor || '';
+        let maxSeq = 0;
+        roundRows.forEach((r: any) => {
+          if ((r.contractor || '') !== contractorKey) return;
+          const s = parseInt(r.seq, 10);
+          if (isFinite(s) && s > maxSeq) maxSeq = s;
+        });
+
+        // คู่ (เลขงาน + เลขทรัพย์สิน) ที่มีบิลอยู่แล้ว ต้องข้าม กันเพิ่มซ้ำ
+        const { data: existing } = await supabase.from('billing_documents').select('asset_id').eq('customer_case', jobId);
+        const existingAssets = new Set((existing || []).map((r: any) => (r.asset_id || '-').toString().trim() || '-'));
+
+        const branchMap: Record<string, string> = {};
+        (branchesRes.data || []).forEach((b: any) => { if (b.branch_code) branchMap[b.branch_code] = b.branch_name; });
+
+        const rowsToInsert: any[] = [];
+        let skipped = 0;
+        closeRows.forEach((c: any) => {
+          const assetId = (c.asset_id || '-').toString().trim() || '-';
+          if (existingAssets.has(assetId)) { skipped++; return; }
+          existingAssets.add(assetId);
+          maxSeq++;
+          const rawBranchText = (c.branch || openRecord.branch || '').toString();
+          const codeMatch = rawBranchText.match(/^\d+/);
+          const branchCode = codeMatch ? codeMatch[0] : null;
+          const branchName = branchCode ? (branchMap[branchCode] || rawBranchText) : (rawBranchText || null);
+          rowsToInsert.push({
+            seq: maxSeq, round_no: roundNo, round_period: roundPeriod, customer_case: jobId,
+            branch_code: branchCode, branch_name: branchName,
+            service_type: openRecord.service_work || openRecord.service_type || '-',
+            asset_id: assetId,
+            req_date: openRecord.req_date || '-',
+            visit_date: c.fix_date || '-',
+            contractor: openRecord.contractor || null,
+            synced_to_sheet: false,
+          });
+        });
+
+        if (rowsToInsert.length === 0) {
+          return jsonResponse({ success: false, message: 'เลขงาน "' + jobId + '" มีอยู่ในตารางวางบิลครบทุกเลขทรัพย์สินแล้ว (' + skipped + ' รายการ) จึงไม่มีอะไรให้เพิ่ม' });
+        }
+        const { error: insErr } = await supabase.from('billing_documents').insert(rowsToInsert);
+        if (insErr) return jsonResponse({ success: false, message: 'เพิ่มเข้ารอบบิลล้มเหลว: ' + insErr.message });
+        return jsonResponse({
+          success: true,
+          added: rowsToInsert.length,
+          message: 'เพิ่มเลขงาน "' + jobId + '" เข้ารอบบิลที่ ' + roundNo + ' แล้ว ' + rowsToInsert.length + ' รายการ'
+            + (skipped > 0 ? (' (ข้าม ' + skipped + ' รายการที่มีบิลอยู่แล้ว)') : '')
+            + ' — ยังไม่มีอะไหล่ กรุณากดปุ่ม + ที่แถวนั้นเพื่อเพิ่มอะไหล่',
+        });
+      }
+
       case 'getContractorsList': {
         const { data, error } = await supabase.from('contractors').select('display_name').eq('role', 'contractor').order('display_name');
         if (error) return jsonResponse({ error: error.message });
@@ -1828,6 +2262,9 @@ Deno.serve(async (req: Request) => {
         if (!f.contractor) return jsonResponse({ success: false, message: 'กรุณาเลือกผู้รับเหมาก่อนบันทึกเปิดงาน' });
         const mainId = (f.mainId || '').toString().trim();
         if (!mainId) return jsonResponse({ success: false, message: 'กรุณากรอกเลขที่ใบแจ้งซ่อมบำรุง' });
+        if (!isValidJobNumber(mainId)) {
+          return jsonResponse({ success: false, message: 'เลขที่ใบแจ้งซ่อมบำรุงต้องขึ้นต้นด้วย "CM" เท่านั้น (ที่กรอกมาคือ "' + mainId + '") กรุณาตรวจสอบว่าคัดลอกเลขงานมาถูกช่อง' });
+        }
         // ตรวจครบทุกช่องซ้ำอีกชั้นที่ฝั่งเซิร์ฟเวอร์ ไม่พึ่งการตรวจฝั่งหน้าเว็บอย่างเดียว
         // เพราะฝั่งหน้าเว็บถูกข้ามได้ (เรียก API ตรง หรือใช้แอปรุ่นเก่าที่ยังไม่มีตัวตรวจ)
         // ค่าที่ระบบเคยเติมให้เป็น '-' อัตโนมัติ ถือว่า "ว่าง" ด้วย เพราะไม่ใช่ข้อมูลจริง
@@ -1889,6 +2326,22 @@ Deno.serve(async (req: Request) => {
         const openCheck = await checkOpenIssueExists(jobId);
         if (openCheck.error) return jsonResponse({ success: false, message: 'ตรวจสอบเลขงานล้มเหลว: ' + openCheck.error });
         if (!openCheck.exists) return jsonResponse({ success: false, message: 'ไม่พบการเปิดงานเลขที่ "' + jobId + '" ในระบบ กรุณาบันทึก "เปิดงาน" ก่อน แล้วค่อยปิดงาน' });
+
+        // ---- ห้ามปิดงานย้อนหลังก่อนวันที่ร้องขอ ----
+        // "วันที่เข้าแก้ไข" ต้องไม่มาก่อน "วันที่ร้องขอ" ของงานนั้น
+        // เช่น ร้องขอ 1/2/2026 แต่กรอกวันที่เข้าแก้ไขเป็น 1/1/2026 = เป็นไปไม่ได้ ต้องเป็นการกรอกผิด
+        // ปล่อยผ่านไปจะทำให้ตัวกรองรอบบิล (ที่ใช้วันที่เข้าแก้ไข) จัดงานลงผิดรอบ และรายงานระยะเวลาติดลบ
+        const { data: openRowForDate } = await supabase.from('open_issues').select('req_date').eq('main_id', jobId).limit(1);
+        const reqDateText = (openRowForDate && openRowForDate.length > 0) ? openRowForDate[0].req_date : null;
+        const reqD = parseReqDateString(reqDateText);
+        const fixD = parseFixDateString((f.fixDate || '').toString());
+        if (reqD && fixD && fixD < reqD) {
+          const fmt = (d: Date) => String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear();
+          return jsonResponse({
+            success: false,
+            message: 'ปิดงานย้อนหลังไม่ได้: "วันที่เข้าแก้ไข" (' + fmt(fixD) + ') มาก่อน "วันที่ร้องขอ" (' + fmt(reqD) + ') ของเลขงานนี้ กรุณาตรวจสอบวันที่อีกครั้ง',
+          });
+        }
         // กันปิดงานซ้ำ - เดิมกันแค่ระดับ "เลขงาน" ทำให้ 1 เลขงานปิดได้แค่ครั้งเดียว
         // ตอนนี้เปลี่ยนมากันซ้ำที่ระดับ "เลขงาน + เลขทรัพย์สิน" แทน เพราะ 1 เลขงานอาจมีหลายทรัพย์สินที่ต้องปิดงานแยกกัน
         // (แบบฟอร์มเดียวกัน กรอกซ้ำได้เรื่อย ๆ แค่เปลี่ยนเลขทรัพย์สิน) ยังคงกันซ้ำถ้าเป็นทรัพย์สินชิ้นเดิม (หรือไม่กรอกเลขทรัพย์สินทั้งคู่)
@@ -1970,12 +2423,32 @@ Deno.serve(async (req: Request) => {
             if (contractorFilter) q = q.eq('contractor', contractorFilter);
             else q = q.or('sent_to_contractor.is.null,sent_to_contractor.eq.false');
           } else {
-            q = excludeBillingTypes(q.eq('contractor', session.displayName).eq('sent_to_contractor', true).is('completed_at', null), BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
+            // ไม่กรอง completed_at ทีละแถวแล้ว (ดูเหตุผลที่ตัวกรองระดับรอบด้านล่าง)
+            q = excludeBillingTypes(q.eq('contractor', session.displayName).eq('sent_to_contractor', true), BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
           }
           if (jobIdsFilter && jobIdsFilter.length > 0) q = q.in('customer_case', jobIdsFilter);
         }
         const { data, error } = await q;
         if (error) return jsonResponse({ error: error.message });
+
+        // ---- ฝั่งผู้รับเหมา: ซ่อน "ทั้งรอบ" เมื่อแอดมินอนุมัติครบทุกงานในรอบแล้วเท่านั้น ----
+        // พฤติกรรมเดิม: กรอง completed_at ทีละแถว พออนุมัติเลขงานเดียว งานนั้นหายจากตารางทันที
+        // ผู้รับเหมาเห็นยอดรวมของรอบลดลงเรื่อย ๆ ทั้งที่รอบยังไม่จบ สับสนว่างานหายไปไหน
+        // ตอนนี้: ยังเห็นครบทุกงานเป็นปกติ จนกว่าทุกงานในรอบนั้นจะถูกอนุมัติครบ แล้วค่อยหายทั้งรอบพร้อมกัน
+        // (โหมดเลือกดูรอบย้อนหลังไม่กระทบ เพราะไม่เคยกรอง completed_at อยู่แล้ว)
+        if (!isHistoryMode && session.role !== 'admin') {
+          const rows = data || [];
+          const roundState: Record<string, boolean> = {};   // true = รอบนี้ยังมีงานที่ยังไม่ตัดบิลเหลืออยู่
+          rows.forEach((r: any) => {
+            const key = String(r.round_no === null || r.round_no === undefined ? '' : r.round_no);
+            if (!r.completed_at) roundState[key] = true;
+            else if (!(key in roundState)) roundState[key] = false;
+          });
+          return jsonResponse(rows.filter((r: any) => {
+            const key = String(r.round_no === null || r.round_no === undefined ? '' : r.round_no);
+            return roundState[key] === true;
+          }));
+        }
         return jsonResponse(data);
       }
 
@@ -2931,8 +3404,27 @@ Deno.serve(async (req: Request) => {
         const { error } = await supabase.from('job_form_submissions').update(fields).eq('id', submissionId);
         if (error) return jsonResponse({ success: false, message: error.message });
         if (decision === 'approved' && jobId) {
-          const { error: closeErr } = await supabase.from('billing_documents').update({ completed_at: new Date().toISOString() }).eq('customer_case', jobId);
+          // ตัดบิลเฉพาะแถวที่ "ส่งบิลให้ผู้รับเหมาไปแล้ว และยังไม่เคยตัด" เท่านั้น
+          //
+          // บั๊กเดิม: กรองแค่ .eq('customer_case', jobId) อย่างเดียว ไม่ได้ดูรอบบิลหรือสถานะการส่งบิลเลย
+          // เลขงานเดียวกันอยู่ได้หลายรอบบิล (จากงานหลายเลขทรัพย์สิน หรือจากการติ๊กรวมงานตกค้าง)
+          // อนุมัติฟอร์มครั้งเดียวจึงไปตัดบิลของรอบใหม่ที่เพิ่งสร้างและยังไม่ได้ส่งบิลด้วย
+          // แถวพวกนั้นจะกลายเป็น "เสร็จสิ้น (ตัดบิลแล้ว)" ทั้งที่ยังไม่เคยเก็บเงิน = เงินหลุดโดยไม่มีใครรู้
+          const { data: closedRows, error: closeErr } = await supabase
+            .from('billing_documents')
+            .update({ completed_at: new Date().toISOString() })
+            .eq('customer_case', jobId)
+            .eq('sent_to_contractor', true)
+            .is('completed_at', null)
+            .select('id');
           if (closeErr) return jsonResponse({ success: true, message: 'อนุมัติเรียบร้อยแล้ว แต่ตัดบิลไม่สำเร็จ: ' + closeErr.message + ' (กรุณาตรวจสอบตารางวางบิลอีกครั้ง)' });
+          const closedCount = (closedRows || []).length;
+          return jsonResponse({
+            success: true,
+            message: closedCount > 0
+              ? ('อนุมัติเรียบร้อยแล้ว - ตัดบิล ' + closedCount + ' แถวของเลขงานนี้ออกจากตารางวางบิลของผู้รับเหมาแล้ว')
+              : 'อนุมัติเรียบร้อยแล้ว (ไม่มีแถวที่ต้องตัดบิล เพราะยังไม่ได้ส่งบิลให้ผู้รับเหมา หรือตัดบิลไปแล้วก่อนหน้านี้)',
+          });
         }
         return jsonResponse({ success: true, message: decision === 'approved' ? 'อนุมัติเรียบร้อยแล้ว - ตัดบิลรอบนี้ออกจากตารางวางบิลของผู้รับเหมาแล้ว' : 'ตีกลับเรียบร้อยแล้ว - ผู้รับเหมาจะเห็นหมายเหตุนี้และต้องส่งฟอร์มใหม่' });
       }

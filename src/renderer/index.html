@@ -714,61 +714,38 @@
                     </div>
                 </div>
 
-                <div class="flex flex-wrap justify-between items-center mb-4 gap-3">
-                    <div class="flex gap-2 flex-wrap">
-                        <button type="button" onclick="loadBillingDocuments()" class="bg-slate-700 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-800 transition-colors">
-                            <i class="fa-solid fa-rotate mr-1"></i> โหลด/รีเฟรชข้อมูล
+                <!-- ==================== แถบเครื่องมือตารางวางบิล ====================
+                     จัดใหม่เป็น 3 แถวแยกหน้าที่ชัดเจน แทนที่จะยัดทุกกล่องไว้แถวเดียวจนแน่น
+                       แถว 1 = ปุ่มใช้บ่อย (โหลดข้อมูล / ประวัติ / มุมมองตาราง) ชิดซ้าย-ขวาให้ใช้พื้นที่ว่างคุ้ม
+                       แถว 2 = เอกสารดาวน์โหลดรายฝั่ง 3 กล่อง กว้างเท่ากันด้วย grid
+                       แถว 3 = Excel รวม แยกออกมาเป็นแถบของตัวเองเต็มความกว้าง เพราะมีตัวเลือกเยอะที่สุด -->
+
+                <!-- แถว 1: ปุ่มใช้บ่อย -->
+                <div class="flex flex-wrap justify-between items-center gap-3 mb-3">
+                    <div class="flex gap-2 flex-wrap items-center">
+                        <button type="button" onclick="loadBillingDocuments()" class="bg-slate-700 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-800 transition-colors">
+                            <i class="fa-solid fa-rotate mr-1.5"></i> โหลด/รีเฟรช
                         </button>
-                        <!-- ผู้รับเหมา: ปุ่มเดียว (ใช้ราคาผู้รับเหมาของตัวเองอัตโนมัติ) - ซ่อนไว้สำหรับแอดมิน เพราะแอดมินใช้ปุ่มแยก CJ/ผู้รับเหมาด้านล่างแทน -->
-                        <button type="button" id="btn_exportCsvSingle" onclick="exportBillingCSV()" class="bg-blood-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-blood-700 transition-colors">
-                            <i class="fa-solid fa-file-csv mr-1"></i> Export CSV
+                        <button type="button" onclick="openBillingHistoryModal()" id="btn_billingHistory" class="bg-indigo-600 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-indigo-700 transition-colors">
+                            <i class="fa-solid fa-clock-rotate-left mr-1.5"></i> ประวัติรอบบิล
                         </button>
-                        <button type="button" onclick="downloadBillingPdf()" id="btn_downloadPdfSingle" class="bg-slate-800 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-900 transition-colors">
-                            <i class="fa-solid fa-file-pdf mr-1"></i> Save PDF
+                        <!-- ผู้รับเหมา: ปุ่มเดียว (ใช้ราคาผู้รับเหมาของตัวเองอัตโนมัติ) - ซ่อนสำหรับแอดมิน เพราะแอดมินใช้กล่องแยกฝั่งแทน -->
+                        <button type="button" id="btn_exportCsvSingle" onclick="exportBillingCSV()" class="bg-blood-600 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-blood-700 transition-colors">
+                            <i class="fa-solid fa-file-csv mr-1.5"></i> Export CSV
                         </button>
-                        <!-- แอดมิน: แยกเป็น 2 กล่องตาม "ฝั่งที่จะเก็บเงิน" ให้เห็นชัดว่าปุ่มไหนออกเอกสารของใคร
-                             ตัวเลขบนปุ่มคือจำนวนแถวที่จะออกจริงหลังตัดรายการที่ฝั่งนั้นไม่เก็บเงินแล้ว
-                             (กดได้เสมอ ถ้าเป็น 0 จะขึ้นข้อความบอกเหตุผลแทนการดาวน์โหลดไฟล์เปล่า) -->
-                        <div id="billingAdminExportButtons" class="flex gap-3 flex-wrap items-center">
-                            <div class="flex items-center gap-1.5 border border-slate-200 rounded-lg pl-2.5 pr-1.5 py-1">
-                                <span class="text-xs font-semibold text-slate-500 whitespace-nowrap">เก็บเงิน CJ</span>
-                                <button type="button" onclick="exportBillingCSV('cj')" title="ออกไฟล์ CSV ราคาฝั่ง CJ (ตัดเคลมประกัน 3 เดือน และเคลมอะไหล่ออก)" class="bg-blood-600 text-white text-sm font-semibold py-1.5 px-3 rounded-md hover:bg-blood-700 transition-colors">
-                                    <i class="fa-solid fa-file-csv mr-1"></i> CSV<span id="billingCountCsvCj" class="ml-1.5 px-1.5 rounded-full text-[11px] tabular-nums bg-white/25">0</span>
-                                </button>
-                                <button type="button" onclick="downloadBillingPdf('cj', this)" title="ออกไฟล์ PDF ราคาฝั่ง CJ (ตัดเคลมประกัน 3 เดือน และเคลมอะไหล่ออก)" class="bg-slate-800 text-white text-sm font-semibold py-1.5 px-3 rounded-md hover:bg-slate-900 transition-colors">
-                                    <i class="fa-solid fa-file-pdf mr-1"></i> PDF<span id="billingCountPdfCj" class="ml-1.5 px-1.5 rounded-full text-[11px] tabular-nums bg-white/25">0</span>
-                                </button>
-                            </div>
-                            <div class="flex items-center gap-1.5 border border-slate-200 rounded-lg pl-2.5 pr-1.5 py-1">
-                                <span class="text-xs font-semibold text-slate-500 whitespace-nowrap">เก็บเงินผู้รับเหมา</span>
-                                <button type="button" onclick="exportBillingCSV('contractor')" title="ออกไฟล์ CSV ราคาฝั่งผู้รับเหมา (ตัดเฉพาะเคลมประกัน 3 เดือน)" class="bg-blood-500 text-white text-sm font-semibold py-1.5 px-3 rounded-md hover:bg-blood-600 transition-colors">
-                                    <i class="fa-solid fa-file-csv mr-1"></i> CSV<span id="billingCountCsvContractor" class="ml-1.5 px-1.5 rounded-full text-[11px] tabular-nums bg-white/25">0</span>
-                                </button>
-                                <button type="button" onclick="downloadBillingPdf('contractor', this)" title="ออกไฟล์ PDF ราคาฝั่งผู้รับเหมา (ตัดเฉพาะเคลมประกัน 3 เดือน)" class="bg-slate-600 text-white text-sm font-semibold py-1.5 px-3 rounded-md hover:bg-slate-700 transition-colors">
-                                    <i class="fa-solid fa-file-pdf mr-1"></i> PDF<span id="billingCountPdfContractor" class="ml-1.5 px-1.5 rounded-full text-[11px] tabular-nums bg-white/25">0</span>
-                                </button>
-                            </div>
-                            <!-- งานเคลมประกัน 3 เดือน ไม่เก็บเงินทั้ง 2 ฝั่ง จึงไม่โผล่ในบิล CJ และบิลผู้รับเหมาเลย
-                                 ต้องมีปุ่มแยกของตัวเอง ไม่งั้นงานกลุ่มนี้จะไม่มีเอกสารสรุปให้เก็บไว้อ้างอิงเลย
-                                 รูปแบบคอลัมน์เหมือนใบเขียว (ฝั่งผู้รับเหมา) ทุกประการ -->
-                            <div class="flex items-center gap-1.5 border border-amber-300 bg-amber-50/70 rounded-lg pl-2.5 pr-1.5 py-1">
-                                <span class="text-xs font-semibold text-amber-700 whitespace-nowrap">เคลมประกัน 3 เดือน<span class="block text-[10px] font-normal text-amber-600 leading-tight">ไม่เก็บเงินทั้ง 2 ฝั่ง</span></span>
-                                <button type="button" onclick="exportBillingCSV('claim')" title="ออกไฟล์ CSV สรุปงานเคลมประกัน 3 เดือน หน้าตาคอลัมน์เหมือนใบเขียว (เอาไว้เก็บอ้างอิง ไม่ใช่เอกสารเก็บเงิน)" class="bg-amber-600 text-white text-sm font-semibold py-1.5 px-3 rounded-md hover:bg-amber-700 transition-colors">
-                                    <i class="fa-solid fa-file-csv mr-1"></i> CSV<span id="billingCountCsvClaim" class="ml-1.5 px-1.5 rounded-full text-[11px] tabular-nums bg-white/25">0</span>
-                                </button>
-                            </div>
-                        </div>
-                        <button type="button" onclick="openBillingHistoryModal()" id="btn_billingHistory" class="bg-indigo-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-indigo-700 transition-colors">
-                            <i class="fa-solid fa-clock-rotate-left mr-1"></i> ประวัติรอบบิล
+                        <button type="button" onclick="downloadBillingPdf()" id="btn_downloadPdfSingle" class="bg-slate-800 text-white text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-900 transition-colors">
+                            <i class="fa-solid fa-file-pdf mr-1.5"></i> Save PDF
                         </button>
-                        <button type="button" onclick="clearBillingTable()" class="bg-white text-slate-600 border border-slate-300 text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-50 transition-colors">
-                            <i class="fa-solid fa-eraser mr-1"></i> ล้างหน้าจอ
+                    </div>
+                    <div class="flex gap-2 items-center">
+                        <button type="button" onclick="clearBillingTable()" class="bg-white text-slate-600 border border-slate-300 text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-50 transition-colors">
+                            <i class="fa-solid fa-eraser mr-1.5"></i> ล้างหน้าจอ
                         </button>
                         <div class="relative inline-block">
-                            <button type="button" onclick="toggleColumnManagerPanel()" class="bg-white text-slate-600 border border-slate-300 text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-50 transition-colors">
-                                <i class="fa-solid fa-table-columns mr-1"></i> จัดการคอลัมน์
+                            <button type="button" onclick="toggleColumnManagerPanel()" class="bg-white text-slate-600 border border-slate-300 text-sm font-semibold py-2 px-4 rounded-lg hover:bg-slate-50 transition-colors">
+                                <i class="fa-solid fa-table-columns mr-1.5"></i> จัดการคอลัมน์
                             </button>
-                            <div id="columnManagerPanel" class="hidden absolute left-0 mt-2 z-40 bg-white border border-slate-300 rounded-xl shadow-2xl p-3 w-64 max-h-80 overflow-y-auto">
+                            <div id="columnManagerPanel" class="hidden absolute right-0 mt-2 z-40 bg-white border border-slate-300 rounded-xl shadow-2xl p-3 w-64 max-h-80 overflow-y-auto">
                                 <div class="flex justify-between items-center mb-2 pb-2 border-b border-slate-100">
                                     <span class="text-xs font-bold text-slate-700">แสดง/ซ่อนคอลัมน์</span>
                                     <button type="button" onclick="setAllBillingColumns(true)" class="text-[10px] text-blood-600 underline hover:text-blood-800">แสดงทั้งหมด</button>
@@ -776,6 +753,110 @@
                                 <div id="columnManagerList" class="space-y-1"></div>
                             </div>
                         </div>
+                    </div>
+                </div>
+
+                <div id="billingAdminExportButtons" class="flex flex-col gap-3 mb-4">
+                    <!-- แถว 2: เอกสารดาวน์โหลดรายฝั่ง — ใช้ grid ให้ 3 กล่องกว้างเท่ากันเสมอ ไม่เบียดกันเวลาจอแคบ
+                         ตัวเลขบนปุ่มคือจำนวนแถวที่จะออกจริงหลังตัดรายการที่ฝั่งนั้นไม่เก็บเงินแล้ว -->
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                        <div class="flex flex-col gap-2 border border-slate-200 rounded-xl px-4 py-3 bg-slate-50/60">
+                            <span class="text-xs font-bold text-slate-600">เอกสารเก็บเงิน CJ</span>
+                            <div class="flex gap-2 items-center flex-wrap">
+                                <button type="button" onclick="exportBillingCSV('cj')" title="ออกไฟล์ CSV ราคาฝั่ง CJ (ตัดเคลมประกัน 3 เดือน และเคลมอะไหล่ออก)" class="flex-1 min-w-[92px] bg-blood-600 text-white text-sm font-semibold py-2 px-3 rounded-lg hover:bg-blood-700 transition-colors">
+                                    <i class="fa-solid fa-file-csv mr-1"></i> CSV<span id="billingCountCsvCj" class="ml-1.5 px-1.5 rounded-full text-[11px] tabular-nums bg-white/25">0</span>
+                                </button>
+                                <button type="button" onclick="downloadBillingPdf('cj', this)" title="ออกไฟล์ PDF ราคาฝั่ง CJ (ตัดเคลมประกัน 3 เดือน และเคลมอะไหล่ออก)" class="flex-1 min-w-[92px] bg-slate-800 text-white text-sm font-semibold py-2 px-3 rounded-lg hover:bg-slate-900 transition-colors">
+                                    <i class="fa-solid fa-file-pdf mr-1"></i> PDF<span id="billingCountPdfCj" class="ml-1.5 px-1.5 rounded-full text-[11px] tabular-nums bg-white/25">0</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="flex flex-col gap-2 border border-slate-200 rounded-xl px-4 py-3 bg-slate-50/60">
+                            <span class="text-xs font-bold text-slate-600">เอกสารเก็บเงินผู้รับเหมา</span>
+                            <div class="flex gap-2 items-center flex-wrap">
+                                <button type="button" onclick="exportBillingCSV('contractor')" title="ออกไฟล์ CSV ราคาฝั่งผู้รับเหมา (ตัดเฉพาะเคลมประกัน 3 เดือน)" class="flex-1 min-w-[92px] bg-blood-500 text-white text-sm font-semibold py-2 px-3 rounded-lg hover:bg-blood-600 transition-colors">
+                                    <i class="fa-solid fa-file-csv mr-1"></i> CSV<span id="billingCountCsvContractor" class="ml-1.5 px-1.5 rounded-full text-[11px] tabular-nums bg-white/25">0</span>
+                                </button>
+                                <button type="button" onclick="downloadBillingPdf('contractor', this)" title="ออกไฟล์ PDF ราคาฝั่งผู้รับเหมา (ตัดเฉพาะเคลมประกัน 3 เดือน)" class="flex-1 min-w-[92px] bg-slate-600 text-white text-sm font-semibold py-2 px-3 rounded-lg hover:bg-slate-700 transition-colors">
+                                    <i class="fa-solid fa-file-pdf mr-1"></i> PDF<span id="billingCountPdfContractor" class="ml-1.5 px-1.5 rounded-full text-[11px] tabular-nums bg-white/25">0</span>
+                                </button>
+                            </div>
+                        </div>
+                        <!-- งานเคลมประกัน 3 เดือน ไม่เก็บเงินทั้ง 2 ฝั่ง จึงไม่โผล่ในบิล CJ และบิลผู้รับเหมาเลย ต้องมีปุ่มแยกของตัวเอง -->
+                        <div class="flex flex-col gap-2 border border-amber-300 rounded-xl px-4 py-3 bg-amber-50/70">
+                            <span class="text-xs font-bold text-amber-800">เคลมประกัน 3 เดือน <span class="font-normal text-amber-600">· ไม่เก็บเงินทั้ง 2 ฝั่ง</span></span>
+                            <div class="flex gap-2 items-center">
+                                <button type="button" onclick="exportBillingCSV('claim')" title="ออกไฟล์ CSV สรุปงานเคลมประกัน 3 เดือน หน้าตาคอลัมน์เหมือนใบเขียว (เก็บไว้อ้างอิง ไม่ใช่เอกสารเก็บเงิน)" class="flex-1 bg-amber-600 text-white text-sm font-semibold py-2 px-3 rounded-lg hover:bg-amber-700 transition-colors">
+                                    <i class="fa-solid fa-file-csv mr-1"></i> CSV<span id="billingCountCsvClaim" class="ml-1.5 px-1.5 rounded-full text-[11px] tabular-nums bg-white/25">0</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- แถว 3: Excel รวม — แยกเป็นแถบของตัวเองเต็มความกว้าง เพราะมีตัวเลือกเยอะสุด
+                         (เลือกรอบบิลได้หลายรอบพร้อมกัน + เลือกประเภทเก็บเงิน) ถ้ายัดรวมกับกล่องอื่นจะแน่นจนอ่านไม่ออก -->
+                    <div class="border border-emerald-300 rounded-xl px-4 py-3 bg-emerald-50/70">
+                        <div class="flex flex-wrap items-center justify-between gap-3">
+                            <span class="text-xs font-bold text-emerald-800"><i class="fa-solid fa-file-excel mr-1.5"></i>ไฟล์ Excel รวม <span class="font-normal text-emerald-600">· คอลัมน์ครบเหมือนตารางในแอป · กรองต่อในไฟล์ได้</span></span>
+                            <button type="button" id="btn_downloadAllBillingXlsx" onclick="downloadAllBillingXlsx(this)" title="ดาวน์โหลด Excel ตามรอบบิลและประเภทที่เลือก" class="bg-emerald-700 text-white text-sm font-semibold py-2 px-5 rounded-lg hover:bg-emerald-800 transition-colors">
+                                <i class="fa-solid fa-download mr-1.5"></i> ดาวน์โหลด Excel
+                            </button>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3 pt-3 border-t border-emerald-200">
+                            <div>
+                                <span class="block text-[11px] font-bold text-emerald-800 mb-1.5">เลือกรอบบิล (ติ๊กได้หลายรอบ)</span>
+                                <!-- dropdown แบบติ๊กหลายรอบ: ปุ่มสรุปว่าเลือกอะไรไว้ กดแล้วค่อยกางรายชื่อรอบออกมา
+                                     ใช้พาเนลกางเองแทน <select multiple> เพราะ select multiple ต้องกด Ctrl ค้างถึงจะเลือกหลายอันได้ ผู้ใช้พลาดง่าย -->
+                                <div class="relative">
+                                    <button type="button" id="xlsxRoundDropdownBtn" onclick="toggleXlsxRoundDropdown()" class="w-full flex items-center justify-between gap-2 bg-white border border-emerald-300 rounded-lg px-3 py-2 text-xs text-slate-700 hover:bg-emerald-50 transition-colors">
+                                        <span id="xlsxRoundSummary" class="truncate text-left">ทุกรอบบิล</span>
+                                        <i class="fa-solid fa-chevron-down text-emerald-600 text-[10px] flex-shrink-0"></i>
+                                    </button>
+                                    <div id="xlsxRoundDropdownPanel" class="hidden absolute left-0 right-0 mt-1 z-40 bg-white border border-emerald-300 rounded-xl shadow-2xl p-2">
+                                        <div class="flex gap-2 pb-2 mb-1 border-b border-emerald-100">
+                                            <button type="button" onclick="setAllXlsxRounds(true)" class="text-[11px] text-emerald-700 underline hover:text-emerald-900">เลือกทุกรอบ</button>
+                                            <button type="button" onclick="setAllXlsxRounds(false)" class="text-[11px] text-slate-500 underline hover:text-slate-700">ล้างที่เลือก</button>
+                                        </div>
+                                        <!-- ไม่ติ๊กรอบไหนเลย = เอาทุกรอบ (พฤติกรรมเดิม) เพื่อไม่ให้ต้องติ๊กทีละรอบตอนอยากได้ทั้งหมด -->
+                                        <div id="xlsxRoundCheckboxes" class="max-h-52 overflow-y-auto">
+                                            <span class="text-[11px] text-slate-400">กด "โหลด/รีเฟรช" เพื่อดึงรายชื่อรอบบิล</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div>
+                                <span class="block text-[11px] font-bold text-emerald-800 mb-1.5">เลือกประเภทการเก็บเงิน</span>
+                                <div class="flex flex-wrap gap-2">
+                                    <label class="flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer bg-white border border-slate-300 rounded-lg px-3 py-2" title="เก็บเงินทั้ง CJ และผู้รับเหมา">
+                                        <input type="checkbox" id="xlsxTypeNormal" checked class="rounded border-slate-300"> เก็บเงินปกติ
+                                    </label>
+                                    <label class="flex items-center gap-1.5 text-xs text-amber-800 cursor-pointer bg-amber-100 border border-amber-300 rounded-lg px-3 py-2" title="ไม่เก็บเงินทั้ง 2 ฝั่ง">
+                                        <input type="checkbox" id="xlsxTypeClaim" checked class="rounded border-amber-400"> เคลมประกัน 3 เดือน
+                                    </label>
+                                    <label class="flex items-center gap-1.5 text-xs text-sky-800 cursor-pointer bg-sky-100 border border-sky-300 rounded-lg px-3 py-2" title="เก็บเฉพาะฝั่งผู้รับเหมา">
+                                        <input type="checkbox" id="xlsxTypeContractorCr" checked class="rounded border-sky-400"> เคลมอะไหล่
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- เพิ่มเลขงานเข้ารอบบิลที่มีอยู่แล้ว (แอดมินเท่านั้น)
+                     ปุ่มจับคู่ข้อมูลปกติจะสร้างรอบใหม่เสมอ ใส่งานที่ตกหล่นเข้ารอบเดิมไม่ได้ จึงต้องมีช่องนี้ -->
+                <div id="billingAddJobToRoundBox" class="flex flex-wrap items-end gap-2 mb-4 p-3 bg-indigo-50 border border-indigo-200 rounded-xl">
+                    <div>
+                        <label class="block text-indigo-900 text-xs font-bold mb-1">เพิ่มเลขงานเข้ารอบบิลที่มีอยู่แล้ว</label>
+                        <div class="flex gap-2 items-center flex-wrap">
+                            <select id="addJobRoundNo" class="px-3 py-2 rounded-lg border border-indigo-300 text-sm bg-white outline-none focus:border-indigo-500 min-w-[150px]">
+                                <option value="">-- เลือกรอบบิล --</option>
+                            </select>
+                            <input type="text" id="addJobToRoundInput" placeholder="เช่น CM20260904-0169" class="px-3 py-2 rounded-lg border border-indigo-300 text-sm bg-white outline-none focus:border-indigo-500 w-56">
+                            <button type="button" id="btn_addJobToRound" onclick="addJobToBillingRound(this)" class="bg-indigo-600 text-white text-sm font-semibold py-2 px-3.5 rounded-lg hover:bg-indigo-700 transition-colors">
+                                <i class="fa-solid fa-plus mr-1"></i> เพิ่มเข้ารอบบิล
+                            </button>
+                        </div>
+                        <p class="text-[11px] text-indigo-700 mt-1.5">งานจะถูกต่อท้ายรายการของรอบนั้น · ต้องเปิดงานและปิดงานแล้ว · เลขทรัพย์สินที่มีบิลอยู่แล้วจะถูกข้ามให้อัตโนมัติ</p>
                     </div>
                 </div>
                 <p id="billingStatus" class="text-sm text-slate-400 mb-3">
@@ -1853,7 +1934,10 @@
             const pdfSingleBtn = document.getElementById('btn_downloadPdfSingle');
             if (pdfSingleBtn) pdfSingleBtn.style.display = isAdmin ? 'none' : '';
             const adminExportButtons = document.getElementById('billingAdminExportButtons');
-            if (adminExportButtons) adminExportButtons.style.display = isAdmin ? '' : 'none';
+            if (adminExportButtons) adminExportButtons.style.display = isAdmin ? 'flex' : 'none';
+            // กล่อง "เพิ่มเลขงานเข้ารอบบิล" เป็นของแอดมินเท่านั้น
+            const addJobBox = document.getElementById('billingAddJobToRoundBox');
+            if (addJobBox) addJobBox.style.display = isAdmin ? 'flex' : 'none';
 
             // คอลัมน์ผู้รับเหมา/รอบบิลที่/ช่วงรอบบิล/ราคาผู้รับเหมา ในตารางวางบิล - โชว์แค่แอดมินเท่านั้น
             // (ผู้รับเหมาเห็นราคาของตัวเองอยู่แล้วในคอลัมน์ "ราคา/หน่วย"/"ราคา/รวม" ปกติ ไม่ต้องมีคอลัมน์แยก)
@@ -3393,6 +3477,44 @@
 
         // เติมตัวเลือกใน dropdown "กรองตามรอบบิล" จากรอบที่มีอยู่จริงทั้งหมดในระบบ (ทั้งที่ยัง active และจบไปแล้ว)
         // ดึงจากเซิร์ฟเวอร์ตรง ๆ (getBillingRoundOptions) แทนการมองแค่ข้อมูลที่โหลดมาแล้ว เพื่อให้เลือกดูรอบเก่า ๆ ย้อนหลังได้ด้วย
+        // อ่านรอบบิลที่ติ๊กไว้ในกล่อง Excel รวม — คืนเป็น array ของเลขรอบ (string)
+        // ไม่ติ๊กเลย = คืน [] แปลว่า "เอาทุกรอบ" (ไม่ต้องติ๊กทีละรอบตอนอยากได้ทั้งหมด)
+        function getSelectedXlsxRounds() {
+            return Array.prototype.slice.call(document.querySelectorAll('#xlsxRoundCheckboxes .xlsx-round-cb'))
+                .filter(function (cb) { return cb.checked; })
+                .map(function (cb) { return cb.value; });
+        }
+
+        // ปุ่ม "เลือกทุกรอบ" / "ล้างที่เลือก"
+        function setAllXlsxRounds(on) {
+            document.querySelectorAll('#xlsxRoundCheckboxes .xlsx-round-cb').forEach(function (cb) { cb.checked = !!on; });
+            updateXlsxRoundSummary();
+        }
+
+        // ข้อความบนหัว dropdown ให้รู้ว่าเลือกอะไรไว้โดยไม่ต้องกางออกมาดู
+        //   ไม่เลือกเลย = ทุกรอบบิล / 1-3 รอบ = ไล่เลขให้เห็น / มากกว่านั้น = บอกจำนวน
+        function updateXlsxRoundSummary() {
+            const el = document.getElementById('xlsxRoundSummary');
+            if (!el) return;
+            const picked = getSelectedXlsxRounds();
+            if (picked.length === 0) el.textContent = 'ทุกรอบบิล';
+            else if (picked.length <= 3) el.textContent = 'รอบที่ ' + picked.join(', ');
+            else el.textContent = 'เลือกไว้ ' + picked.length + ' รอบ';
+        }
+
+        function toggleXlsxRoundDropdown() {
+            const panel = document.getElementById('xlsxRoundDropdownPanel');
+            if (panel) panel.classList.toggle('hidden');
+        }
+
+        // ปิด dropdown รอบบิลเมื่อคลิกที่อื่น (ติ๊กในพาเนลไม่ปิด จะได้ติ๊กหลายรอบรวดเดียว)
+        document.addEventListener('click', function (e) {
+            const panel = document.getElementById('xlsxRoundDropdownPanel');
+            if (!panel || panel.classList.contains('hidden')) return;
+            if (panel.contains(e.target) || e.target.closest('#xlsxRoundDropdownBtn')) return;
+            panel.classList.add('hidden');
+        });
+
         function refreshBillingRoundOptions() {
             if (!currentSession) return;
             runServerCall('getBillingRoundOptions', [currentSession.username, currentSession.token], function (res) {
@@ -3408,6 +3530,43 @@
                     }).join('');
 
                 if (res.some(r => String(r.round_no) === currentVal)) select.value = currentVal;
+
+                // เติมรายชื่อรอบเดียวกันนี้ให้ช่องเลือกรอบของ Excel รวม (ติ๊กได้หลายรอบพร้อมกัน)
+                // จำรอบที่ติ๊กค้างไว้ก่อนสร้างใหม่ ผู้ใช้จะได้ไม่ต้องติ๊กซ้ำทุกครั้งที่กดรีเฟรช
+                const xlsxBox = document.getElementById('xlsxRoundCheckboxes');
+                if (xlsxBox) {
+                    const checkedBefore = getSelectedXlsxRounds();
+                    if (res.length === 0) {
+                        xlsxBox.innerHTML = '<span class="text-[11px] text-slate-400">ยังไม่มีรอบบิลในระบบ</span>';
+                    } else {
+                        xlsxBox.innerHTML = res.map(r => {
+                            const val = String(r.round_no);
+                            const on = checkedBefore.indexOf(val) !== -1 ? ' checked' : '';
+                            // ช่วงรอบบิลเป็นข้อความอิสระ ต้องหนี < > " ก่อนยัดใส่ HTML
+                            const safePeriod = String(r.round_period || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                            return '<label class="flex items-center gap-2 text-xs text-slate-700 py-1 px-1.5 rounded cursor-pointer hover:bg-emerald-50">' +
+                                '<input type="checkbox" class="xlsx-round-cb rounded border-emerald-300" value="' + val + '"' + on + ' onchange="updateXlsxRoundSummary()">' +
+                                '<span class="font-semibold">รอบที่ ' + val + '</span>' +
+                                (safePeriod ? '<span class="text-[11px] text-slate-400 truncate">' + safePeriod + '</span>' : '') +
+                                '</label>';
+                        }).join('');
+                    }
+                    updateXlsxRoundSummary();
+                }
+
+                //   addJobRoundNo = เลือกรอบที่จะเพิ่มเลขงานเข้าไป (ยังเป็น dropdown เพราะเพิ่มได้ทีละรอบ)
+                // ใช้แหล่งข้อมูลเดียวกัน จะได้ไม่มีทางเลือกรอบที่ไม่มีอยู่จริง
+                [['addJobRoundNo', '-- เลือกรอบบิล --']].forEach(function (pair) {
+                    const el = document.getElementById(pair[0]);
+                    if (!el) return;
+                    const keep = el.value;
+                    el.innerHTML = '<option value="">' + pair[1] + '</option>' +
+                        res.map(r => {
+                            const label = 'รอบที่ ' + r.round_no + (r.round_period ? ' (' + r.round_period + ')' : '');
+                            return `<option value="${r.round_no}">${label}</option>`;
+                        }).join('');
+                    if (res.some(r => String(r.round_no) === keep)) el.value = keep;
+                });
             }, function () {});
         }
 
@@ -5749,6 +5908,109 @@
             URL.revokeObjectURL(url);
         }
 
+        // เพิ่มเลขงานเข้ารอบบิลที่มีอยู่แล้ว (ต่อท้ายรายการของรอบนั้น)
+        function addJobToBillingRound(btnEl) {
+            const roundEl = document.getElementById('addJobRoundNo');
+            const jobEl = document.getElementById('addJobToRoundInput');
+            const roundNo = roundEl.value;
+            const jobId = jobEl.value.trim();
+
+            if (!roundNo) { showAlert('error', 'กรุณาเลือกรอบบิลที่ต้องการเพิ่มงานเข้าไปก่อน'); roundEl.focus(); return; }
+            if (!jobId) { showAlert('error', 'กรุณากรอกเลขที่ใบแจ้งซ่อมบำรุง'); jobEl.focus(); return; }
+            // เช็ค CM ตั้งแต่ฝั่งหน้าแอป จะได้ไม่ต้องรอเซิร์ฟเวอร์ตอบกลับ (เซิร์ฟเวอร์ก็เช็คซ้ำอีกชั้น)
+            if (!/^CM/i.test(jobId)) {
+                showAlert('error', 'เลขที่ใบแจ้งซ่อมบำรุงต้องขึ้นต้นด้วย "CM" เท่านั้น');
+                jobEl.focus();
+                return;
+            }
+
+            const btn = btnEl || document.getElementById('btn_addJobToRound');
+            const label = btn.innerHTML;
+            btn.disabled = true;
+            btn.classList.add('opacity-60', 'cursor-not-allowed');
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i> กำลังเพิ่ม...';
+            function resetBtn() {
+                btn.disabled = false;
+                btn.classList.remove('opacity-60', 'cursor-not-allowed');
+                btn.innerHTML = label;
+            }
+
+            runServerCall('addJobToBillingRound', [currentSession.username, currentSession.token, roundNo, jobId], function (res) {
+                resetBtn();
+                if (res && res.success) {
+                    showAlert('success', res.message);
+                    jobEl.value = '';
+                    // เลื่อนตัวกรองรอบบิลไปที่รอบนั้นแล้วโหลดใหม่ ผู้ใช้จะได้เห็นงานที่เพิ่งเพิ่มทันที
+                    const mainRoundFilter = document.getElementById('billingRoundFilter');
+                    if (mainRoundFilter) mainRoundFilter.value = roundNo;
+                    loadBillingDocuments();
+                } else {
+                    showAlert('error', (res && res.message) || 'เพิ่มเข้ารอบบิลล้มเหลว');
+                }
+            }, function (err) {
+                resetBtn();
+                showAlert('error', 'เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : ''));
+            }, 45000);
+        }
+
+        // ดาวน์โหลด Excel รวมงานทุกประเภทเก็บเงินทั้งระบบ
+        // ต่างจากปุ่ม CSV/PDF อื่น: ปุ่มนี้ไม่ใช้ข้อมูลที่โหลดไว้บนหน้าจอเลย
+        // แต่ให้เซิร์ฟเวอร์ไปดึงทุกแถวในฐานข้อมูลมาใหม่ จึงได้ครบทั้งระบบ ไม่ถูกจำกัดด้วยตัวกรองหรือเพดาน 1000 แถวของหน้าจอ
+        function downloadAllBillingXlsx(btnEl) {
+            const btn = btnEl || document.getElementById('btn_downloadAllBillingXlsx');
+            const label = btn.innerHTML;
+            btn.disabled = true;
+            btn.classList.add('opacity-60', 'cursor-not-allowed');
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i> กำลังสร้างไฟล์...';
+
+            function resetBtn() {
+                btn.disabled = false;
+                btn.classList.remove('opacity-60', 'cursor-not-allowed');
+                btn.innerHTML = label;
+            }
+
+            // อ่านรอบบิลและประเภทเก็บเงินที่ติ๊กไว้ ส่งไปให้เซิร์ฟเวอร์กรองให้
+            // rounds = [] แปลว่าไม่ได้ติ๊กรอบไหนเลย เซิร์ฟเวอร์จะเอาทุกรอบให้
+            const rounds = getSelectedXlsxRounds();
+            const types = [];
+            if (document.getElementById('xlsxTypeNormal').checked) types.push('normal');
+            if (document.getElementById('xlsxTypeClaim').checked) types.push('claim');
+            if (document.getElementById('xlsxTypeContractorCr').checked) types.push('contractor_cr');
+            if (types.length === 0) {
+                resetBtn();
+                showAlert('error', 'กรุณาติ๊กเลือกประเภทการเก็บเงินอย่างน้อย 1 อย่างก่อนดาวน์โหลด');
+                return;
+            }
+
+            runServerCall('downloadAllBillingXlsx', [currentSession.username, currentSession.token, rounds, types], function (res) {
+                resetBtn();
+                if (!res || !res.success) {
+                    showAlert('error', (res && res.message) || 'สร้างไฟล์ Excel ล้มเหลว');
+                    return;
+                }
+                try {
+                    const byteCharacters = atob(res.base64);
+                    const byteNumbers = new Array(byteCharacters.length);
+                    for (let i = 0; i < byteCharacters.length; i++) byteNumbers[i] = byteCharacters.charCodeAt(i);
+                    const blob = new Blob([new Uint8Array(byteNumbers)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = res.filename || 'ตารางวางบิลทั้งหมด.xlsx';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    showAlert('success', 'ดาวน์โหลดสำเร็จ ' + (res.rowCount || 0) + ' แถว — เปิดไฟล์แล้วกดตัวกรองที่คอลัมน์ "ประเภทเก็บเงิน" เพื่อดูทีละประเภทได้');
+                } catch (e) {
+                    showAlert('error', 'แปลงไฟล์ล้มเหลว: ' + e.message);
+                }
+            }, function (err) {
+                resetBtn();
+                showAlert('error', 'เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : ''));
+            }, 120000);
+        }
+
         // สร้าง PDF ตารางวางบิลแบบดาวน์โหลดตรง - ส่งข้อมูลดิบไปให้เซิร์ฟเวอร์สร้างผ่าน Google Docs API
         // (เชื่อถือได้กว่าการแปลง HTML->PDF ตรงๆ มาก เพราะควบคุมสี/ตาราง/โลโก้ผ่าน DocumentApp โดยตรง)
         // pricingMode: ไม่ใส่ = ใช้พฤติกรรมเดิม (ตาม role ของ session) / 'cj' = บังคับราคา CJ / 'contractor' = บังคับราคาผู้รับเหมา (ใช้กับปุ่มแยกของแอดมิน)
@@ -5960,7 +6222,9 @@
 
             if (mode === 'open') {
                 const ok = validateRequiredFields([
-                    { id: 'op_mainId',      msg: 'กรุณากรอกเลขที่ใบแจ้งซ่อมบำรุง' },
+                    // เลขงานของระบบขึ้นต้นด้วย CM เสมอ ถ้าไม่ใช่แปลว่าคัดลอกมาผิดช่อง/ผิดระบบ
+                    // ปล่อยผ่านไปจะกลายเป็นงานผีที่ไม่มีวันจับคู่กับข้อมูลปิดงานได้
+                    { id: 'op_mainId',      msg: 'เลขที่ใบแจ้งซ่อมบำรุงต้องขึ้นต้นด้วย "CM" เท่านั้น', test: function (v) { return /^CM/i.test(v); } },
                     { id: 'op_serviceType', msg: 'กรุณากรอก Service Type' },
                     { id: 'op_serviceWork', msg: 'กรุณากรอกงานบริการ' },
                     { id: 'op_serviceIssue',msg: 'กรุณากรอก Service Issue' },
