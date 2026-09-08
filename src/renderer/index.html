@@ -1329,6 +1329,8 @@
                         <option value="pending">รอตรวจสอบ</option>
                         <option value="approved">อนุมัติแล้ว</option>
                         <option value="rejected">ตีกลับ</option>
+                        <option value="waitFinish">อนุมัติแล้ว - รอสิ้นสุดงาน</option>
+                        <option value="finished">สิ้นสุดงานแล้ว</option>
                     </select>
                 </div>
                 <div class="table-scroll overflow-x-auto border border-slate-200 rounded-xl">
@@ -1341,6 +1343,7 @@
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">สาขา</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">ไฟล์</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">สถานะตรวจสอบ</th>
+                                <th class="p-2 text-left font-semibold whitespace-nowrap">สิ้นสุดงาน</th>
                                 <th class="p-2 text-left font-semibold min-w-[220px]">หมายเหตุ / ดำเนินการ</th>
                             </tr>
                         </thead>
@@ -5406,7 +5409,12 @@
             const statusFilter = document.getElementById('submissionsFilterStatus').value;
 
             let filtered = currentSubmissionsData;
-            if (statusFilter) {
+            if (statusFilter === 'waitFinish') {
+                // อนุมัติแล้วแต่ยังไม่มีใครกดสิ้นสุดงาน = กองที่รอตรวจชั้นที่ 2
+                filtered = filtered.filter(row => row.status === 'approved' && !row.finished_at);
+            } else if (statusFilter === 'finished') {
+                filtered = filtered.filter(row => !!row.finished_at);
+            } else if (statusFilter) {
                 filtered = filtered.filter(row => row.status === statusFilter);
             }
             if (term) {
@@ -5440,6 +5448,24 @@
                         </div>`
                     : `<div class="text-xs text-slate-600 whitespace-pre-wrap">${row.admin_remark || '-'}</div>`;
 
+                // คอลัมน์ "สิ้นสุดงาน" (ขั้นตรวจชั้นที่ 2)
+                //   ยังไม่อนุมัติ  -> ยังกดไม่ได้ บอกให้อนุมัติก่อน
+                //   อนุมัติแล้ว     -> โชว์ปุ่มให้กด (การกดนี้คือขั้นที่ตัดบิลจริง)
+                //   สิ้นสุดแล้ว     -> โชว์ชื่อคนกดกับเวลา
+                let finishCellHtml;
+                if (row.finished_at) {
+                    finishCellHtml = `<span class="text-xs font-semibold px-2 py-1 rounded-full bg-slate-800 text-white">สิ้นสุดแล้ว</span>
+                        <div class="text-[10px] text-slate-400 mt-1">โดย ${row.finished_by || '-'} • ${formatTimestamp(row.finished_at)}</div>`;
+                } else if (row.status === 'approved') {
+                    finishCellHtml = `<button type="button" onclick="finishSubmission('${row.id}')" title="กดแล้วจะตัดบิลของเลขงานนี้ออกจากตารางวางบิลของผู้รับเหมาทันที"
+                            class="text-[10px] bg-slate-800 text-white px-2 py-1 rounded hover:bg-slate-900 whitespace-nowrap">
+                            <i class="fa-solid fa-flag-checkered mr-1"></i> สิ้นสุดงาน
+                        </button>
+                        <div class="text-[10px] text-amber-600 mt-1">รอตัดบิล</div>`;
+                } else {
+                    finishCellHtml = `<span class="text-[10px] text-slate-400">ต้องอนุมัติก่อน</span>`;
+                }
+
                 return `<tr class="border-t border-slate-100">
                     <td class="p-2 whitespace-nowrap">${formatTimestamp(row.submitted_at)}</td>
                     <td class="p-2 whitespace-nowrap">${row.customer_case || ''}</td>
@@ -5450,6 +5476,7 @@
                         <span class="text-xs font-semibold px-2 py-1 rounded-full ${st.cls}">${st.text}</span>
                         ${reviewedInfo}
                     </td>
+                    <td class="p-2 whitespace-nowrap">${finishCellHtml}</td>
                     <td class="p-2">
                         ${remarkColumnHtml}
                     </td>
@@ -5470,7 +5497,7 @@
             }
 
             const confirmMsg = decision === 'approved'
-                ? 'ยืนยันอนุมัติไฟล์นี้?'
+                ? 'ยืนยันอนุมัติไฟล์นี้?\n\n(ขั้นนี้ยังไม่ตัดบิล ต้องให้ผู้ตรวจสอบกด "สิ้นสุดงาน" อีกครั้งจึงจะตัดบิล)'
                 : 'ยืนยันตีกลับไฟล์นี้? ผู้รับเหมาจะต้องแก้ไขและส่งฟอร์มใหม่';
             if (!confirm(confirmMsg)) return;
 
@@ -5485,6 +5512,31 @@
                         row.reviewed_at = new Date().toISOString();
                         row.reviewed_by = currentSession.displayName;
                         row.is_read = true;
+                    }
+                    filterSubmissions();
+                } else {
+                    showAlert('error', (res && res.message) || 'ดำเนินการล้มเหลว');
+                }
+            }, function (err) {
+                showAlert('error', 'เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : ''));
+            });
+        }
+
+        // ปุ่ม "สิ้นสุดงาน" — ขั้นตรวจชั้นที่ 2 ต่อจากการอนุมัติ
+        // นี่คือขั้นที่ "ตัดบิลจริง" ไม่ใช่ตอนอนุมัติแล้ว จึงถามยืนยันให้ชัดก่อนเสมอ
+        // เมื่อสำเร็จจะบันทึกชื่อผู้กดไว้ ตารางจะแสดงทั้งชื่อผู้อนุมัติและชื่อผู้สิ้นสุดงาน
+        function finishSubmission(id) {
+            const row = currentSubmissionsData.find(r => String(r.id) === String(id));
+            const jobId = row ? (row.customer_case || '') : '';
+            if (!confirm('ยืนยัน "สิ้นสุดงาน" เลขงาน ' + jobId + ' ?\n\nกดแล้วระบบจะตัดบิลของเลขงานนี้ออกจากตารางวางบิลของผู้รับเหมาทันที และย้ายไปเมนู "งานที่เสร็จสิ้น"')) return;
+
+            runServerCall('finishJobFormSubmission', [currentSession.username, currentSession.token, id], function (res) {
+                if (res && res.success) {
+                    showAlert('success', res.message);
+                    // อัปเดตแถวนี้ในข้อมูลที่โหลดไว้แล้วโดยตรง เร็วกว่ารอโหลดทั้งตารางใหม่
+                    if (row) {
+                        row.finished_at = new Date().toISOString();
+                        row.finished_by = currentSession.displayName;
                     }
                     filterSubmissions();
                 } else {

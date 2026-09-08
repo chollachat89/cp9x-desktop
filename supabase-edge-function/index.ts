@@ -1154,10 +1154,14 @@ async function generateAllBillingXlsxBase64(rows: any[]): Promise<any> {
 //
 // ฟอนต์ใช้ Tahoma ไม่ใช่ Arial เพราะ Arial ไม่มีสระ/วรรณยุกต์ไทยครบ
 // Excel ต้องไปหยิบฟอนต์สำรองมาแทน ทำให้สระลอยซ้อนกันจนอ่านยาก ส่วน Tahoma รองรับไทยเต็มและมีอยู่ทุกเครื่อง
-function xlsxApplyBoxStyle(ws: any, r1: number, c1: number, r2: number, c2: number, opts?: { fontSize?: number; bold?: boolean }) {
+function xlsxApplyBoxStyle(ws: any, r1: number, c1: number, r2: number, c2: number, opts?: { fontSize?: number; bold?: boolean; thin?: boolean }) {
   const fontSize = (opts && opts.fontSize) || 11;
   const bold = !!(opts && opts.bold);
+  // thin: true = เส้นบางเท่ากันทุกด้านแบบไฟล์ต้นฉบับ
+  // ค่าเริ่มต้น (ไม่ส่ง thin) = ขอบนอกหนา ขอบในกลาง ตามที่เคยขอไว้ในเอกสารอื่น
+  const thin = !!(opts && opts.thin);
   const line = (r: number, c: number, side: 'top' | 'bottom' | 'left' | 'right') => {
+    if (thin) return { style: 'thin', color: { argb: 'FF000000' } };
     const outer = (side === 'top' && r === r1) || (side === 'bottom' && r === r2)
       || (side === 'left' && c === c1) || (side === 'right' && c === c2);
     return { style: outer ? 'thick' : 'medium', color: { argb: 'FF000000' } };
@@ -1180,7 +1184,8 @@ function xlsxApplyBoxStyle(ws: any, r1: number, c1: number, r2: number, c2: numb
 // โครงหน้ากระดาษ: 10 คอลัมน์ (A-J) หัวฟอร์ม 3 แถว แล้วต่อด้วยกล่องรูปเป็นคู่ซ้าย-ขวา คู่ละ 8 แถว
 //   - ฝั่งซ้าย  = A-E
 //   - ฝั่งขวา   = F-J
-// รวม 3 + 80 = 83 แถว พอดี 2 หน้า A4 (หน้าละ 5 คู่) โดยใส่จุดตัดหน้าไว้เองไม่ให้กล่องรูปโดนผ่าครึ่ง
+// หน้า 1-2 = หัวกระดาษ 3 แถว + กล่องรูป 10 คู่ (หน้าละ 5 คู่)
+// หน้า 3   = ใบจ๊อบ order 2 ใบต่อ 1 แผ่น (ใบละครึ่งหน้า)
 
 // จำนวนแถวต่อ 1 กล่องรูป — ตรงกับแบบฟอร์มต้นฉบับ ทำให้กล่องสูงพอวางรูปถ่ายมือถือแนวตั้งได้
 const PHOTO_BOX_ROWS = 8;
@@ -1242,8 +1247,33 @@ function drawJobFormSheet(sheet: any, job: any) {
   sheet.getRow(3).height = 24.95;
   // แถวกล่องรูปใช้ 17.5pt × 8 แถว = 140pt ต่อกล่อง (สูงราว 1.9 นิ้ว) พอวางรูปจากมือถือได้
   // เลือก 17.5 ไม่ใช่ 18 เพราะ 5 คู่ + หัวกระดาษ = 80 + 700 = 780pt ยังไม่เกินพื้นที่พิมพ์ A4 (~805pt)
-  const lastRow = 3 + JOB_FORM_PHOTO_LABELS.length * PHOTO_BOX_ROWS;   // = 83
-  for (let r = 4; r <= lastRow; r++) sheet.getRow(r).height = 17.5;
+  const assets: any[] = Array.isArray(job.assets) ? job.assets : [];
+  // เลขทรัพย์สินที่มีจริงบนแผ่นนี้ (1 หรือ 2 ตัว) ใช้กำหนดจำนวนหน้าใบจ๊อบ
+  const realAssets: any[] = assets.filter((a: any) => a && a.assetId && a.assetId !== '-');
+
+  const photoPairs: [string, string][] = JOB_FORM_PHOTO_LABELS;
+
+  // ---- ผังหน้ากระดาษ (A4 แนวตั้ง 3 หน้า ไม่ต้องย่อเลย) ----
+  //   หน้า 1 = หัวกระดาษ 3 แถว + กล่องรูปคู่ที่ 1-5   (แถว 1-43   สูง 740pt)
+  //   หน้า 2 = กล่องรูปคู่ที่ 6-10                    (แถว 44-83  สูง 660pt)
+  //   หน้า 3 = ใบจ๊อบ order 2 ใบต่อ 1 แผ่น            (แถว 84-129 สูง 774pt)
+  //
+  // ทุกบล็อกสูงไม่เกินพื้นที่พิมพ์ A4 (~805pt) จึงไม่ต้องย่ออะไรเลย ตัวหนังสืออ่านออกเต็ม 100%
+  // ใบจ๊อบวางซ้อนกัน 2 ใบต่อแผ่น (ใบละครึ่งหน้า) ไม่ยืดเต็มหน้าแบบเดิม
+  const FORM_LAST_ROW = 3 + photoPairs.length * PHOTO_BOX_ROWS;           // 3 + 10x8 = 83
+  const PAIRS_PER_PAGE = 5;                                              // 5 คู่ต่อ 1 หน้า
+  const JOB_ORDER_LABEL_ROWS = 1;                                        // แถวป้ายบอกว่าเป็นของทรัพย์สินตัวไหน
+  const JOB_ORDER_BOX_ROWS = 22;                                         // ช่องวางรูปใบจ๊อบ (ครึ่งหน้า)
+  const JOB_ORDER_SLOT_ROWS = JOB_ORDER_LABEL_ROWS + JOB_ORDER_BOX_ROWS; // = 22 แถวต่อ 1 ใบ
+  const jobOrderSlots = Math.max(realAssets.length, 1);                  // 1 หรือ 2 ใบ อยู่ในแผ่นเดียวกัน
+  const lastRow = FORM_LAST_ROW + jobOrderSlots * JOB_ORDER_SLOT_ROWS;
+
+  // ความสูงแถว 16.5pt = ค่าเดียวกับไฟล์ต้นฉบับ (ของเดิมใช้ 17.5 ทำให้กล่องสูงกว่าต้นฉบับเล็กน้อย)
+  for (let r = 4; r <= lastRow; r++) sheet.getRow(r).height = 16.5;
+  // แถวป้ายใบจ๊อบเตี้ยกว่าแถวอื่น เพราะเป็นข้อความบรรทัดเดียว
+  for (let i = 0; i < jobOrderSlots; i++) {
+    sheet.getRow(FORM_LAST_ROW + i * JOB_ORDER_SLOT_ROWS + 1).height = 24;
+  }
 
   function setText(addr: string, value: any) {
     sheet.getCell(addr).value = (value === null || value === undefined || value === '') ? '-' : String(value);
@@ -1265,7 +1295,6 @@ function drawJobFormSheet(sheet: any, job: any) {
   sheet.mergeCells('G2:G3'); setText('G2', 'Warranty Start Date');
   sheet.mergeCells('I2:I3'); setText('I2', 'Warranty Expire Date');
 
-  const assets: any[] = Array.isArray(job.assets) ? job.assets : [];
   [2, 3].forEach((row, idx) => {
     const a = assets[idx] || {};
     sheet.mergeCells('B' + row + ':C' + row); setText('B' + row, a.assetId);
@@ -1274,8 +1303,8 @@ function drawJobFormSheet(sheet: any, job: any) {
     setText('J' + row, formatWarrantyDate(a.warrantyExpire));
   });
 
-  // ---- กล่องรูป 10 คู่ (20 กล่อง) ----
-  JOB_FORM_PHOTO_LABELS.forEach((pair, idx) => {
+  // ---- กล่องรูป 10 คู่ (20 กล่อง) บนหน้า 1 ----
+  photoPairs.forEach((pair, idx) => {
     const startRow = 4 + idx * PHOTO_BOX_ROWS;
     const endRow = startRow + PHOTO_BOX_ROWS - 1;
     sheet.mergeCells(startRow, 1, endRow, 5);
@@ -1284,50 +1313,73 @@ function drawJobFormSheet(sheet: any, job: any) {
     sheet.getCell(startRow, 6).value = pair[1];
   });
 
+  // ---- รูป JOB ORDER: 1 ช่องต่อ 1 เลขทรัพย์สิน วางซ้อนกัน 2 ใบในแผ่นเดียว ----
+  // แต่ละช่องมีแถวป้ายบอกว่าเป็นใบจ๊อบของทรัพย์สินตัวไหน แล้วตามด้วยช่องเปล่าให้วางรูป
+  for (let i = 0; i < jobOrderSlots; i++) {
+    const labelRow = FORM_LAST_ROW + i * JOB_ORDER_SLOT_ROWS + 1;
+    const boxTop = labelRow + JOB_ORDER_LABEL_ROWS;
+    const boxBottom = labelRow + JOB_ORDER_SLOT_ROWS - 1;
+    const a = realAssets[i] || {};
+    const id = (a.assetId === null || a.assetId === undefined || a.assetId === '') ? '' : String(a.assetId);
+
+    sheet.mergeCells(labelRow, 1, labelRow, 10);
+    sheet.getCell(labelRow, 1).value = id
+      ? ('รูป JOB ORDER — เลขทรัพย์สิน ' + id + (job.customerCase ? ('  ·  เลขที่งาน ' + job.customerCase) : ''))
+      : 'รูป JOB ORDER';
+
+    sheet.mergeCells(boxTop, 1, boxBottom, 10);
+    sheet.getCell(boxTop, 1).value = 'วางรูป JOB ORDER ตรงนี้ (ให้เต็มกรอบ อ่านตัวหนังสือออก)';
+  }
+
   // ---- สไตล์ (ลอกจากไฟล์ต้นฉบับทุกช่อง: ขนาดตัวอักษร ไม่มีตัวหนา ไม่มีพื้นสี) ----
   // วางเส้นขอบ + ฟอนต์พื้นฐานทั้งฟอร์มก่อน แล้วค่อยทับเฉพาะช่องที่ต้นฉบับใช้ขนาดต่างออกไป
   // ขนาด 11 = ขนาดของป้ายกำกับในกล่องรูปตามต้นฉบับ
-  xlsxApplyBoxStyle(sheet, 1, 1, lastRow, 10, { fontSize: 11, bold: false });
+  xlsxApplyBoxStyle(sheet, 1, 1, lastRow, 10, { fontSize: 11, bold: false, thin: true });
 
   // หัวกระดาษต้นฉบับใช้ขนาด 10 ทั้งแถว และไม่มีตัวหนาสักช่อง
-  xlsxApplyBoxStyle(sheet, 1, 1, 3, 10, { fontSize: 10, bold: false });
+  xlsxApplyBoxStyle(sheet, 1, 1, 3, 10, { fontSize: 10, bold: false, thin: true });
 
   // ช่องที่ต้นฉบับใช้ขนาด 8 (เล็กกว่าเพื่อน เพราะข้อความยาวแต่ช่องแคบ)
-  //   D2/D3 = รายละเอียดทรัพย์สิน · G2 = Warranty Start Date · H2/H3 = วันเริ่มประกัน · I2 = Warranty Expire Date
-  //   ส่วน J2/J3 (วันหมดประกัน) ต้นฉบับใช้ขนาด 10 ไม่ใช่ 8 จึงไม่อยู่ในรายการนี้
-  ['D2', 'D3', 'G2', 'H2', 'H3', 'I2'].forEach((addr) => {
+  //   D2/D3 = รายละเอียดทรัพย์สิน · G2/I2 = ป้าย Warranty · H2/H3 = วันเริ่มประกัน · J2/J3 = วันหมดประกัน
+  //   (ต้นฉบับใช้ขนาด 10 ที่ J2/J3 แต่ให้ใช้ 8 เท่ากับช่องวันที่อีกฝั่ง จะได้ดูเป็นชุดเดียวกัน)
+  ['D2', 'D3', 'G2', 'H2', 'H3', 'I2', 'J2', 'J3'].forEach((addr) => {
     sheet.getCell(addr).font = { name: 'Tahoma', size: 8, bold: false };
   });
 
-  // ---- การจัดวางข้อความ (ตามต้นฉบับ) ----
-  // ต้นฉบับเปิดให้ตัดขึ้นบรรทัดใหม่ได้เฉพาะช่องที่ข้อความยาวกว่าช่องเป็นปกติ
-  //   F1 = ประเภทงาน · D2/D3 = รายละเอียด · G2/I2 = ป้ายรับประกัน · H2/H3 = วันเริ่มประกัน
-  const wrapCells = ['F1', 'D2', 'D3', 'G2', 'I2', 'H2', 'H3'];
-  wrapCells.forEach((addr) => {
-    // รายละเอียดทรัพย์สินชิดซ้ายตามต้นฉบับ ที่เหลือจัดกลาง
-    const left = (addr === 'D2' || addr === 'D3');
-    sheet.getCell(addr).alignment = { horizontal: left ? 'left' : 'center', vertical: 'middle', wrapText: true };
-  });
-
-  // ช่องที่เหลือในหัวกระดาษห้ามตัดบรรทัด
-  // ค่าอย่างชื่อสาขาและเลขที่งานถ้าตัดขึ้นบรรทัด 2 แต่ความสูงแถวไม่พอ จะโดนตัดครึ่งดูเหมือนตัวหนังสือซ้อนกัน
-  // ใช้ shrinkToFit ให้ Excel ย่อตัวอักษรเฉพาะช่องที่ยาวเกินแทน ช่องที่สั้นยังได้ขนาดเต็มตามต้นฉบับ
+  // ---- การจัดวางข้อความในหัวกระดาษ ----
+  // ทุกช่องเปิด wrapText ให้ข้อความตัดขึ้นบรรทัดใหม่อยู่ในกรอบเสมอ ไม่ล้นออกไปทับช่องข้างๆ
+  //
+  // ⚠ ทำไมไม่ใช้ shrinkToFit: Excel "ไม่รองรับ shrinkToFit กับเซลล์ที่ผสานไว้"
+  // ช่องค่าเกือบทั้งหมดในหัวกระดาษเป็นเซลล์ผสาน (B1:D1, F1:G1, I1:J1, B2:C2, D2:F2, ...)
+  // ตั้ง shrinkToFit ไปก็ไม่มีผล ข้อความยาวอย่างชื่อสาขาหรือประเภทงานจึงล้นกรอบออกมา
+  // ใช้ wrapText แทน ซึ่งทำงานกับเซลล์ผสานได้จริง
   //
   // ⚠ ต้องเทียบด้วย "ช่องแม่ของการผสานเซลล์" ไม่ใช่ชื่อช่องตรง ๆ
   // เพราะการตั้งสไตล์ให้ช่องลูกในกลุ่มที่ผสานไว้ ExcelJS จะเขียนทับสไตล์ของช่องแม่ให้ด้วย
-  // เช่น F1:G1 ผสานกันอยู่ ถ้าเผลอไปตั้ง G1 ว่าห้ามตัดบรรทัด ค่าที่ตั้งให้ F1 (ประเภทงาน) จะหายทันที
+  // เช่น F1:G1 ผสานกันอยู่ ถ้าเผลอไปตั้ง G1 ทีหลัง ค่าที่ตั้งให้ F1 (ประเภทงาน) จะหายทันที
+  const leftAlignCells = ['D2', 'D3'];   // รายละเอียดทรัพย์สินชิดซ้ายตามต้นฉบับ (ประโยคยาว อ่านง่ายกว่าจัดกลาง)
   for (let r = 1; r <= 3; r++) {
     for (let c = 1; c <= 10; c++) {
       const cell = sheet.getCell(r, c);
       const masterAddr = (cell.master && cell.master.address) || cell.address;
-      if (wrapCells.indexOf(masterAddr) !== -1) continue;
-      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: false, shrinkToFit: true };
+      cell.alignment = {
+        horizontal: leftAlignCells.indexOf(masterAddr) !== -1 ? 'left' : 'center',
+        vertical: 'middle',
+        wrapText: true,
+      };
     }
   }
 
+  // เผื่อความสูงหัวกระดาษให้พอกับข้อความ 2 บรรทัด
+  // แถว 1 ต้นฉบับ 30pt พอสำหรับ 2 บรรทัดขนาด 10 อยู่แล้ว
+  // แถว 2-3 ต้นฉบับ 24.95pt พอสำหรับ 2 บรรทัดขนาด 8 (ช่องรายละเอียด/วันประกัน) แต่ไม่พอสำหรับขนาด 10
+  // ขยายเป็น 28pt เพื่อให้ชื่อทรัพย์สินยาว ๆ ตัด 2 บรรทัดแล้วยังอ่านครบ ไม่โดนตัดครึ่ง
+  sheet.getRow(2).height = 28;
+  sheet.getRow(3).height = 28;
+
   // ป้ายกำกับกล่องรูป: ต้นฉบับเปิดตัดบรรทัดเฉพาะป้ายที่มีข้อความ 2 บรรทัด (มีวงเล็บอธิบายต่อท้าย)
   // ป้ายบรรทัดเดียวปิดไว้ตามต้นฉบับ
-  JOB_FORM_PHOTO_LABELS.forEach((pair, idx) => {
+  photoPairs.forEach((pair, idx) => {
     const startRow = 4 + idx * PHOTO_BOX_ROWS;
     [[1, pair[0]], [6, pair[1]]].forEach((entry: any) => {
       sheet.getCell(startRow, entry[0]).alignment = {
@@ -1336,27 +1388,43 @@ function drawJobFormSheet(sheet: any, job: any) {
     });
   });
 
-  // ---- หน้ากระดาษ: บีบทั้งฟอร์มให้อยู่ใน "หน้า 1" แผ่นเดียวจบ ----
-  // fitToWidth 1 + fitToHeight 1 = สั่งให้ Excel ย่ออัตโนมัติจนทั้งฟอร์มลงกระดาษแผ่นเดียว
-  // ฟอร์มสูงราว 1,480pt แต่พื้นที่พิมพ์ A4 แนวตั้ง (ขอบ 0.25 นิ้ว) สูงราว 805pt จึงย่อลงเหลือราว 54%
+  // ช่อง JOB ORDER: ป้ายหัวตัวหนาให้เห็นชัดว่าเป็นของทรัพย์สินตัวไหน
+  // ส่วนข้อความในกรอบใหญ่ทำเป็นสีเทาอ่อน เพราะเป็นแค่คำแนะนำ พอวางรูปทับก็หายไปเอง
+  for (let i = 0; i < jobOrderSlots; i++) {
+    const labelRow = FORM_LAST_ROW + i * JOB_ORDER_SLOT_ROWS + 1;
+    const labelCell = sheet.getCell(labelRow, 1);
+    labelCell.font = { name: 'Tahoma', size: 12, bold: true };
+    labelCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: false, shrinkToFit: true };
+    const boxCell = sheet.getCell(labelRow + JOB_ORDER_LABEL_ROWS, 1);
+    boxCell.font = { name: 'Tahoma', size: 11, bold: false, color: { argb: 'FF999999' } };
+    // จัดกลางกรอบทั้งแนวตั้งแนวนอน ดูเป็นระเบียบ และพอวางรูปทับข้อความก็หายไปเอง
+    boxCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+  }
+
+  // ---- หน้ากระดาษ ----
+  // fitToWidth 1 + fitToHeight 0 = บีบเฉพาะความกว้าง ส่วนความสูงปล่อยไหลลงหน้าถัดไป
+  // ฟอร์มกว้าง 536pt พื้นที่พิมพ์กว้าง 559pt จึงพอดีอยู่แล้ว ไม่ถูกย่อเลย = ตัวหนังสืออ่านออกเต็ม 100%
   //
-  // ความสูงแถวยังคงไว้ที่ 17.5pt ตามเดิม ไม่ลดลงตามอัตราย่อ
-  // เพราะการย่อมีผลเฉพาะตอนพิมพ์/พรีวิว ส่วนตอนเปิดทำงานใน Excel กล่องรูปยังสูงเท่าเดิม
-  // ผู้รับเหมาจึงยังแปะรูปได้สบายเหมือนเดิม ไม่ต้องมาสู้กับกล่องจิ๋ว
-  //
-  // ไม่ใส่จุดตัดหน้าเองแล้ว (ของเดิมตัดที่แถว 43 เพื่อแบ่ง 2 หน้า)
-  // ถ้ายังใส่ไว้ Excel จะยังบังคับขึ้นหน้าใหม่ตรงนั้น ทำให้ไม่มีทางเหลือหน้าเดียวได้เลย
+  // ไม่ใช้ fitToHeight แล้ว เพราะถ้าบังคับให้ทุกอย่างลงจำนวนหน้าที่กำหนด Excel จะย่อลงเหลือครึ่งเดียว
+  // แทนที่จะย่อ เราแบ่งหน้าเองให้แต่ละหน้าสูงไม่เกินพื้นที่พิมพ์ A4 ตั้งแต่แรก
   sheet.pageSetup = {
     paperSize: 9,               // 9 = A4
     orientation: 'portrait',
     fitToPage: true,
     fitToWidth: 1,              // กว้างไม่เกิน 1 แผ่น
-    fitToHeight: 1,             // สูงไม่เกิน 1 แผ่น -> ทั้งฟอร์มอยู่ในหน้า 1
+    fitToHeight: 0,             // 0 = สูงกี่แผ่นก็ได้ ไม่ย่อตามความสูง
     horizontalCentered: true,
     verticalCentered: false,
     printArea: 'A1:J' + lastRow,
     margins: { left: 0.25, right: 0.25, top: 0.25, bottom: 0.25, header: 0.15, footer: 0.15 },
   };
+
+  // จุดตัดหน้า: ทุก 5 คู่กล่องรูป (ฟอร์มได้ 2 หน้า) และท้ายฟอร์มก่อนขึ้นหน้าใบจ๊อบ
+  // ต้องกำหนดเองทั้งหมด เพราะปล่อยให้ Excel ตัดเองกล่องรูปจะโดนผ่าครึ่งคาบ 2 หน้า
+  for (let i = PAIRS_PER_PAGE; i < photoPairs.length; i += PAIRS_PER_PAGE) {
+    sheet.getRow(3 + i * PHOTO_BOX_ROWS).addPageBreak();
+  }
+  sheet.getRow(FORM_LAST_ROW).addPageBreak();
 
   // เปิดไฟล์มาให้อยู่ในมุมมอง "ตัวอย่างก่อนพิมพ์ (Page Break Preview)" ตั้งแต่แรก
   // ผู้รับเหมาจะเห็นเส้นแบ่งหน้าทันทีว่ากล่องไหนอยู่หน้าไหน ไม่ต้องไปกด View เอง
@@ -3499,18 +3567,53 @@ Deno.serve(async (req: Request) => {
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ตรวจสอบได้' });
         if (decision !== 'approved' && decision !== 'rejected') return jsonResponse({ success: false, message: 'สถานะไม่ถูกต้อง' });
         if (decision === 'rejected' && (!remark || !remark.toString().trim())) return jsonResponse({ success: false, message: 'กรุณาระบุหมายเหตุ/เหตุผลที่ตีกลับ ก่อนดำเนินการ' });
-        const { data: subCheck } = await supabase.from('job_form_submissions').select('customer_case').eq('id', submissionId).limit(1);
-        const jobId = (subCheck && subCheck.length > 0) ? subCheck[0].customer_case : null;
-        const fields = { status: decision, admin_remark: remark ? remark.toString().trim() : null, reviewed_at: new Date().toISOString(), reviewed_by: session.displayName, is_read: true };
+
+        // ⚠ ขั้น "อนุมัติ" ไม่ตัดบิลแล้ว — ย้ายไปอยู่ที่ปุ่ม "สิ้นสุดงาน" (finishJobFormSubmission) แทน
+        // เพื่อให้มีการตรวจ 2 ชั้น: คนหนึ่งอนุมัติเอกสาร อีกคนตรวจซ้ำแล้วกดสิ้นสุดจึงตัดบิลจริง
+        // ทั้ง 2 ชื่อจะถูกบันทึกไว้และแสดงในตาราง ตรวจย้อนหลังได้ว่าใครทำขั้นไหน
+        const fields = {
+          status: decision,
+          admin_remark: remark ? remark.toString().trim() : null,
+          reviewed_at: new Date().toISOString(),
+          reviewed_by: session.displayName,
+          is_read: true,
+        };
         const { error } = await supabase.from('job_form_submissions').update(fields).eq('id', submissionId);
         if (error) return jsonResponse({ success: false, message: error.message });
-        if (decision === 'approved' && jobId) {
-          // ตัดบิลเฉพาะแถวที่ "ส่งบิลให้ผู้รับเหมาไปแล้ว และยังไม่เคยตัด" เท่านั้น
-          //
-          // บั๊กเดิม: กรองแค่ .eq('customer_case', jobId) อย่างเดียว ไม่ได้ดูรอบบิลหรือสถานะการส่งบิลเลย
-          // เลขงานเดียวกันอยู่ได้หลายรอบบิล (จากงานหลายเลขทรัพย์สิน หรือจากการติ๊กรวมงานตกค้าง)
-          // อนุมัติฟอร์มครั้งเดียวจึงไปตัดบิลของรอบใหม่ที่เพิ่งสร้างและยังไม่ได้ส่งบิลด้วย
-          // แถวพวกนั้นจะกลายเป็น "เสร็จสิ้น (ตัดบิลแล้ว)" ทั้งที่ยังไม่เคยเก็บเงิน = เงินหลุดโดยไม่มีใครรู้
+        return jsonResponse({
+          success: true,
+          message: decision === 'approved'
+            ? 'อนุมัติเรียบร้อยแล้ว — ยังไม่ตัดบิล รอกด "สิ้นสุดงาน" อีกครั้งเพื่อตัดบิลออกจากตารางของผู้รับเหมา'
+            : 'ตีกลับเรียบร้อยแล้ว - ผู้รับเหมาจะเห็นหมายเหตุนี้และต้องส่งฟอร์มใหม่',
+        });
+      }
+
+      // ==================== ปุ่ม "สิ้นสุดงาน" (ขั้นตรวจชั้นที่ 2) ====================
+      // กดได้เฉพาะรายการที่ "อนุมัติแล้ว" และ "ยังไม่เคยสิ้นสุด"
+      // ผลที่เกิด: ตัดบิลของเลขงานนั้นออกจากตารางวางบิลฝั่งผู้รับเหมา + บันทึกชื่อคนกดกับเวลาไว้
+      case 'finishJobFormSubmission': {
+        const [username, token, submissionId] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมิน/ผู้ตรวจสอบเท่านั้นที่กดสิ้นสุดงานได้' });
+
+        const { data: subRows, error: subErr } = await supabase
+          .from('job_form_submissions').select('customer_case,status,finished_at,reviewed_by').eq('id', submissionId).limit(1);
+        if (subErr) return jsonResponse({ success: false, message: subErr.message });
+        if (!subRows || subRows.length === 0) return jsonResponse({ success: false, message: 'ไม่พบรายการนี้ (อาจถูกลบไปแล้ว กดโหลด/รีเฟรชอีกครั้ง)' });
+        const sub = subRows[0];
+        if (sub.status !== 'approved') return jsonResponse({ success: false, message: 'ต้องอนุมัติรายการนี้ก่อน จึงจะกดสิ้นสุดงานได้ (สถานะตอนนี้: ' + (sub.status === 'rejected' ? 'ตีกลับ' : 'รอตรวจสอบ') + ')' });
+        if (sub.finished_at) return jsonResponse({ success: false, message: 'รายการนี้สิ้นสุดงานไปแล้ว ไม่ต้องกดซ้ำ' });
+
+        const jobId = sub.customer_case;
+        // ตัดบิลเฉพาะแถวที่ "ส่งบิลให้ผู้รับเหมาไปแล้ว และยังไม่เคยตัด" เท่านั้น
+        //
+        // บั๊กเดิม: กรองแค่ .eq('customer_case', jobId) อย่างเดียว ไม่ได้ดูสถานะการส่งบิลเลย
+        // เลขงานเดียวกันอยู่ได้หลายรอบบิล (จากงานหลายเลขทรัพย์สิน หรือจากการติ๊กรวมงานตกค้าง)
+        // กดครั้งเดียวจึงไปตัดบิลของรอบใหม่ที่เพิ่งสร้างและยังไม่ได้ส่งบิลด้วย
+        // แถวพวกนั้นจะกลายเป็น "เสร็จสิ้น (ตัดบิลแล้ว)" ทั้งที่ยังไม่เคยเก็บเงิน = เงินหลุดโดยไม่มีใครรู้
+        let closedCount = 0;
+        if (jobId) {
           const { data: closedRows, error: closeErr } = await supabase
             .from('billing_documents')
             .update({ completed_at: new Date().toISOString() })
@@ -3518,16 +3621,22 @@ Deno.serve(async (req: Request) => {
             .eq('sent_to_contractor', true)
             .is('completed_at', null)
             .select('id');
-          if (closeErr) return jsonResponse({ success: true, message: 'อนุมัติเรียบร้อยแล้ว แต่ตัดบิลไม่สำเร็จ: ' + closeErr.message + ' (กรุณาตรวจสอบตารางวางบิลอีกครั้ง)' });
-          const closedCount = (closedRows || []).length;
-          return jsonResponse({
-            success: true,
-            message: closedCount > 0
-              ? ('อนุมัติเรียบร้อยแล้ว - ตัดบิล ' + closedCount + ' แถวของเลขงานนี้ออกจากตารางวางบิลของผู้รับเหมาแล้ว')
-              : 'อนุมัติเรียบร้อยแล้ว (ไม่มีแถวที่ต้องตัดบิล เพราะยังไม่ได้ส่งบิลให้ผู้รับเหมา หรือตัดบิลไปแล้วก่อนหน้านี้)',
-          });
+          if (closeErr) return jsonResponse({ success: false, message: 'ตัดบิลไม่สำเร็จ: ' + closeErr.message + ' (ยังไม่ได้บันทึกการสิ้นสุดงาน ลองใหม่อีกครั้ง)' });
+          closedCount = (closedRows || []).length;
         }
-        return jsonResponse({ success: true, message: decision === 'approved' ? 'อนุมัติเรียบร้อยแล้ว - ตัดบิลรอบนี้ออกจากตารางวางบิลของผู้รับเหมาแล้ว' : 'ตีกลับเรียบร้อยแล้ว - ผู้รับเหมาจะเห็นหมายเหตุนี้และต้องส่งฟอร์มใหม่' });
+
+        // บันทึกการสิ้นสุดหลังตัดบิลสำเร็จเท่านั้น ถ้าตัดบิลพลาดจะได้กดใหม่ได้ ไม่ค้างสถานะครึ่ง ๆ กลาง ๆ
+        const { error: finErr } = await supabase.from('job_form_submissions')
+          .update({ finished_at: new Date().toISOString(), finished_by: session.displayName })
+          .eq('id', submissionId);
+        if (finErr) return jsonResponse({ success: false, message: 'ตัดบิลแล้วแต่บันทึกชื่อผู้สิ้นสุดงานไม่สำเร็จ: ' + finErr.message });
+
+        return jsonResponse({
+          success: true,
+          message: closedCount > 0
+            ? ('สิ้นสุดงานเรียบร้อย — ตัดบิล ' + closedCount + ' แถวของเลขงานนี้ออกจากตารางวางบิลของผู้รับเหมาแล้ว')
+            : 'สิ้นสุดงานเรียบร้อย (ไม่มีแถวที่ต้องตัดบิล เพราะยังไม่ได้ส่งบิลให้ผู้รับเหมา หรือตัดบิลไปแล้วก่อนหน้านี้)',
+        });
       }
 
       case 'uploadJobFormSubmission': {
