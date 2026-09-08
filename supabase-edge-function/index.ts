@@ -1175,116 +1175,192 @@ function xlsxApplyBoxStyle(ws: any, r1: number, c1: number, r2: number, c2: numb
   }
 }
 
-// วาดฟอร์ม 1 แผ่น (แพทเทิร์นเดิมทั้งหมด) ลงใน sheet ที่ส่งเข้ามา เปลี่ยนแค่ค่า "เลขทรัพย์สิน" ตาม job.assetId
-function drawJobFormSheet(sheet: any, job: any) {
-  // ขยายความกว้างคอลัมน์จากของเดิมราว 25-40% เพราะหัวกระดาษเปลี่ยนเป็นตัวอักษรขนาด 14
-  // ของเดิม [70, 95, 95, 75, 95, 75, 95, 95, 65, 60] แคบเกินไป คำว่า "เลขทรัพย์สิน" กับ "ประเภทงาน"
-  // จะถูกบีบจนตัดบรรทัดหรือทับกันจนอ่านไม่ออก
-  // จัดให้ 2 ฝั่งกว้างเท่ากันพอดี (A-E = 510, F-J = 510) กรอบรูป "ก่อนทำ/หลังทำ" จะได้สมมาตร
-  // คอลัมน์ G เป็นช่องหัวข้อ "ประเภทงาน" ซึ่งสั้น จึงลดจาก 110 เหลือ 90
-  // แล้วยกที่ว่างไปให้ H-J ซึ่งเป็นช่องค่าของประเภทงาน (ค่ายาวที่สุดในฟอร์ม)
-  // ยิ่งช่องกว้าง Excel ยิ่งต้องย่อตัวอักษรน้อยลง อ่านง่ายขึ้น
-  // รวมแล้วยังเท่ากัน 2 ฝั่ง (A-E = 510, F-J = 510) กรอบรูปก่อนทำ/หลังทำจึงยังสมมาตร
-  const colWidthsPx = [95, 105, 100, 110, 100, 85, 90, 112, 112, 111];
-  colWidthsPx.forEach((w, i) => { sheet.getColumn(i + 1).width = w / 7; });
+// ---- ฟอร์มแนบรูปที่ผู้รับเหมาดาวน์โหลด (ฟอร์มวางบิลแบบใหม่) ----
+// เปลี่ยนจากใบงานเดิม 5 คู่กล่องรูป มาเป็นฟอร์มแนบรูป 10 คู่ (20 กล่อง) ตามแบบฟอร์มจริงที่ใช้ส่งงาน
+// โครงหน้ากระดาษ: 10 คอลัมน์ (A-J) หัวฟอร์ม 3 แถว แล้วต่อด้วยกล่องรูปเป็นคู่ซ้าย-ขวา คู่ละ 8 แถว
+//   - ฝั่งซ้าย  = A-E
+//   - ฝั่งขวา   = F-J
+// รวม 3 + 80 = 83 แถว พอดี 2 หน้า A4 (หน้าละ 5 คู่) โดยใส่จุดตัดหน้าไว้เองไม่ให้กล่องรูปโดนผ่าครึ่ง
 
-  // แถวหัวกระดาษสูงขึ้นให้พอกับตัวอักษรขนาด 14 (ของเดิม 30/30/20 เตี้ยไปจนสระบนล่างโดนตัด)
-  sheet.getRow(1).height = 38;
-  sheet.getRow(2).height = 38;
-  sheet.getRow(3).height = 32;
-  for (let r = 4; r <= 43; r++) sheet.getRow(r).height = 28;
+// จำนวนแถวต่อ 1 กล่องรูป — ตรงกับแบบฟอร์มต้นฉบับ ทำให้กล่องสูงพอวางรูปถ่ายมือถือแนวตั้งได้
+const PHOTO_BOX_ROWS = 8;
+
+// ป้ายกำกับกล่องรูป 10 คู่ ตามแบบฟอร์มต้นฉบับทุกตัวอักษร
+// 5 คู่แรกเป็นรูปบังคับที่ต้องมีทุกงาน อีก 5 คู่เป็นรูปประกอบการทำงานเพิ่มเติม
+const JOB_FORM_PHOTO_LABELS: [string, string][] = [
+  ['รูปชื่อสาขา', 'รูปเลข Asset\n(ถ่ายให้อ่านตัวเลขได้ชัดเจน)'],
+  ['รูปอุณหภูมิก่อนซ่อม', 'รูปอุณหภูมิหลังซ่อม'],
+  ['รูปอะไหล่เก่าก่อนถอด', 'รูปอะไหล่ใหม่หลังเปลี่ยน'],
+  ['รูปการตรวจเช็คก่อนเปลี่ยน\n(เช่นวัดไฟ 3 เฟส/รูปหลอดที่ดับ/รูปจุดที่ช๊อต)', 'รูปการตรวจเช็คหลังเปลี่ยน\n(เช่นวัดไฟ 3 เฟส/รูปหลอดที่ติดแล้ว)'],
+  ['รูปเทียบอะไหล่เก่าและใหม่\n(ถอดอะไหล่เก่าออกมาวางถ่ายรูปให้เห็นเนมเพจ)', 'รูปขณะปฏิบัติงานที่เกี่ยวข้อง'],
+  ['รูปขณะปฏิบัติงานที่เกี่ยวข้อง', 'รูปขณะปฏิบัติงานที่เกี่ยวข้อง'],
+  ['รูปขณะปฏิบัติงานที่เกี่ยวข้อง', 'รูปขณะปฏิบัติงานที่เกี่ยวข้อง'],
+  ['รูปขณะปฏิบัติงานที่เกี่ยวข้อง', 'รูปขณะปฏิบัติงานที่เกี่ยวข้อง'],
+  ['รูปขณะปฏิบัติงานที่เกี่ยวข้อง', 'รูปขณะปฏิบัติงานที่เกี่ยวข้อง'],
+  ['รูปขณะปฏิบัติงานที่เกี่ยวข้อง', 'รูปขณะปฏิบัติงานที่เกี่ยวข้อง'],
+];
+
+// แปลงวันที่จากฐานข้อมูล (YYYY-MM-DD) เป็นรูปแบบไทย DD/MM/YYYY ที่คนกรอกงานคุ้นเคย
+// ค่าว่างหรืออ่านไม่ออกคืน '-' เพื่อให้ผู้รับเหมาเห็นชัดว่าต้องกรอกมือ ไม่ใช่ช่องที่ระบบลืมเติม
+function formatWarrantyDate(v: any): string {
+  if (v === null || v === undefined || v === '') return '-';
+  const m = v.toString().trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return v.toString().trim() || '-';
+  return m[3] + '/' + m[2] + '/' + m[1];
+}
+
+// รวมรหัสสาขากับชื่อสาขาให้เป็นข้อความเดียว เช่น "0464-บางเสร่"
+// ⚠ ชื่อสาขาที่เก็บไว้ในระบบมีรหัสนำหน้าอยู่แล้ว (มาจากทะเบียนสาขาที่ตั้งชื่อแบบ "0464-บางเสร่")
+// ถ้าเอารหัสมาต่อหน้าตรง ๆ จะได้ "0464-0464-บางเสร่" รหัสซ้ำสองรอบ
+// จึงต้องเช็คก่อนว่าชื่อขึ้นต้นด้วยรหัสนั้นอยู่แล้วหรือยัง
+function branchDisplayName(branchCode: any, branchName: any): string {
+  const code = (branchCode === null || branchCode === undefined) ? '' : branchCode.toString().trim();
+  const name = (branchName === null || branchName === undefined) ? '' : branchName.toString().trim();
+  if (!name) return code;
+  if (!code) return name;
+  // ตัดรหัสที่ซ้ำออก รองรับทั้งแบบมีขีดคั่น "0464-บางเสร่" และแบบเว้นวรรค "0464 บางเสร่"
+  const dup = new RegExp('^' + code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*[-\\s]\\s*');
+  if (dup.test(name)) return name;
+  if (name === code) return code;
+  return code + '-' + name;
+}
+
+// วาดฟอร์มแนบรูป 1 แผ่นลงใน sheet ที่ส่งเข้ามา
+// หัวกระดาษทำตามไฟล์ต้นฉบับทุกช่อง — 1 แผ่นรองรับ "2 เลขทรัพย์สิน" (แถว 2 กับแถว 3)
+// job: { customerCase, branchCode, branchName, serviceType, assets: [{ assetId, description, warrantyStart, warrantyExpire } x1-2] }
+function drawJobFormSheet(sheet: any, job: any) {
+  // ความกว้างคอลัมน์ (หน่วยตัวอักษรแบบ Excel) — ลอกจากไฟล์ต้นฉบับตรง ๆ
+  // A=8.88, D=9.62, F=9.75, G=8.88 ที่เหลือใช้ค่าเริ่มต้น 8.43
+  // (ตัวเลขทศนิยม 2 ตำแหน่งคือค่าที่ Excel เก็บจริงในไฟล์ต้นฉบับ ใส่ให้ตรงเป๊ะจะได้พิมพ์ออกมาเท่ากัน)
+  // ผลรวมฝั่งซ้าย (A-E) = 43.79 ฝั่งขวา (F-J) = 43.92 กล่องรูปซ้าย-ขวาจึงกว้างเท่ากันแทบเป๊ะ
+  const colWidths = [8.88, 8.43, 8.43, 9.62, 8.43, 9.75, 8.88, 8.43, 8.43, 8.43];
+  colWidths.forEach((w, i) => { sheet.getColumn(i + 1).width = w; });
+
+  // ความสูงแถวหัวกระดาษ ลอกจากต้นฉบับ (30 / 24.95 / 24.95)
+  sheet.getRow(1).height = 30;
+  sheet.getRow(2).height = 24.95;
+  sheet.getRow(3).height = 24.95;
+  // แถวกล่องรูปใช้ 17.5pt × 8 แถว = 140pt ต่อกล่อง (สูงราว 1.9 นิ้ว) พอวางรูปจากมือถือได้
+  // เลือก 17.5 ไม่ใช่ 18 เพราะ 5 คู่ + หัวกระดาษ = 80 + 700 = 780pt ยังไม่เกินพื้นที่พิมพ์ A4 (~805pt)
+  const lastRow = 3 + JOB_FORM_PHOTO_LABELS.length * PHOTO_BOX_ROWS;   // = 83
+  for (let r = 4; r <= lastRow; r++) sheet.getRow(r).height = 17.5;
 
   function setText(addr: string, value: any) {
-    sheet.getCell(addr).value = (value === null || value === undefined) ? '' : String(value);
+    sheet.getCell(addr).value = (value === null || value === undefined || value === '') ? '-' : String(value);
   }
 
-  setText('A1', 'รหัสสาขา'); setText('B1', job.branchCode);
-  setText('C1', 'ชื่อสาขา'); sheet.mergeCells('D1:F1'); setText('D1', job.branchName);
-  setText('G1', 'ประเภทงาน'); sheet.mergeCells('H1:J1'); setText('H1', job.serviceType);
+  // ---- หัวกระดาษ 3 แถว (ผังเดียวกับไฟล์ต้นฉบับทุกช่อง) ----
+  // แถว 1: ชื่อสาขา | ประเภทงาน | เลขที่งาน
+  setText('A1', 'ชื่อสาขา');
+  sheet.mergeCells('B1:D1');
+  setText('B1', branchDisplayName(job.branchCode, job.branchName));
+  setText('E1', 'ประเภทงาน'); sheet.mergeCells('F1:G1'); setText('F1', job.serviceType);
+  setText('H1', 'เลขที่งาน'); sheet.mergeCells('I1:J1'); setText('I1', job.customerCase);
 
-  setText('A2', 'เลขที่งาน'); sheet.mergeCells('B2:C2'); setText('B2', job.customerCase);
-  setText('D2', 'เลขทรัพย์สิน'); sheet.mergeCells('E2:J2'); setText('E2', job.assetId);
+  // แถว 2-3: เลขทรัพย์สิน 2 รายการ ป้ายหัวข้อกินสองแถวเหมือนต้นฉบับ
+  //   A2:A3 = "เลขทรัพย์สิน" | G2:G3 = "Warranty Start Date" | I2:I3 = "Warranty Expire Date"
+  //   แถว 2 = ทรัพย์สินตัวที่ 1 / แถว 3 = ทรัพย์สินตัวที่ 2
+  // ถ้าเลขงานนั้นมีทรัพย์สินตัวเดียว แถว 3 จะเว้นเป็น "-" ไว้ให้กรอกมือได้ตามเดิม
+  sheet.mergeCells('A2:A3'); setText('A2', 'เลขทรัพย์สิน');
+  sheet.mergeCells('G2:G3'); setText('G2', 'Warranty Start Date');
+  sheet.mergeCells('I2:I3'); setText('I2', 'Warranty Expire Date');
 
-  sheet.mergeCells('A3:E3'); setText('A3', 'ก่อนทำ');
-  sheet.mergeCells('F3:J3'); setText('F3', 'หลังทำ');
-
-  const photoBlocks: [number, string, string][] = [
-    [4, 'รูปชื่อสาขา', 'รูปเลข Asset\n(ถ่ายให้อ่านตัวเลขได้ชัดเจน)'],
-    [12, 'รูปอะไหล่เก่าที่เปลี่ยน', 'รูปอะไหล่ใหม่ที่เปลี่ยน'],
-    [20, 'รูปเทียบอะไหล่เก่าและใหม่\n(ถอดอะไหล่เก่าออกมาวางถ่ายรูป)', 'รูปขณะปฏิบัติงานที่เกี่ยวข้อง'],
-    [28, 'รูปขณะปฏิบัติงานที่เกี่ยวข้อง', 'รูปขณะปฏิบัติงานที่เกี่ยวข้อง'],
-    [36, 'รูปขณะปฏิบัติงานที่เกี่ยวข้อง', 'รูปขณะปฏิบัติงานที่เกี่ยวข้อง'],
-  ];
-  photoBlocks.forEach(([startRow, leftLabel, rightLabel]) => {
-    sheet.mergeCells(startRow, 1, startRow + 7, 5);
-    sheet.getCell(startRow, 1).value = leftLabel;
-    sheet.mergeCells(startRow, 6, startRow + 7, 10);
-    sheet.getCell(startRow, 6).value = rightLabel;
+  const assets: any[] = Array.isArray(job.assets) ? job.assets : [];
+  [2, 3].forEach((row, idx) => {
+    const a = assets[idx] || {};
+    sheet.mergeCells('B' + row + ':C' + row); setText('B' + row, a.assetId);
+    sheet.mergeCells('D' + row + ':F' + row); setText('D' + row, a.description);
+    setText('H' + row, formatWarrantyDate(a.warrantyStart));
+    setText('J' + row, formatWarrantyDate(a.warrantyExpire));
   });
 
-  // วางสไตล์พื้นฐานทั้งฟอร์มก่อน (ช่องรูปภาพใช้ขนาด 11 ตามเดิม)
-  xlsxApplyBoxStyle(sheet, 1, 1, 43, 10);
+  // ---- กล่องรูป 10 คู่ (20 กล่อง) ----
+  JOB_FORM_PHOTO_LABELS.forEach((pair, idx) => {
+    const startRow = 4 + idx * PHOTO_BOX_ROWS;
+    const endRow = startRow + PHOTO_BOX_ROWS - 1;
+    sheet.mergeCells(startRow, 1, endRow, 5);
+    sheet.getCell(startRow, 1).value = pair[0];
+    sheet.mergeCells(startRow, 6, endRow, 10);
+    sheet.getCell(startRow, 6).value = pair[1];
+  });
 
-  // แล้วทับหัวกระดาษ (แถว 1-3) ด้วยตัวอักษรขนาด 14 ตัวหนา ตามที่ขอ
-  xlsxApplyBoxStyle(sheet, 1, 1, 3, 10, { fontSize: 14, bold: true });
+  // ---- สไตล์ (ลอกจากไฟล์ต้นฉบับทุกช่อง: ขนาดตัวอักษร ไม่มีตัวหนา ไม่มีพื้นสี) ----
+  // วางเส้นขอบ + ฟอนต์พื้นฐานทั้งฟอร์มก่อน แล้วค่อยทับเฉพาะช่องที่ต้นฉบับใช้ขนาดต่างออกไป
+  // ขนาด 11 = ขนาดของป้ายกำกับในกล่องรูปตามต้นฉบับ
+  xlsxApplyBoxStyle(sheet, 1, 1, lastRow, 10, { fontSize: 11, bold: false });
 
-  // บังคับให้หัวกระดาษอยู่ "บรรทัดเดียว" เสมอ
-  // ปัญหาเดิม: ตั้ง wrapText ไว้ พอเจอค่ายาว ๆ อย่าง "F01_ตู้แช่ข้าวกล่อง 1 ประตู (Frozen Food)"
-  // หรือชื่อสาขายาว ๆ ข้อความจะตัดขึ้นบรรทัดที่ 2 แต่ความสูงแถวไม่พอ เลยโดนตัดครึ่งดูเหมือนตัวหนังสือซ้อนกัน
+  // หัวกระดาษต้นฉบับใช้ขนาด 10 ทั้งแถว และไม่มีตัวหนาสักช่อง
+  xlsxApplyBoxStyle(sheet, 1, 1, 3, 10, { fontSize: 10, bold: false });
+
+  // ช่องที่ต้นฉบับใช้ขนาด 8 (เล็กกว่าเพื่อน เพราะข้อความยาวแต่ช่องแคบ)
+  //   D2/D3 = รายละเอียดทรัพย์สิน · G2 = Warranty Start Date · H2/H3 = วันเริ่มประกัน · I2 = Warranty Expire Date
+  //   ส่วน J2/J3 (วันหมดประกัน) ต้นฉบับใช้ขนาด 10 ไม่ใช่ 8 จึงไม่อยู่ในรายการนี้
+  ['D2', 'D3', 'G2', 'H2', 'H3', 'I2'].forEach((addr) => {
+    sheet.getCell(addr).font = { name: 'Tahoma', size: 8, bold: false };
+  });
+
+  // ---- การจัดวางข้อความ (ตามต้นฉบับ) ----
+  // ต้นฉบับเปิดให้ตัดขึ้นบรรทัดใหม่ได้เฉพาะช่องที่ข้อความยาวกว่าช่องเป็นปกติ
+  //   F1 = ประเภทงาน · D2/D3 = รายละเอียด · G2/I2 = ป้ายรับประกัน · H2/H3 = วันเริ่มประกัน
+  const wrapCells = ['F1', 'D2', 'D3', 'G2', 'I2', 'H2', 'H3'];
+  wrapCells.forEach((addr) => {
+    // รายละเอียดทรัพย์สินชิดซ้ายตามต้นฉบับ ที่เหลือจัดกลาง
+    const left = (addr === 'D2' || addr === 'D3');
+    sheet.getCell(addr).alignment = { horizontal: left ? 'left' : 'center', vertical: 'middle', wrapText: true };
+  });
+
+  // ช่องที่เหลือในหัวกระดาษห้ามตัดบรรทัด
+  // ค่าอย่างชื่อสาขาและเลขที่งานถ้าตัดขึ้นบรรทัด 2 แต่ความสูงแถวไม่พอ จะโดนตัดครึ่งดูเหมือนตัวหนังสือซ้อนกัน
+  // ใช้ shrinkToFit ให้ Excel ย่อตัวอักษรเฉพาะช่องที่ยาวเกินแทน ช่องที่สั้นยังได้ขนาดเต็มตามต้นฉบับ
   //
-  // แก้ด้วย shrinkToFit: ปิด wrapText แล้วให้ Excel ย่อขนาดตัวอักษรอัตโนมัติเฉพาะช่องที่ยาวเกิน
-  // ช่องที่ข้อความสั้นยังได้ขนาด 14 เต็มตามที่ขอ ส่วนช่องที่ยาวจะย่อลงพอดีช่องแทนการตัดบรรทัด
-  // (ไม่ใช้วิธีขยายคอลัมน์ เพราะความยาวของชื่อสาขา/ประเภทงานไม่มีเพดานตายตัว ขยายเท่าไหร่ก็ยังมีเคสยาวกว่าเสมอ)
+  // ⚠ ต้องเทียบด้วย "ช่องแม่ของการผสานเซลล์" ไม่ใช่ชื่อช่องตรง ๆ
+  // เพราะการตั้งสไตล์ให้ช่องลูกในกลุ่มที่ผสานไว้ ExcelJS จะเขียนทับสไตล์ของช่องแม่ให้ด้วย
+  // เช่น F1:G1 ผสานกันอยู่ ถ้าเผลอไปตั้ง G1 ว่าห้ามตัดบรรทัด ค่าที่ตั้งให้ F1 (ประเภทงาน) จะหายทันที
   for (let r = 1; r <= 3; r++) {
     for (let c = 1; c <= 10; c++) {
-      sheet.getCell(r, c).alignment = {
-        horizontal: 'center', vertical: 'middle',
-        wrapText: false, shrinkToFit: true,
-      };
+      const cell = sheet.getCell(r, c);
+      const masterAddr = (cell.master && cell.master.address) || cell.address;
+      if (wrapCells.indexOf(masterAddr) !== -1) continue;
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: false, shrinkToFit: true };
     }
   }
 
-  // ใส่พื้นสีอ่อนให้ช่อง "ชื่อหัวข้อ" แยกจากช่องที่เป็นค่าข้อมูล จะได้กวาดตาหาข้อมูลเจอเร็วขึ้น
-  const labelCells = ['A1', 'C1', 'G1', 'A2', 'D2'];
-  labelCells.forEach((addr) => {
-    sheet.getCell(addr).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEDEDED' } };
+  // ป้ายกำกับกล่องรูป: ต้นฉบับเปิดตัดบรรทัดเฉพาะป้ายที่มีข้อความ 2 บรรทัด (มีวงเล็บอธิบายต่อท้าย)
+  // ป้ายบรรทัดเดียวปิดไว้ตามต้นฉบับ
+  JOB_FORM_PHOTO_LABELS.forEach((pair, idx) => {
+    const startRow = 4 + idx * PHOTO_BOX_ROWS;
+    [[1, pair[0]], [6, pair[1]]].forEach((entry: any) => {
+      sheet.getCell(startRow, entry[0]).alignment = {
+        horizontal: 'center', vertical: 'middle', wrapText: entry[1].indexOf('\n') !== -1,
+      };
+    });
   });
 
-  // แถบ "ก่อนทำ / หลังทำ" ทำพื้นเข้มกว่าหน่อย เพราะเป็นตัวแบ่งครึ่งฟอร์มซ้าย-ขวา
-  ['A3', 'F3'].forEach((addr) => {
-    sheet.getCell(addr).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
-  });
-
-  // ---- ตั้งค่าหน้ากระดาษให้พิมพ์ลงกระดาษ A4 "แผ่นเดียวจบ" ----
-  // ฟอร์มนี้กว้าง 1020px สูงราว 1228px ถ้าไม่ตั้งอะไรเลย Excel จะตัดออกเป็น 4 แผ่น
-  // ผู้รับเหมาต้องมานั่งต่อกระดาษเอง หรือปริ้นมาแล้วครึ่งฟอร์มหาย
+  // ---- หน้ากระดาษ: บีบทั้งฟอร์มให้อยู่ใน "หน้า 1" แผ่นเดียวจบ ----
+  // fitToWidth 1 + fitToHeight 1 = สั่งให้ Excel ย่ออัตโนมัติจนทั้งฟอร์มลงกระดาษแผ่นเดียว
+  // ฟอร์มสูงราว 1,480pt แต่พื้นที่พิมพ์ A4 แนวตั้ง (ขอบ 0.25 นิ้ว) สูงราว 805pt จึงย่อลงเหลือราว 54%
   //
-  // ใช้ fitToPage แบบ 1x1 = บีบทั้งฟอร์มให้ลงแผ่นเดียวอัตโนมัติ ไม่ต้องไปตั้งเปอร์เซ็นต์ย่อเอง
-  // เลือกแนวตั้ง (portrait) เพราะฟอร์มสูงกว่ากว้าง ถ้าใช้แนวนอนจะต้องย่อลงเหลือราว 56%
-  // แต่แนวตั้งย่อแค่ราว 71% ตัวหนังสืออ่านง่ายกว่าชัดเจน
+  // ความสูงแถวยังคงไว้ที่ 17.5pt ตามเดิม ไม่ลดลงตามอัตราย่อ
+  // เพราะการย่อมีผลเฉพาะตอนพิมพ์/พรีวิว ส่วนตอนเปิดทำงานใน Excel กล่องรูปยังสูงเท่าเดิม
+  // ผู้รับเหมาจึงยังแปะรูปได้สบายเหมือนเดิม ไม่ต้องมาสู้กับกล่องจิ๋ว
   //
-  // ตั้ง printArea ไว้ชัดเจนที่ A1:J43 กันกรณี Excel ไปนับช่องว่างนอกฟอร์มรวมเข้ามาด้วยจนย่อเกินจำเป็น
+  // ไม่ใส่จุดตัดหน้าเองแล้ว (ของเดิมตัดที่แถว 43 เพื่อแบ่ง 2 หน้า)
+  // ถ้ายังใส่ไว้ Excel จะยังบังคับขึ้นหน้าใหม่ตรงนั้น ทำให้ไม่มีทางเหลือหน้าเดียวได้เลย
   sheet.pageSetup = {
     paperSize: 9,               // 9 = A4
     orientation: 'portrait',
     fitToPage: true,
     fitToWidth: 1,              // กว้างไม่เกิน 1 แผ่น
-    fitToHeight: 1,             // สูงไม่เกิน 1 แผ่น
-    horizontalCentered: true,   // จัดฟอร์มกลางหน้ากระดาษ
+    fitToHeight: 1,             // สูงไม่เกิน 1 แผ่น -> ทั้งฟอร์มอยู่ในหน้า 1
+    horizontalCentered: true,
     verticalCentered: false,
-    printArea: 'A1:J43',
+    printArea: 'A1:J' + lastRow,
     margins: { left: 0.25, right: 0.25, top: 0.25, bottom: 0.25, header: 0.15, footer: 0.15 },
   };
 
-  // เปิดไฟล์มาให้อยู่ในมุมมอง "ตัวอย่างก่อนพิมพ์ (Page Break Preview)" ตั้งแต่แรกเลย
-  // ผู้รับเหมาจะเห็นทันทีว่าฟอร์มลงกระดาษแผ่นเดียวพอดี มีเส้นแบ่งหน้าให้เห็นชัด
-  // ไม่ต้องไปกด View -> Page Break Preview เอง และไม่ต้องกด Print Preview เพื่อตรวจ
-  //
-  // ปิดเส้นตารางพื้นหลังของ Excel ด้วย (showGridLines: false)
-  // เพราะฟอร์มมีเส้นขอบหนาของตัวเองอยู่แล้ว เส้นจาง ๆ ของ Excel รอบนอกฟอร์มทำให้ดูรก
-  //
+  // เปิดไฟล์มาให้อยู่ในมุมมอง "ตัวอย่างก่อนพิมพ์ (Page Break Preview)" ตั้งแต่แรก
+  // ผู้รับเหมาจะเห็นเส้นแบ่งหน้าทันทีว่ากล่องไหนอยู่หน้าไหน ไม่ต้องไปกด View เอง
   // ต้องมี zoomScaleNormal ด้วย ไม่งั้น Excel บางเวอร์ชันไม่ยอมสลับมาโหมดนี้ตอนเปิดไฟล์
-  // (ไฟล์ที่ Excel เซฟเองจะมีค่านี้เสมอ ตอนแรกเราไม่ได้ใส่ เลยเปิดมาแล้วยังเป็นมุมมองปกติอยู่)
   // ส่วน tabSelected ต้องไปตั้งทีหลังเฉพาะ sheet แรก ไม่ตั้งตรงนี้
   // เพราะถ้าทุก sheet ถูกเลือกพร้อมกัน Excel จะเข้าโหมด "จัดกลุ่มชีต" พิมพ์อะไรลงไปจะโดนทุกแผ่นพร้อมกัน
   sheet.views = [{
@@ -1319,12 +1395,37 @@ async function generateJobFormXlsxBase64(job: any): Promise<any> {
       ? job.assetIds
       : [job.assetId];
 
+    // ข้อมูลรายเลขทรัพย์สิน (คำอธิบาย + วันรับประกัน) ที่ดึงมาให้แล้วตอนสร้างงาน
+    // เก็บเป็น map เพื่อให้แต่ละ sheet หยิบของเลขทรัพย์สินตัวเองได้ ไม่ปนกันเวลา 1 เลขงานมีหลายทรัพย์สิน
+    const assetInfo: Record<string, any> = job.assetInfo || {};
+
+    // หัวกระดาษของฟอร์มต้นฉบับมีช่องเลขทรัพย์สิน 2 บรรทัด (แถว 2 กับแถว 3)
+    // จึงจับเลขทรัพย์สินใส่แผ่นละ 2 ตัว แทนที่จะแยกแผ่นละตัวแบบเดิม
+    // เลขงานที่มี 1 ทรัพย์สิน = 1 แผ่น (แถว 3 เว้นว่าง) / 3 ทรัพย์สิน = 2 แผ่น (2 + 1)
+    const assetPages: string[][] = [];
+    for (let i = 0; i < assetIdList.length; i += 2) assetPages.push(assetIdList.slice(i, i + 2));
+    if (assetPages.length === 0) assetPages.push(['-']);
+
     const usedSheetNames = new Set<string>();
     const createdSheets: any[] = [];
-    assetIdList.forEach((assetId: string) => {
-      const sheetName = safeSheetName(assetId && assetId !== '-' ? assetId : 'ฟอร์ม', usedSheetNames);
+    assetPages.forEach((pageAssets: string[]) => {
+      // ชื่อแท็บบอกเลขทรัพย์สินที่อยู่ในแผ่นนั้น เช่น "130000003633+130000003875"
+      // (เลข 12 หลัก 2 ตัว + เครื่องหมาย = 25 ตัวอักษร ยังไม่เกินเพดาน 31 ตัวของ Excel)
+      const realAssets = pageAssets.filter((a) => a && a !== '-');
+      const sheetName = safeSheetName(realAssets.length > 0 ? realAssets.join('+') : 'ฟอร์ม', usedSheetNames);
       const sheet = workbook.addWorksheet(sheetName);
-      drawJobFormSheet(sheet, { ...job, assetId });
+      drawJobFormSheet(sheet, {
+        ...job,
+        assets: pageAssets.map((assetId: string) => {
+          const info = assetInfo[assetId] || {};
+          return {
+            assetId,
+            description: info.description || '',
+            warrantyStart: info.warrantyStart || '',
+            warrantyExpire: info.warrantyExpire || '',
+          };
+        }),
+      });
       createdSheets.push(sheet);
     });
 
@@ -3587,6 +3688,33 @@ Deno.serve(async (req: Request) => {
         if (jobs.length === 0) {
           return jsonResponse({ success: false, message: 'ไม่มีฟอร์มต้องกรอกสำหรับเลขงานนี้ — อะไหล่ทุกชิ้นเป็น "เคลมประกัน 3 เดือน" ซึ่งไม่เก็บเงินผู้รับเหมา (หรือไม่ใช่งานของคุณ / ยังไม่ถูกส่งบิล)' });
         }
+        // ---- เติมคำอธิบายทรัพย์สินและวันรับประกันลงหัวฟอร์ม ----
+        // ดึงทีเดียวสำหรับทุกเลขทรัพย์สินของทุกงานในรอบนี้ แทนการ query ทีละ sheet
+        // (1 เลขงานอาจมีหลายทรัพย์สิน และกดสร้างทีเดียวหลายเลขงาน ถ้า query ทีละใบจะช้ามาก)
+        const allAssetIds = Array.from(new Set(
+          jobs.flatMap((j: any) => j.assetIds).filter((a: string) => a && a !== '-')
+        ));
+        const assetInfoMap: Record<string, any> = {};
+        if (allAssetIds.length > 0) {
+          // คำอธิบายทรัพย์สินจากทะเบียนสาขา — เลขเดียวกันอาจมีหลายแถว (คนละคำอธิบาย) เก็บแถวแรกที่เจอ
+          const { data: descRows } = await supabase
+            .from('branch_assets').select('asset_no,description').in('asset_no', allAssetIds);
+          (descRows || []).forEach((r: any) => {
+            if (!assetInfoMap[r.asset_no]) assetInfoMap[r.asset_no] = {};
+            if (!assetInfoMap[r.asset_no].description && r.description) assetInfoMap[r.asset_no].description = r.description;
+          });
+          // วันรับประกัน — ถ้ายังไม่ได้สร้างตาราง asset_warranty ให้ข้ามไปเงียบ ๆ
+          // ฟอร์มจะขึ้น '-' ในช่องรับประกันแทนที่จะพังทั้งใบ
+          const { data: warrantyRows } = await supabase
+            .from('asset_warranty').select('asset_no,warranty_start,warranty_expire').in('asset_no', allAssetIds);
+          (warrantyRows || []).forEach((r: any) => {
+            if (!assetInfoMap[r.asset_no]) assetInfoMap[r.asset_no] = {};
+            assetInfoMap[r.asset_no].warrantyStart = r.warranty_start;
+            assetInfoMap[r.asset_no].warrantyExpire = r.warranty_expire;
+          });
+        }
+        jobs.forEach((j: any) => { j.assetInfo = assetInfoMap; });
+
         const files: any[] = []; const errors: string[] = [];
         for (const job of jobs) {
           const result = await generateJobFormXlsxBase64(job);
