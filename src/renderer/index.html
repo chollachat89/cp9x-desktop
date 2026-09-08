@@ -1343,7 +1343,7 @@
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">สาขา</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">ไฟล์</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">สถานะตรวจสอบ</th>
-                                <th class="p-2 text-left font-semibold whitespace-nowrap">สิ้นสุดงาน</th>
+                                <th class="p-2 text-left font-semibold whitespace-nowrap">ผู้ตรวจสอบ (ขั้นที่ 2)</th>
                                 <th class="p-2 text-left font-semibold min-w-[220px]">หมายเหตุ / ดำเนินการ</th>
                             </tr>
                         </thead>
@@ -1797,7 +1797,7 @@
         let currentMode = 'open';
 
         // ==================== ระบบ Login / Session ====================
-        let currentSession = null; // { username, token, role, displayName }
+        let currentSession = null; // { username, token, role, displayName, isChecker }
 
         function saveSessionToStorage(session) {
             localStorage.setItem('crMaintSession', JSON.stringify(session));
@@ -1832,7 +1832,9 @@
                 btn.disabled = false;
                 btn.textContent = 'เข้าสู่ระบบ';
                 if (res && res.success) {
-                    currentSession = { username: res.username, token: res.token, role: res.role, displayName: res.displayName };
+                    // isChecker = ธง "ผู้ตรวจสอบ" แยกจาก role (ผู้ตรวจสอบยังเป็นแอดมินเต็มเหมือนเดิม เห็นทุกเมนู)
+                    // มีแค่ขั้น "สิ้นสุดงาน / ตีกลับชั้นที่ 2" เท่านั้นที่จำกัดไว้ให้เฉพาะคนที่มีธงนี้
+                    currentSession = { username: res.username, token: res.token, role: res.role, displayName: res.displayName, isChecker: res.isChecker === true };
                     saveSessionToStorage(currentSession);
                     enterApp();
                 } else {
@@ -5448,23 +5450,45 @@
                         </div>`
                     : `<div class="text-xs text-slate-600 whitespace-pre-wrap">${row.admin_remark || '-'}</div>`;
 
-                // คอลัมน์ "สิ้นสุดงาน" (ขั้นตรวจชั้นที่ 2)
-                //   ยังไม่อนุมัติ  -> ยังกดไม่ได้ บอกให้อนุมัติก่อน
-                //   อนุมัติแล้ว     -> โชว์ปุ่มให้กด (การกดนี้คือขั้นที่ตัดบิลจริง)
-                //   สิ้นสุดแล้ว     -> โชว์ชื่อคนกดกับเวลา
+                // คอลัมน์ "ผู้ตรวจสอบ (ขั้นที่ 2)"
+                //   ยังไม่อนุมัติ         -> ยังทำอะไรไม่ได้ ต้องรอแอดมินอนุมัติก่อน
+                //   อนุมัติแล้ว + เป็นผู้ตรวจสอบ -> เห็นปุ่ม "สิ้นสุดงาน" กับ "ตีกลับ"
+                //   อนุมัติแล้ว + ไม่ใช่ผู้ตรวจสอบ -> เห็นแค่ข้อความว่ารอผู้ตรวจสอบ (แอดมินกดเองไม่ได้)
+                //   สิ้นสุดแล้ว           -> โชว์ชื่อคนกดกับเวลา
+                const isChecker = !!(currentSession && currentSession.isChecker);
                 let finishCellHtml;
                 if (row.finished_at) {
                     finishCellHtml = `<span class="text-xs font-semibold px-2 py-1 rounded-full bg-slate-800 text-white">สิ้นสุดแล้ว</span>
-                        <div class="text-[10px] text-slate-400 mt-1">โดย ${row.finished_by || '-'} • ${formatTimestamp(row.finished_at)}</div>`;
-                } else if (row.status === 'approved') {
-                    finishCellHtml = `<button type="button" onclick="finishSubmission('${row.id}')" title="กดแล้วจะตัดบิลของเลขงานนี้ออกจากตารางวางบิลของผู้รับเหมาทันที"
-                            class="text-[10px] bg-slate-800 text-white px-2 py-1 rounded hover:bg-slate-900 whitespace-nowrap">
-                            <i class="fa-solid fa-flag-checkered mr-1"></i> สิ้นสุดงาน
-                        </button>
+                        <div class="text-[10px] text-slate-400 mt-1">โดย ${row.finished_by || row.checker_by || '-'} • ${formatTimestamp(row.finished_at)}</div>`;
+                } else if (row.status === 'approved' && isChecker) {
+                    finishCellHtml = `<div class="flex gap-1">
+                            <button type="button" onclick="finishSubmission('${row.id}', 'finished')" title="กดแล้วจะตัดบิลของเลขงานนี้ออกจากตารางวางบิลของผู้รับเหมาทันที"
+                                class="text-[10px] bg-slate-800 text-white px-2 py-1 rounded hover:bg-slate-900 whitespace-nowrap">
+                                <i class="fa-solid fa-flag-checkered mr-1"></i> สิ้นสุดงาน
+                            </button>
+                            <button type="button" onclick="finishSubmission('${row.id}', 'rejected')" title="ตีกลับให้ผู้รับเหมาแก้ใหม่ (ไม่ตัดบิล) ใช้กรณีแอดมินอนุมัติมาแล้วแต่ตรวจเจอว่ายังไม่เรียบร้อย"
+                                class="text-[10px] bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700 whitespace-nowrap">
+                                ตีกลับ
+                            </button>
+                        </div>
                         <div class="text-[10px] text-amber-600 mt-1">รอตัดบิล</div>`;
+                } else if (row.status === 'approved') {
+                    finishCellHtml = `<span class="text-[10px] text-amber-600">รอผู้ตรวจสอบ</span>
+                        <div class="text-[10px] text-slate-400 mt-0.5">แอดมินกดขั้นนี้ไม่ได้</div>`;
                 } else {
                     finishCellHtml = `<span class="text-[10px] text-slate-400">ต้องอนุมัติก่อน</span>`;
                 }
+
+                // ประวัติว่าใครทำอะไรไว้บ้าง — เก็บไว้ให้ตามย้อนหลังได้ทั้ง 2 ฝ่าย
+                const historyLines = [];
+                if (row.reviewed_by) historyLines.push(`<div><span class="text-slate-400">อนุมัติโดย</span> <b>${row.reviewed_by}</b> • ${formatTimestamp(row.reviewed_at)}</div>`);
+                if (row.checker_by) {
+                    const act = row.checker_decision === 'rejected' ? 'ตีกลับโดย' : 'สิ้นสุดงานโดย';
+                    historyLines.push(`<div><span class="text-slate-400">${act}</span> <b>${row.checker_by}</b> • ${formatTimestamp(row.checker_at)}</div>`);
+                }
+                const historyHtml = historyLines.length
+                    ? `<div class="text-[10px] text-slate-600 mt-1.5 pt-1.5 border-t border-slate-100 space-y-0.5">${historyLines.join('')}</div>`
+                    : '';
 
                 return `<tr class="border-t border-slate-100">
                     <td class="p-2 whitespace-nowrap">${formatTimestamp(row.submitted_at)}</td>
@@ -5479,6 +5503,7 @@
                     <td class="p-2 whitespace-nowrap">${finishCellHtml}</td>
                     <td class="p-2">
                         ${remarkColumnHtml}
+                        ${historyHtml}
                     </td>
                 </tr>`;
             }).join('');
@@ -5522,21 +5547,47 @@
             });
         }
 
-        // ปุ่ม "สิ้นสุดงาน" — ขั้นตรวจชั้นที่ 2 ต่อจากการอนุมัติ
-        // นี่คือขั้นที่ "ตัดบิลจริง" ไม่ใช่ตอนอนุมัติแล้ว จึงถามยืนยันให้ชัดก่อนเสมอ
-        // เมื่อสำเร็จจะบันทึกชื่อผู้กดไว้ ตารางจะแสดงทั้งชื่อผู้อนุมัติและชื่อผู้สิ้นสุดงาน
-        function finishSubmission(id) {
+        // ขั้นตรวจชั้นที่ 2 (ผู้ตรวจสอบ) — ทำได้ 2 อย่าง
+        //   decision = 'finished' -> ตัดบิลจริง แล้วย้ายไปเมนู "งานที่เสร็จสิ้น"
+        //   decision = 'rejected' -> ตีกลับให้ผู้รับเหมาแก้ใหม่ ไม่แตะบิลเลย
+        //     (มีไว้กันกรณีแอดมินอนุมัติมาแล้วแต่ตรวจซ้ำเจอว่ายังไม่เรียบร้อย)
+        //
+        // ทั้ง 2 อย่างบันทึกชื่อคนกดไว้ ตารางจึงแสดงครบทั้งชื่อผู้อนุมัติและชื่อผู้ตรวจสอบ
+        function finishSubmission(id, decision) {
+            const act = (decision === 'rejected') ? 'rejected' : 'finished';
             const row = currentSubmissionsData.find(r => String(r.id) === String(id));
             const jobId = row ? (row.customer_case || '') : '';
-            if (!confirm('ยืนยัน "สิ้นสุดงาน" เลขงาน ' + jobId + ' ?\n\nกดแล้วระบบจะตัดบิลของเลขงานนี้ออกจากตารางวางบิลของผู้รับเหมาทันที และย้ายไปเมนู "งานที่เสร็จสิ้น"')) return;
+            const approvedBy = row && row.reviewed_by ? ('\n(รายการนี้อนุมัติโดย ' + row.reviewed_by + ')') : '';
 
-            runServerCall('finishJobFormSubmission', [currentSession.username, currentSession.token, id], function (res) {
+            let remark = '';
+            if (act === 'rejected') {
+                // ตีกลับต้องมีเหตุผลเสมอ ผู้รับเหมาจะเห็นข้อความนี้และต้องแก้ตามนั้น
+                remark = (prompt('เหตุผลที่ตีกลับ เลขงาน ' + jobId + ' (ผู้รับเหมาจะเห็นข้อความนี้)' + approvedBy) || '').trim();
+                if (!remark) {
+                    showAlert('error', 'กรุณากรอกเหตุผลที่ตีกลับ ก่อนดำเนินการ');
+                    return;
+                }
+            } else {
+                if (!confirm('ยืนยัน "สิ้นสุดงาน" เลขงาน ' + jobId + ' ?' + approvedBy + '\n\nกดแล้วระบบจะตัดบิลของเลขงานนี้ออกจากตารางวางบิลของผู้รับเหมาทันที และย้ายไปเมนู "งานที่เสร็จสิ้น"')) return;
+            }
+
+            runServerCall('finishJobFormSubmission', [currentSession.username, currentSession.token, id, act, remark], function (res) {
                 if (res && res.success) {
                     showAlert('success', res.message);
                     // อัปเดตแถวนี้ในข้อมูลที่โหลดไว้แล้วโดยตรง เร็วกว่ารอโหลดทั้งตารางใหม่
                     if (row) {
-                        row.finished_at = new Date().toISOString();
-                        row.finished_by = currentSession.displayName;
+                        const nowIso = new Date().toISOString();
+                        row.checker_by = currentSession.displayName;
+                        row.checker_at = nowIso;
+                        row.checker_decision = act;
+                        if (act === 'finished') {
+                            row.finished_at = nowIso;
+                            row.finished_by = currentSession.displayName;
+                        } else {
+                            row.status = 'rejected';
+                            row.admin_remark = remark;
+                            row.checker_remark = remark;
+                        }
                     }
                     filterSubmissions();
                 } else {

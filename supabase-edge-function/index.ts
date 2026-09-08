@@ -1929,7 +1929,16 @@ Deno.serve(async (req: Request) => {
     if (error || !data || data.length === 0) return { valid: false };
     const user = data[0];
     if (!user.session_token || user.session_token !== token) return { valid: false };
-    return { valid: true, role: user.role, displayName: user.display_name, username: user.username };
+    // is_checker = ธง "ผู้ตรวจสอบ" แยกจาก role
+    // ทำเป็นธงต่างหากแทนการเปลี่ยน role เพราะผู้ตรวจสอบต้องใช้งานทุกเมนูได้เหมือนแอดมินอยู่แล้ว
+    // ถ้าไปเปลี่ยน role เป็น 'checker' บัญชีนั้นจะหลุดสิทธิ์แอดมินทั้งหมดทันที
+    return {
+      valid: true,
+      role: user.role,
+      displayName: user.display_name,
+      username: user.username,
+      isChecker: user.is_checker === true,
+    };
   }
 
   async function checkOpenIssueExists(jobId: string): Promise<any> {
@@ -2189,7 +2198,7 @@ Deno.serve(async (req: Request) => {
         if (hash !== user.password_hash) return jsonResponse({ success: false, message: 'รหัสผ่านไม่ถูกต้อง' });
         const token = genToken();
         await supabase.from('contractors').update({ session_token: token, session_created_at: new Date().toISOString() }).eq('id', user.id);
-        return jsonResponse({ success: true, token, username: user.username, role: user.role, displayName: user.display_name });
+        return jsonResponse({ success: true, token, username: user.username, role: user.role, displayName: user.display_name, isChecker: user.is_checker === true });
       }
 
       case 'logoutUser': {
@@ -3588,35 +3597,76 @@ Deno.serve(async (req: Request) => {
         });
       }
 
-      // ==================== ปุ่ม "สิ้นสุดงาน" (ขั้นตรวจชั้นที่ 2) ====================
-      // กดได้เฉพาะรายการที่ "อนุมัติแล้ว" และ "ยังไม่เคยสิ้นสุด"
-      // ผลที่เกิด: ตัดบิลของเลขงานนั้นออกจากตารางวางบิลฝั่งผู้รับเหมา + บันทึกชื่อคนกดกับเวลาไว้
+      // ==================== ขั้นตรวจชั้นที่ 2: ผู้ตรวจสอบ ====================
+      // ทำได้ 2 อย่าง: "สิ้นสุดงาน" (ตัดบิลจริง) หรือ "ตีกลับ" (ส่งกลับให้ผู้รับเหมาแก้)
+      //
+      // ⚠ เฉพาะบัญชีที่ถูกตั้งธง is_checker = true เท่านั้น
+      //    แอดมินทั่วไป "กดไม่ได้" ตามที่ออกแบบให้เป็นการตรวจ 2 ฝ่าย
+      //    คนอนุมัติ (แอดมิน) กับคนสิ้นสุดงาน (ผู้ตรวจสอบ) เป็นคนละขั้นกัน
+      //    และ "ตีกลับ" ของผู้ตรวจสอบมีไว้กันกรณีแอดมินอนุมัติแบบตรวจไม่ละเอียดหรือตกหล่น
       case 'finishJobFormSubmission': {
-        const [username, token, submissionId] = args;
+        const [username, token, submissionId, decisionRaw, remarkRaw] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
-        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมิน/ผู้ตรวจสอบเท่านั้นที่กดสิ้นสุดงานได้' });
+        if (!session.isChecker) {
+          return jsonResponse({ success: false, message: 'บัญชีนี้ไม่มีสิทธิ์ในขั้นผู้ตรวจสอบ — ขั้นนี้ต้องให้ผู้ตรวจสอบเป็นคนกดเท่านั้น (แอดมินทำได้แค่ขั้นอนุมัติ)' });
+        }
+
+        // ไม่ส่ง decision มา = ถือว่า "สิ้นสุดงาน" เพื่อให้แอปเวอร์ชันเก่าที่ยังส่งแค่ 3 ค่ายังใช้ได้
+        const decision = (decisionRaw === 'rejected') ? 'rejected' : 'finished';
+        const remark = remarkRaw ? remarkRaw.toString().trim() : '';
+        if (decision === 'rejected' && !remark) {
+          return jsonResponse({ success: false, message: 'กรุณาระบุหมายเหตุ/เหตุผลที่ตีกลับ ก่อนดำเนินการ' });
+        }
 
         const { data: subRows, error: subErr } = await supabase
-          .from('job_form_submissions').select('customer_case,status,finished_at,reviewed_by').eq('id', submissionId).limit(1);
+          .from('job_form_submissions')
+          .select('customer_case,status,finished_at,reviewed_by')
+          .eq('id', submissionId).limit(1);
         if (subErr) return jsonResponse({ success: false, message: subErr.message });
         if (!subRows || subRows.length === 0) return jsonResponse({ success: false, message: 'ไม่พบรายการนี้ (อาจถูกลบไปแล้ว กดโหลด/รีเฟรชอีกครั้ง)' });
         const sub = subRows[0];
-        if (sub.status !== 'approved') return jsonResponse({ success: false, message: 'ต้องอนุมัติรายการนี้ก่อน จึงจะกดสิ้นสุดงานได้ (สถานะตอนนี้: ' + (sub.status === 'rejected' ? 'ตีกลับ' : 'รอตรวจสอบ') + ')' });
+        if (sub.status !== 'approved') {
+          return jsonResponse({ success: false, message: 'ต้องให้แอดมินอนุมัติรายการนี้ก่อน ผู้ตรวจสอบจึงจะดำเนินการต่อได้ (สถานะตอนนี้: ' + (sub.status === 'rejected' ? 'ตีกลับ' : 'รอตรวจสอบ') + ')' });
+        }
         if (sub.finished_at) return jsonResponse({ success: false, message: 'รายการนี้สิ้นสุดงานไปแล้ว ไม่ต้องกดซ้ำ' });
 
-        const jobId = sub.customer_case;
+        const nowIso = new Date().toISOString();
+
+        // ---- กรณีผู้ตรวจสอบ "ตีกลับ" ----
+        // ไม่แตะบิลเลย แค่ดึงสถานะกลับไปเป็นตีกลับ ผู้รับเหมาจะเห็นหมายเหตุและต้องส่งฟอร์มใหม่
+        // เก็บชื่อผู้อนุมัติเดิมไว้ไม่ลบ จะได้ตามได้ว่าใครอนุมัติผ่านมาก่อนหน้า
+        if (decision === 'rejected') {
+          const { error: rejErr } = await supabase.from('job_form_submissions').update({
+            status: 'rejected',
+            admin_remark: remark,
+            checker_by: session.displayName,
+            checker_at: nowIso,
+            checker_decision: 'rejected',
+            checker_remark: remark,
+            is_read: true,
+          }).eq('id', submissionId);
+          if (rejErr) return jsonResponse({ success: false, message: rejErr.message });
+          return jsonResponse({
+            success: true,
+            message: 'ตีกลับเรียบร้อยแล้ว — ไม่ได้ตัดบิล ผู้รับเหมาจะเห็นหมายเหตุนี้และต้องส่งฟอร์มใหม่'
+              + (sub.reviewed_by ? (' (รายการนี้เคยอนุมัติโดย ' + sub.reviewed_by + ')') : ''),
+          });
+        }
+
+        // ---- กรณีผู้ตรวจสอบ "สิ้นสุดงาน" ----
         // ตัดบิลเฉพาะแถวที่ "ส่งบิลให้ผู้รับเหมาไปแล้ว และยังไม่เคยตัด" เท่านั้น
         //
         // บั๊กเดิม: กรองแค่ .eq('customer_case', jobId) อย่างเดียว ไม่ได้ดูสถานะการส่งบิลเลย
         // เลขงานเดียวกันอยู่ได้หลายรอบบิล (จากงานหลายเลขทรัพย์สิน หรือจากการติ๊กรวมงานตกค้าง)
         // กดครั้งเดียวจึงไปตัดบิลของรอบใหม่ที่เพิ่งสร้างและยังไม่ได้ส่งบิลด้วย
         // แถวพวกนั้นจะกลายเป็น "เสร็จสิ้น (ตัดบิลแล้ว)" ทั้งที่ยังไม่เคยเก็บเงิน = เงินหลุดโดยไม่มีใครรู้
+        const jobId = sub.customer_case;
         let closedCount = 0;
         if (jobId) {
           const { data: closedRows, error: closeErr } = await supabase
             .from('billing_documents')
-            .update({ completed_at: new Date().toISOString() })
+            .update({ completed_at: nowIso })
             .eq('customer_case', jobId)
             .eq('sent_to_contractor', true)
             .is('completed_at', null)
@@ -3625,17 +3675,23 @@ Deno.serve(async (req: Request) => {
           closedCount = (closedRows || []).length;
         }
 
-        // บันทึกการสิ้นสุดหลังตัดบิลสำเร็จเท่านั้น ถ้าตัดบิลพลาดจะได้กดใหม่ได้ ไม่ค้างสถานะครึ่ง ๆ กลาง ๆ
-        const { error: finErr } = await supabase.from('job_form_submissions')
-          .update({ finished_at: new Date().toISOString(), finished_by: session.displayName })
-          .eq('id', submissionId);
+        // บันทึกหลังตัดบิลสำเร็จเท่านั้น ถ้าตัดบิลพลาดจะได้กดใหม่ได้ ไม่ค้างสถานะครึ่ง ๆ กลาง ๆ
+        const { error: finErr } = await supabase.from('job_form_submissions').update({
+          finished_at: nowIso,
+          finished_by: session.displayName,
+          checker_by: session.displayName,
+          checker_at: nowIso,
+          checker_decision: 'finished',
+          checker_remark: remark || null,
+        }).eq('id', submissionId);
         if (finErr) return jsonResponse({ success: false, message: 'ตัดบิลแล้วแต่บันทึกชื่อผู้สิ้นสุดงานไม่สำเร็จ: ' + finErr.message });
 
         return jsonResponse({
           success: true,
-          message: closedCount > 0
+          message: (closedCount > 0
             ? ('สิ้นสุดงานเรียบร้อย — ตัดบิล ' + closedCount + ' แถวของเลขงานนี้ออกจากตารางวางบิลของผู้รับเหมาแล้ว')
-            : 'สิ้นสุดงานเรียบร้อย (ไม่มีแถวที่ต้องตัดบิล เพราะยังไม่ได้ส่งบิลให้ผู้รับเหมา หรือตัดบิลไปแล้วก่อนหน้านี้)',
+            : 'สิ้นสุดงานเรียบร้อย (ไม่มีแถวที่ต้องตัดบิล เพราะยังไม่ได้ส่งบิลให้ผู้รับเหมา หรือตัดบิลไปแล้วก่อนหน้านี้)')
+            + (sub.reviewed_by ? (' · อนุมัติโดย ' + sub.reviewed_by + ' · สิ้นสุดโดย ' + session.displayName) : ''),
         });
       }
 
