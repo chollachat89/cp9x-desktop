@@ -100,6 +100,16 @@
         .table-scroll tbody tr:hover { background: #f1f5f9; }
         /* ช่องกรอกในตารางให้เตี้ยลง เห็นแถวได้มากขึ้นต่อหนึ่งหน้าจอ */
         .table-scroll .grid-input { padding-top: 2px; padding-bottom: 2px; }
+        /* ซ่อนลูกศรขึ้น-ลงของช่องตัวเลขในตาราง
+           ลูกศรคู่นี้กินความกว้างในช่องไปราว 16-18px ทำให้ตัวเลขยาว ๆ อย่างราคาหลักล้าน
+           ถูกเบียดจนโดนตัด และแทบไม่มีใครใช้กดทีละหน่วยอยู่แล้ว (พิมพ์เอาเร็วกว่า)
+           ยังพิมพ์ตัวเลข/ทศนิยม และกดลูกศรขึ้น-ลงบนคีย์บอร์ดได้เหมือนเดิมทุกอย่าง */
+        .table-scroll .grid-input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+        .table-scroll .grid-input[type="number"]::-webkit-outer-spin-button,
+        .table-scroll .grid-input[type="number"]::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
         /* ===== แบรนด์ CP9X : ตัวอักษรไล่เฉดเขียว-มิ้นต์ พร้อมเรืองแสงจางๆ ===== */
         .cp9x-wordmark {
             font-family: 'Orbitron', 'Segoe UI', system-ui, sans-serif;
@@ -656,12 +666,12 @@
                     </select>
                 </div>
 
-                <!-- ค้นหาในตาราง — ใช้ตอนต้องการแก้อะไหล่ของเลขงานใดเลขงานหนึ่งโดยไม่ต้องเลื่อนหาทีละแถว
-                     ต่างจากตัวกรอง 2 อันข้างบนตรงที่อันนี้ "ไม่ยิงไปเซิร์ฟเวอร์" กรองจากข้อมูลที่โหลดมาแล้วทันที
-                     และตั้งใจให้ "ไม่มีผลกับปุ่มดาวน์โหลด" เพื่อกันพลาดหนัก:
-                     ถ้าให้มีผลด้วย พอลืมล้างช่องค้นหาแล้วกด CSV จะได้บิลไม่ครบแถวส่งให้ CJ = เก็บเงินขาด -->
+                <!-- ค้นหาทั้งระบบ — พิมพ์แล้วได้ข้อมูลเลย ไม่ต้องเลือกรอบบิลก่อน
+                     ยิงไปค้นที่เซิร์ฟเวอร์ ค้นข้ามทุกรอบบิลและทุกสถานะ (รวมงานที่ตัดบิลไปแล้ว)
+                     ⚠ ผลการค้นกลายเป็น "ข้อมูลที่โหลดอยู่" จึงมีผลกับปุ่มดาวน์โหลดด้วย
+                        ป้ายเตือนสีเหลืองข้าง ๆ จะขึ้นตลอดเวลาที่ยังค้นอยู่ กันลืมล้างแล้วออกบิลไม่ครบ -->
                 <div class="mb-4">
-                    <label class="block text-slate-700 text-xs font-semibold mb-1">ค้นหาในตาราง (เลขงาน / เลขทรัพย์สิน / รหัสอะไหล่)</label>
+                    <label class="block text-slate-700 text-xs font-semibold mb-1">ค้นหาทั้งระบบ (เลขงาน / เลขทรัพย์สิน / รหัสอะไหล่ / ชื่อสาขา) — ไม่ต้องเลือกรอบบิลก่อน</label>
                     <div class="flex flex-wrap items-center gap-2">
                         <div class="relative">
                             <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
@@ -863,6 +873,49 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- ใบเขียวฝั่งผู้รับเหมา เลือกตามช่วงวันที่ (ข้ามรอบบิลได้)
+                         ใช้ตอนอยากได้ใบเขียวทั้งเดือนโดยไม่ต้องไล่โหลดทีละรอบบิล
+                         ⚠ เอกสารนี้เป็นของฝั่งผู้รับเหมาเสมอ ต่อให้แอดมินเป็นคนกด ราคา CJ จะไม่ปนออกไปเด็ดขาด -->
+                    <div class="border border-teal-300 rounded-xl px-4 py-3 bg-teal-50/70 mt-3">
+                        <div class="flex flex-wrap items-center justify-between gap-3">
+                            <span class="text-xs font-bold text-teal-800"><i class="fa-solid fa-file-pdf mr-1.5"></i>ใบเขียวผู้รับเหมา ตามช่วงวันที่ <span class="font-normal text-teal-600">· ข้ามรอบบิลได้ · ใช้ราคาผู้รับเหมาล้วน</span></span>
+                            <button type="button" id="btn_downloadContractorRangePdf" onclick="downloadContractorRangePdf(this)" class="bg-teal-700 text-white text-sm font-semibold py-2 px-5 rounded-lg hover:bg-teal-800 transition-colors">
+                                <i class="fa-solid fa-download mr-1.5"></i> ดาวน์โหลดใบเขียว
+                            </button>
+                        </div>
+                        <div class="flex flex-wrap items-end gap-3 mt-3 pt-3 border-t border-teal-200">
+                            <div>
+                                <label class="block text-[11px] font-bold text-teal-800 mb-1">กรองด้วยวัน</label>
+                                <select id="contractorRangeDateField" class="px-3 py-2 rounded-lg border border-teal-300 text-xs bg-white outline-none focus:border-teal-500">
+                                    <option value="visit_date">วันที่เข้างาน</option>
+                                    <option value="req_date">วันที่รับแจ้ง</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-bold text-teal-800 mb-1">ตั้งแต่</label>
+                                <div class="relative inline-block">
+                                    <input type="text" id="contractorRangeStartDisplay" readonly placeholder="dd/mm/yyyy" onclick="openCustomDatePicker('contractorRangeStart')" class="px-3 py-2 pr-8 rounded-lg border border-teal-300 text-xs w-32 date-picker-trigger cursor-pointer bg-white hover:border-teal-500">
+                                    <input type="hidden" id="contractorRangeStart" value="">
+                                    <i class="fa-solid fa-calendar-days absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"></i>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-bold text-teal-800 mb-1">ถึงวันที่</label>
+                                <div class="relative inline-block">
+                                    <input type="text" id="contractorRangeEndDisplay" readonly placeholder="dd/mm/yyyy" onclick="openCustomDatePicker('contractorRangeEnd')" class="px-3 py-2 pr-8 rounded-lg border border-teal-300 text-xs w-32 date-picker-trigger cursor-pointer bg-white hover:border-teal-500">
+                                    <input type="hidden" id="contractorRangeEnd" value="">
+                                    <i class="fa-solid fa-calendar-days absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"></i>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-bold text-teal-800 mb-1">ผู้รับเหมา</label>
+                                <select id="contractorRangeContractor" class="px-3 py-2 rounded-lg border border-teal-300 text-xs bg-white outline-none focus:border-teal-500 min-w-[180px]">
+                                    <option value="">ทุกผู้รับเหมา (รวมในใบเดียว)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- เพิ่มเลขงานเข้ารอบบิลที่มีอยู่แล้ว (แอดมินเท่านั้น)
@@ -898,7 +951,9 @@
                                 <th data-col="part_code" class="p-2 text-left font-semibold min-w-[90px]">Part Code</th>
                                 <th data-col="part_detail" class="p-2 text-left font-semibold min-w-[180px]">รายละเอียดอะไหล่</th>
                                 <th data-col="warranty_months" class="p-2 text-left font-semibold">ระยะเวลาประกัน(เดือน)</th>
-                                <th data-col="qty" class="p-2 text-left font-semibold w-16">จำนวน</th>
+                                <!-- ไม่ใส่ w-16 บังคับความกว้างแล้ว ปล่อยให้ใช้ค่าความกว้างขั้นต่ำจาก BILLING_COL_MIN_WIDTH
+                                     ไม่งั้นหัวตารางกับช่องข้อมูลจะขัดกันเอง ช่องจำนวนถูกบีบกลับเหลือ 64px -->
+                                <th data-col="qty" class="p-2 text-left font-semibold">จำนวน</th>
                                 <th data-col="unit" class="p-2 text-left font-semibold">หน่วย</th>
                                 <th data-col="unit_price" class="p-2 text-left font-semibold">ราคา/หน่วย</th>
                                 <th data-col="total_price" class="p-2 text-left font-semibold">ราคา/รวม</th>
@@ -1429,13 +1484,15 @@
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">งานบริการ</th>
                                 <th class="p-2 text-left font-semibold min-w-[90px]">Part Code</th>
                                 <th class="p-2 text-left font-semibold min-w-[160px]">รายละเอียดอะไหล่</th>
-                                <th class="p-2 text-left font-semibold w-16">ประกัน(ด.)</th>
-                                <th class="p-2 text-left font-semibold w-16">จำนวน</th>
-                                <th class="p-2 text-left font-semibold w-16">หน่วย</th>
-                                <th class="p-2 text-left font-semibold w-20">ราคา/หน่วย (CJ)</th>
-                                <th class="p-2 text-left font-semibold whitespace-nowrap">ราคา/รวม (CJ)</th>
-                                <th class="p-2 text-left font-semibold w-20">ราคา/หน่วย (ผู้รับเหมา)</th>
-                                <th class="p-2 text-left font-semibold whitespace-nowrap">ราคา/รวม (ผู้รับเหมา)</th>
+                                <!-- ขยายช่องที่ต้องอ่าน/แก้บ่อยให้กว้างพอเห็นค่าเต็ม เหมือนตารางวางบิลหลัก
+                                     ของเดิม w-16 (64px) / w-20 (80px) แคบจนราคาหลักล้านโดนตัด -->
+                                <th class="p-2 text-left font-semibold min-w-[74px]">ประกัน(ด.)</th>
+                                <th class="p-2 text-left font-semibold min-w-[105px]">จำนวน</th>
+                                <th class="p-2 text-left font-semibold min-w-[110px]">หน่วย</th>
+                                <th class="p-2 text-left font-semibold min-w-[140px]">ราคา/หน่วย (CJ)</th>
+                                <th class="p-2 text-left font-semibold min-w-[125px] whitespace-nowrap">ราคา/รวม (CJ)</th>
+                                <th class="p-2 text-left font-semibold min-w-[140px]">ราคา/หน่วย (ผู้รับเหมา)</th>
+                                <th class="p-2 text-left font-semibold min-w-[125px] whitespace-nowrap">ราคา/รวม (ผู้รับเหมา)</th>
                                 <th class="p-2 text-left font-semibold min-w-[100px]">Quotation</th>
                                 <th class="p-2 text-left font-semibold min-w-[90px]">อะไหล่เก่าคืน CJ</th>
                                 <th class="p-2 text-left font-semibold min-w-[100px]">ผู้รับผิดชอบ</th>
@@ -1498,6 +1555,9 @@
             </div>
 
             <div class="p-5">
+                <!-- อะไหล่ที่มีอยู่แล้วของเลขทรัพย์สินนี้ — โชว์ให้เห็นก่อนเพิ่มชิ้นใหม่
+                     กันเพิ่มซ้ำของที่มีอยู่แล้ว และเห็นได้ทันทีว่าชิ้นไหนยังไม่ได้ตั้งราคาผู้รับเหมา -->
+                <div id="modalExistingParts" class="hidden mb-5"></div>
                 <div id="modalPartRows" class="space-y-4"></div>
 
                 <button type="button" onclick="addModalPartRow()" class="mt-3 text-blood-700 text-sm font-semibold hover:text-blood-900">
@@ -2092,6 +2152,15 @@
                     filterDropdown.innerHTML = '<option value="">ทุกผู้รับเหมา (บิลรวม)</option>' +
                         list.map(name => `<option value="${name.replace(/"/g,'&quot;')}">${name}</option>`).join('');
                 }
+
+                // dropdown ของเมนู "ใบเขียวผู้รับเหมา ตามช่วงวันที่" ใช้รายชื่อชุดเดียวกัน
+                const rangeDropdown = document.getElementById('contractorRangeContractor');
+                if (rangeDropdown) {
+                    const keep = rangeDropdown.value;
+                    rangeDropdown.innerHTML = '<option value="">ทุกผู้รับเหมา (รวมในใบเดียว)</option>' +
+                        list.map(name => `<option value="${name.replace(/"/g,'&quot;')}">${name}</option>`).join('');
+                    if (list.indexOf(keep) !== -1) rangeDropdown.value = keep;
+                }
             }, function () {});
 
             refreshBillingRoundOptions();
@@ -2358,7 +2427,9 @@
         const debouncedFilterPausedList = debounce(function () { filterPausedList(); }, 250);
         // ตารางวางบิลมีช่องกรอกในทุกแถว การวาดใหม่จึงหนักกว่าตารางอ่านอย่างเดียว
         // ถ้าวาดใหม่ทุกตัวอักษรที่พิมพ์ จะหน่วงตอนข้อมูลเยอะ จึงหน่วงไว้เหมือนตารางอื่น
-        const debouncedApplyBillingSearch = debounce(function () { applyBillingSearch(); }, 250);
+        // 400ms เพราะตอนนี้การค้นหายิงไปถามเซิร์ฟเวอร์จริง ไม่ใช่กรองในหน้าจอเฉย ๆ
+        // หน่วงสั้นเกินจะยิงถี่ทุกตัวอักษรที่พิมพ์โดยเปล่าประโยชน์
+        const debouncedApplyBillingSearch = debounce(function () { applyBillingSearch(); }, 400);
 
         // 1. สลับหน้าจอ (Tab Switcher)
         // เปิด/ปิด sidebar บนมือถือ (จอเล็กกว่า md ของ Tailwind) - กดปุ่มแฮมเบอร์เกอร์ที่แถบด้านบน
@@ -3005,9 +3076,31 @@
             const panel = document.getElementById('customDatePickerPanel');
             const displayInput = document.getElementById(targetId + 'Display');
             const rect = displayInput.getBoundingClientRect();
-            panel.style.top = (rect.bottom + window.scrollY + 4) + 'px';
-            panel.style.left = (rect.left + window.scrollX) + 'px';
+
+            // ⚠ บั๊กเดิม "กดปฏิทินแล้วไม่ขึ้น": บวก window.scrollY/scrollX เข้าไปด้วย
+            //
+            // พาเนลนี้เป็น position:fixed ซึ่งใช้พิกัดเทียบ "กรอบหน้าจอ" ไม่ใช่เทียบทั้งหน้าเอกสาร
+            // และ getBoundingClientRect() ก็คืนพิกัดเทียบกรอบหน้าจออยู่แล้ว
+            // พอบวก scroll เข้าไปอีก พาเนลจึงถูกดันลงไปไกลเท่ากับระยะที่เลื่อนหน้าจอมา
+            // ตอนอยู่บนสุดของหน้า (ไม่ได้เลื่อน) เลยดูเหมือนใช้ได้ แต่พอเลื่อนลงมาที่ตารางวางบิล
+            // พาเนลจะไปโผล่นอกจอ = กดแล้วเหมือนไม่มีอะไรเกิดขึ้น
+            let top = rect.bottom + 4;
+            let left = rect.left;
+
+            // กันพาเนลล้นขอบจอ (ต้องวัดหลังเอา hidden ออก ไม่งั้นขนาดเป็น 0)
             panel.classList.remove('hidden');
+            const panelRect = panel.getBoundingClientRect();
+            const margin = 8;
+            if (left + panelRect.width > window.innerWidth - margin) {
+                left = Math.max(margin, window.innerWidth - panelRect.width - margin);
+            }
+            // ถ้าข้างล่างไม่พอ ให้ไปกางข้างบนช่องแทน
+            if (top + panelRect.height > window.innerHeight - margin) {
+                const above = rect.top - panelRect.height - 4;
+                top = above >= margin ? above : Math.max(margin, window.innerHeight - panelRect.height - margin);
+            }
+            panel.style.top = top + 'px';
+            panel.style.left = left + 'px';
         }
 
         function closeCustomDatePicker() {
@@ -3074,10 +3167,11 @@
         function clearBillingTable() {
             currentBillingData = [];
             document.getElementById('billingBody').innerHTML = '';
-            // ล้างคำค้นไปด้วย ไม่งั้นพอโหลดชุดถัดไปมาจะโดนคำค้นเก่ากรองทิ้งทันที
-            // ผู้ใช้จะเห็นตารางว่างแล้วนึกว่าโหลดไม่ติด
+            // ล้างช่องค้นหาไปด้วย ไม่งั้นพอกดโหลดชุดถัดไป จะยังติดคำค้นเก่าอยู่แล้วได้ข้อมูลไม่ตรงที่คิด
+            // แต่ "ไม่ยิงโหลดใหม่" ตรงนี้ เพราะปุ่มนี้คือล้างหน้าจอ ไม่ใช่โหลดข้อมูล
             const searchEl = document.getElementById('billingJobSearch');
-            if (searchEl && searchEl.value) { searchEl.value = ''; applyBillingSearch(); }
+            if (searchEl) searchEl.value = '';
+            updateBillingSearchNote(0);
             const statusEl = document.getElementById('billingStatus');
             statusEl.textContent = 'ล้างหน้าจอแล้ว (ข้อมูลเดิมยังอยู่ในระบบ) — กด "โหลด/รีเฟรชข้อมูล" หรือ "ดูตัวอย่างก่อนบันทึกรอบบิล" เพื่อดูชุดถัดไป';
             statusEl.className = 'text-sm text-slate-400 mb-3';
@@ -3492,18 +3586,26 @@
             const roundFilterEl = document.getElementById('billingRoundFilter');
             const roundFilter = roundFilterEl ? roundFilterEl.value : '';
 
-            runServerCall('getBillingDocuments', [currentSession.username, currentSession.token, contractorFilter, jobIdsFilter || null, roundFilter || null], function(res) {
+            // ถ้ามีคำค้นอยู่ ให้ส่งไปค้นที่เซิร์ฟเวอร์แทน — ค้นข้ามทุกรอบบิลและทุกสถานะให้เลย
+            // ผู้ใช้จึงไม่ต้องรู้ว่างานอยู่รอบไหน แค่พิมพ์เลขงานก็เจอและเข้าไปแก้อะไหล่ได้ทันที
+            const searchEl = document.getElementById('billingJobSearch');
+            const searchTerm = searchEl ? searchEl.value.trim() : '';
+
+            runServerCall('getBillingDocuments', [currentSession.username, currentSession.token, contractorFilter, jobIdsFilter || null, roundFilter || null, searchTerm || null], function(res) {
                 if (res && res.error) {
                     statusEl.textContent = 'โหลดล้มเหลว: ' + res.error;
                     statusEl.className = 'text-sm text-red-500 mb-3';
                     return;
                 }
                 currentBillingData = res || [];
-                // วาดผ่าน applyBillingSearch() แทนการวาดตรง ๆ เพื่อให้คำค้นที่ค้างอยู่ในช่องยังมีผลหลังโหลดใหม่
-                // (ถ้าวาดตรง ๆ ตารางจะเด้งกลับมาแสดงทุกแถว ทั้งที่ช่องค้นหายังมีข้อความอยู่ = ดูเหมือนค้นหาพัง)
-                applyBillingSearch();
-                const scopeNote = jobIdsFilter && jobIdsFilter.length > 0 ? ' (แสดงเฉพาะชุดที่จับคู่ล่าสุด — กด "โหลด/รีเฟรชข้อมูล" เพื่อดูทั้งหมด)'
-                    : (roundFilter ? ' (ข้อมูลย้อนหลังของรอบที่ ' + roundFilter + ' — รวมที่ส่งแล้ว/ตัดบิลแล้วด้วย)' : '');
+                // เซิร์ฟเวอร์กรองคำค้นมาให้แล้ว จึงวาดตารางตรง ๆ ไม่ต้องกรองซ้ำอีกชั้น
+                // (ถ้ากรองซ้ำด้วย applyBillingSearchFilter จะได้ผลเดิม แต่เสียเวลาเปล่า)
+                renderBillingGrid(getBillingRowsForDisplay());
+                updateBillingSearchNote(currentBillingData.length);
+
+                const scopeNote = searchTerm ? (' จากการค้นหา "' + searchTerm + '" (ค้นข้ามทุกรอบบิลและทุกสถานะ)')
+                    : (jobIdsFilter && jobIdsFilter.length > 0 ? ' (แสดงเฉพาะชุดที่จับคู่ล่าสุด — กด "โหลด/รีเฟรชข้อมูล" เพื่อดูทั้งหมด)'
+                    : (roundFilter ? ' (ข้อมูลย้อนหลังของรอบที่ ' + roundFilter + ' — รวมที่ส่งแล้ว/ตัดบิลแล้วด้วย)' : ''));
                 statusEl.textContent = 'พบ ' + currentBillingData.length + ' รายการ' + scopeNote + ' — พิมพ์ Part Code แล้วคลิกออกจากช่อง จะดึงราคา/รายละเอียดอัตโนมัติ';
                 statusEl.className = 'text-sm text-blood-600 mb-3';
             }, function(err) {
@@ -4299,52 +4401,37 @@
             return renumberBillingRows(baseData);
         }
 
-        // ---- ค้นหาในตาราง (เฉพาะสิ่งที่แสดงบนจอ ไม่มีผลกับปุ่มดาวน์โหลด) ----
+        // ---- ค้นหาในตาราง ----
         //
-        // ⚠ ตั้งใจแยกออกจาก getBillingRowsForDisplay() ไม่เอาไปรวมไว้ข้างใน
-        // เพราะฟังก์ชันนั้นถูกใช้โดยปุ่ม CSV/PDF ด้วย ถ้าเอาคำค้นไปใส่ในนั้น
-        // พอผู้ใช้ลืมล้างช่องค้นหาแล้วกดออกบิล จะได้ไฟล์ที่มีไม่ครบทุกแถวโดยไม่รู้ตัว
-        // = ส่งบิลให้ CJ แบบเก็บเงินขาด ซึ่งเป็นความผิดพลาดเรื่องเงิน แก้ย้อนหลังยาก
+        // ค้นที่เซิร์ฟเวอร์ ไม่ใช่กรองเฉพาะแถวที่โหลดมาแล้ว
+        // เพื่อให้ "พิมพ์แล้วเด้งข้อมูลมาเลย ไม่ต้องเลือกรอบบิลก่อน"
+        // ค้นข้ามทุกรอบบิลและทุกสถานะ (รวมงานที่ตัดบิลไปแล้ว) จึงเข้าไปแก้อะไหล่ย้อนหลังได้ทันที
         //
-        // กรองหลังใส่เลขลำดับแล้ว เลขลำดับที่เห็นจึงยังเป็นเลขเดิมของตารางเต็ม
-        // (ถ้ากรองก่อน เลขจะถูกนับใหม่เป็น 1,2,3 ของชุดที่กรอง ทำให้อ้างอิงกับของจริงไม่ตรง)
-        function applyBillingSearchFilter(rows) {
-            const el = document.getElementById('billingJobSearch');
-            const term = el ? el.value.trim().toLowerCase() : '';
-            if (!term) return rows;
-            return (rows || []).filter(function (r) {
-                return [r.customer_case, r.asset_id, r.part_code, r.part_detail, r.branch_name]
-                    .some(function (v) {
-                        return v !== null && v !== undefined && String(v).toLowerCase().indexOf(term) !== -1;
-                    });
-            });
-        }
-
-        // วาดตารางใหม่ตามคำค้นล่าสุด + อัปเดตป้ายบอกจำนวนและปุ่มล้างคำค้น
-        function applyBillingSearch() {
-            const all = getBillingRowsForDisplay();
-            const shown = applyBillingSearchFilter(all);
-            renderBillingGrid(shown);
-
+        // ⚠ คำค้นมีผลกับ "ข้อมูลที่โหลดมา" จึงมีผลกับปุ่มดาวน์โหลดด้วยโดยปริยาย
+        // ป้ายเตือนสีเหลืองจึงต้องบอกให้ชัดทุกครั้งที่กำลังค้นอยู่ กันลืมล้างแล้วออกบิลไม่ครบ
+        function updateBillingSearchNote(resultCount) {
             const el = document.getElementById('billingJobSearch');
             const term = el ? el.value.trim() : '';
             const note = document.getElementById('billingSearchNote');
             const clearBtn = document.getElementById('billingJobSearchClear');
             if (clearBtn) clearBtn.classList.toggle('hidden', !term);
-            if (note) {
-                note.classList.toggle('hidden', !term);
-                if (term) {
-                    note.textContent = shown.length === 0
-                        ? ('ไม่พบ "' + term + '" ในตาราง (ทั้งหมด ' + all.length + ' แถว)')
-                        : ('กำลังกรอง: แสดง ' + shown.length + ' จาก ' + all.length + ' แถว · ปุ่มดาวน์โหลดยังออกครบทุกแถวตามปกติ');
-                }
-            }
+            if (!note) return;
+            note.classList.toggle('hidden', !term);
+            if (!term) return;
+            note.textContent = (resultCount === 0)
+                ? ('ไม่พบ "' + term + '" ในระบบ (ค้นข้ามทุกรอบบิลแล้ว)')
+                : ('กำลังค้นหา "' + term + '" — พบ ' + resultCount + ' แถว · ⚠ ปุ่มดาวน์โหลดจะออกเฉพาะแถวที่ค้นเจอนี้เท่านั้น ล้างคำค้นก่อนออกบิลจริง');
+        }
+
+        // ยิงค้นหาใหม่ทุกครั้งที่พิมพ์ (ผ่านตัวหน่วง 400ms) — โหลดข้อมูลจากเซิร์ฟเวอร์ตามคำค้น
+        function applyBillingSearch() {
+            loadBillingDocuments();
         }
 
         function clearBillingSearch() {
             const el = document.getElementById('billingJobSearch');
             if (el) el.value = '';
-            applyBillingSearch();
+            loadBillingDocuments();
             if (el) el.focus();
         }
 
@@ -4415,6 +4502,44 @@
             { key: 'round_period', label: 'ช่วงรอบบิล', adminOnly: true },
             { key: 'sent_to_contractor', label: 'สถานะ', adminOnly: true }
         ];
+        // ความกว้างขั้นต่ำของแต่ละคอลัมน์ในตารางวางบิล (หน่วย px)
+        //
+        // ตั้งจากค่าที่ "ยาวที่สุดเท่าที่เป็นไปได้จริง" ของคอลัมน์นั้น เช่น
+        //   ราคา  = หลักล้านมีทศนิยม 2 ตำแหน่ง -> ต้องกว้างพอสำหรับ 1,234,567.89
+        //   วันที่ = dd/mm/yyyy
+        //   เลขทรัพย์สิน = 12 หลัก
+        // ถ้าไม่ตั้งไว้ ตารางจะบีบช่องจนตัวเลขโดนตัดครึ่ง (เห็น "175(" แทน "1750") อ่านไม่ออกและแก้ไม่ถูก
+        const BILLING_COL_MIN_WIDTH = {
+            seq: 46,
+            customer_case: 140,
+            branch_code: 76,
+            branch_name: 150,
+            service_type: 170,
+            asset_id: 125,
+            part_code: 100,
+            warranty_months: 74,
+            // 3 ช่องนี้ขยายเป็นพิเศษ เพราะเป็นช่องที่ต้องอ่านและแก้บ่อยที่สุดตอนตรวจอะไหล่
+            //   จำนวน      รองรับทศนิยม เช่น 1.6 กก. / 0.75 เมตร
+            //   หน่วย      คำไทยยาวสุดคือ "กิโลกรัม" (8 ตัวอักษร)
+            //   ราคา/หน่วย ค่าที่ยาวสุดคือหลักล้านมีทศนิยม 1,234,567.89
+            qty: 105,
+            unit: 110,
+            unit_price: 140,
+            total_price: 125,
+            unit_price_contractor: 140,
+            total_price_contractor: 125,
+            req_date: 100,
+            visit_date: 100,
+            quotation_ref: 110,
+            return_old_part: 86,
+            responsible: 120,
+            company: 170,
+            contractor: 130,
+            round_no: 70,
+            round_period: 150,
+            sent_to_contractor: 92,
+            billing_type: 150
+        };
         const BILLING_COLUMN_PREFS_KEY = 'crMaintBillingColumnPrefs';
         let billingColumnPrefs = {};
 
@@ -4599,7 +4724,9 @@
                 ['service_type', false, 'readonly'],
                 ['asset_id', false, 'readonly'],
                 ['part_code', true, 'partcode'],
-                ['part_detail', true, 'text'],
+                // รายละเอียดอะไหล่ยาวที่สุดในตาราง (เช่น "คอมเพรสเซอร์ EMBRACO NEK6210Z R134a 1/2HP 220V")
+                // ใช้ชนิด longtext = ช่องกรอกสูง 2 บรรทัด อ่านครบโดยไม่ต้องเลื่อนในช่อง
+                ['part_detail', true, 'longtext'],
                 ['warranty_months', true, 'text'],
                 ['qty', true, 'number'],
                 ['unit', true, 'text'],
@@ -4638,18 +4765,40 @@
                     let val = row[key] !== undefined && row[key] !== null ? row[key] : '';
                     if (key === 'seq' && isSameSeqAsPrev) val = ''; // ลำดับซ้ำแถวก่อนหน้า ไม่ต้องโชว์ซ้ำ
                     // ผู้รับเหมา: คอลัมน์ "ราคา/หน่วย"/"ราคา/รวม" ให้แสดงราคาผู้รับเหมา (ไม่ใช่ราคา CJ ที่แอดมินเห็น)
-                    // ถ้าแถวไหนยังไม่เคยตั้งราคาผู้รับเหมาไว้ (ข้อมูลเก่า/ลืมกรอก) จะ fallback ไปใช้ราคา CJ แทนชั่วคราว กันเห็นค่าว่าง
+                    //
+                    // ⚠⚠ ห้าม fallback ไปใช้ราคา CJ เด็ดขาด
+                    // ของเดิมถ้าแถวไหนยังไม่ได้ตั้งราคาผู้รับเหมา จะปล่อยให้ val เป็นราคา CJ ค้างอยู่
+                    // = ผู้รับเหมาเปิดตารางแล้วเห็นราคาที่ CR เก็บกับ CJ เต็ม ๆ โดยไม่มีใครรู้
+                    // แถวที่ยังไม่ตั้งราคาให้ขึ้นขีดกลางแทน
                     if (!isAdmin && (key === 'unit_price' || key === 'total_price')) {
                         const contractorKey = key + '_contractor';
                         const hasContractorPrice = row[contractorKey] !== undefined && row[contractorKey] !== null && row[contractorKey] !== '';
-                        if (hasContractorPrice) val = row[contractorKey];
+                        val = hasContractorPrice ? row[contractorKey] : '-';
                     }
                     const effectiveType = isAdmin ? type : 'readonly'; // ผู้รับเหมา: ดูอย่างเดียวทุกคอลัมน์
                     const hiddenCls = isBillingColumnHidden(key) ? ' hidden' : '';
+                    // ความกว้างขั้นต่ำของแต่ละช่อง
+                    //
+                    // ปัญหาเดิม: ช่องกรอกเป็น w-full แล้วปล่อยให้ตารางบีบความกว้างเอง
+                    // พอคอลัมน์เยอะ ช่องราคาจะแคบจนเลขโดนตัดครึ่ง เห็นเป็น "175(" แทน "1750"
+                    // อ่านไม่ออกและแก้ยากเพราะมองไม่เห็นว่าพิมพ์อะไรอยู่
+                    // จึงกำหนดความกว้างขั้นต่ำไว้ให้พอกับค่าที่ยาวที่สุดที่เป็นไปได้ของคอลัมน์นั้น
+                    const minW = BILLING_COL_MIN_WIDTH[key] || 0;
+                    const minWStyle = minW ? ` style="min-width:${minW}px;"` : '';
+                    // คอลัมน์ข้อความยาว: ปล่อยให้ตัดขึ้นบรรทัดที่ 2 ได้ ไม่บังคับบรรทัดเดียวจนต้องเลื่อนตารางไปทางขวายาว ๆ
+                    const isLongTextCol = (key === 'part_detail');
                     if (effectiveType === 'readonly') {
-                        cellsHtml += `<td data-col="${key}" class="p-2 text-slate-500 whitespace-nowrap${hiddenCls}">${val}</td>`;
+                        if (isLongTextCol) {
+                            cellsHtml += `<td data-col="${key}" class="p-2 text-slate-500 align-top${hiddenCls}" style="white-space:normal;min-width:190px;max-width:240px;line-height:1.35;">${val}</td>`;
+                        } else {
+                            cellsHtml += `<td data-col="${key}" class="p-2 text-slate-500 whitespace-nowrap${hiddenCls}"${minWStyle}>${val}</td>`;
+                        }
+                    } else if (effectiveType === 'longtext') {
+                        // textarea 2 บรรทัด — ใส่คลาส grid-input ไว้ด้วย เพราะตอนกดบันทึกใช้ querySelectorAll('.grid-input')
+                        // เก็บค่าจากทุกช่อง ซึ่ง .value ใช้กับ textarea ได้เหมือน input ทุกประการ
+                        cellsHtml += `<td data-col="${key}" class="p-1 align-top${hiddenCls}" style="min-width:190px;max-width:240px;"><textarea rows="2" data-field="${key}" class="grid-input w-full px-2 py-1 rounded border border-slate-200 text-xs resize-y leading-snug">${String(val).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea></td>`;
                     } else if (effectiveType === 'yesno') {
-                        cellsHtml += `<td data-col="${key}" class="p-1${hiddenCls}">
+                        cellsHtml += `<td data-col="${key}" class="p-1${hiddenCls}"${minWStyle}>
                             <select data-field="${key}" class="grid-input w-full px-1 py-1 rounded border border-slate-200 text-xs bg-white">
                                 <option value="" ${val === '' ? 'selected' : ''}>-</option>
                                 <option value="YES" ${val === 'YES' ? 'selected' : ''}>YES</option>
@@ -4657,13 +4806,16 @@
                             </select>
                         </td>`;
                     } else if (effectiveType === 'billingtype') {
-                        cellsHtml += `<td data-col="${key}" class="p-1${hiddenCls}">
+                        cellsHtml += `<td data-col="${key}" class="p-1${hiddenCls}"${minWStyle}>
                             <select data-field="${key}" class="grid-input w-full px-1 py-1 rounded border text-xs ${billingTypeSelectClass(val)}">
                                 ${billingTypeOptionsHtml(val)}
                             </select>
                         </td>`;
                     } else if (effectiveType === 'partcode') {
-                        cellsHtml += `<td data-col="${key}" class="p-1${hiddenCls}"><input type="text" data-field="${key}" value="${String(val).replace(/"/g,'&quot;')}" class="grid-input part-code-input w-full px-2 py-1 rounded border border-slate-200 text-xs" placeholder="เช่น P003"></td>`;
+                        // data-last-lookup = รหัสที่ "ดึงราคาจากคลังไปแล้ว" ครั้งล่าสุด
+                        // ตอนวาดตารางตั้งเป็นค่าที่มีอยู่เลย เพื่อให้ถือว่าแถวนี้ดึงราคาไปแล้ว
+                        // จะได้ไม่ไปดึงทับราคาที่แอดมินแก้เองไว้ ตอนคลิกผ่านช่องนี้เฉย ๆ (ดูเหตุผลเต็มที่ doLookupPartForBillingRow)
+                        cellsHtml += `<td data-col="${key}" class="p-1${hiddenCls}"${minWStyle}><input type="text" data-field="${key}" value="${String(val).replace(/"/g,'&quot;')}" data-last-lookup="${String(val).replace(/"/g,'&quot;')}" class="grid-input part-code-input w-full px-2 py-1 rounded border border-slate-200 text-xs" placeholder="เช่น P003"></td>`;
                     } else if (effectiveType === 'sentstatus') {
                         const isSent = row[key] === true || row[key] === 'true';
                         cellsHtml += isSent
@@ -4673,7 +4825,7 @@
                         // step="any" กับช่องตัวเลข (จำนวน / ราคา) เพราะจำนวนที่ใช้จริงมีทศนิยมได้
                         // เช่น น้ำยา 1.6 กก. หรือ ท่อ 0.7 เมตร ถ้าไม่ใส่ เบราว์เซอร์จะบังคับเป็นจำนวนเต็ม
                         const stepAttr = effectiveType === 'number' ? ' step="any"' : '';
-                        cellsHtml += `<td data-col="${key}" class="p-1${hiddenCls}"><input type="${effectiveType}"${stepAttr} data-field="${key}" value="${String(val).replace(/"/g,'&quot;')}" class="grid-input w-full px-2 py-1 rounded border border-slate-200 text-xs"></td>`;
+                        cellsHtml += `<td data-col="${key}" class="p-1${hiddenCls}"${minWStyle}><input type="${effectiveType}"${stepAttr} data-field="${key}" value="${String(val).replace(/"/g,'&quot;')}" class="grid-input w-full px-2 py-1 rounded border border-slate-200 text-xs"></td>`;
                     }
                 });
                 if (isAdmin) {
@@ -4693,17 +4845,70 @@
                 if (partCodeInputEl) {
                     partCodeInputEl.addEventListener('blur', function () { doLookupPartForBillingRow(tr); });
                 }
+
+                // คำนวณราคารวมสด ๆ ทันทีที่พิมพ์ ทั้งฝั่ง CJ และฝั่งผู้รับเหมา
+                // ไม่ต้องรอกดบันทึกแล้วค่อยเห็นว่าได้เท่าไหร่ ตรวจตัวเลขได้ตั้งแต่ยังไม่บันทึก
+                ['qty', 'unit_price', 'unit_price_contractor'].forEach(function (f) {
+                    const el = tr.querySelector('[data-field="' + f + '"]');
+                    if (el) el.addEventListener('input', function () { recalcBillingRowTotals(tr); });
+                });
+            });
+        }
+
+        // คำนวณ "ราคารวม" ของแถวใหม่จากค่าที่กรอกอยู่บนหน้าจอ
+        //
+        // ใช้สูตรเดียวกันเป๊ะทั้ง 2 ฝั่ง:  ราคารวม = จำนวน × ราคาต่อหน่วย
+        //   ฝั่ง CJ        unit_price            -> total_price
+        //   ฝั่งผู้รับเหมา  unit_price_contractor -> total_price_contractor
+        // ตรงกับสูตรที่เซิร์ฟเวอร์คำนวณตอนบันทึก ตัวเลขบนจอกับในฐานข้อมูลจึงไม่มีทางเพี้ยนกัน
+        //
+        // ช่องราคาที่เว้นว่างไว้ = ยังไม่ได้ตั้งราคา ให้ราคารวมว่างตามไปด้วย
+        // (ไม่ใส่ 0 เพราะ 0 แปลว่า "ตั้งราคาไว้ 0 บาทจริง ๆ" ซึ่งคนละความหมายกัน)
+        function recalcBillingRowTotals(tr) {
+            const qtyEl = tr.querySelector('[data-field="qty"]');
+            if (!qtyEl) return;
+            const qtyParsed = parseFloat(qtyEl.value);
+            const qty = isFinite(qtyParsed) ? qtyParsed : 0;
+
+            [['unit_price', 'total_price'], ['unit_price_contractor', 'total_price_contractor']].forEach(function (pair) {
+                const priceEl = tr.querySelector('[data-field="' + pair[0] + '"]');
+                const cell = tr.querySelector('[data-col="' + pair[1] + '"]');
+                if (!priceEl || !cell) return;
+                const raw = (priceEl.value || '').trim();
+                if (raw === '') { cell.textContent = ''; return; }
+                const price = parseFloat(raw);
+                if (!isFinite(price)) { cell.textContent = ''; return; }
+                const total = qty * price;
+                // ปัดเศษทศนิยม 2 ตำแหน่ง กันเลขทศนิยมยาวเฟื้อยแบบ 0.30000000000000004
+                cell.textContent = String(Math.round(total * 100) / 100);
             });
         }
 
         // ดึงรายละเอียด/ราคาอะไหล่จาก Part Code แล้วเติมลงแถวนั้นในตารางวางบิล (ยังไม่บันทึก จนกว่าจะกด 💾)
+        //
+        // ⚠ ดึงเฉพาะตอน "รหัสอะไหล่เปลี่ยนจริง" เท่านั้น
+        //
+        // บั๊กเดิม: ผูกไว้กับ blur ของช่อง Part Code แล้วดึงทุกครั้งที่คลิกออกจากช่อง
+        // ถึงจะไม่ได้แก้รหัสเลยก็ตาม แล้วเขียนทับราคา/รายละเอียด/หน่วย ด้วยค่าจากคลังทุกครั้ง
+        // ผลคือ แอดมินแก้ "ราคา/หน่วย" หรือ "ราคา/หน่วย (ผู้รับเหมา)" เองไว้
+        // พอเผลอคลิกผ่านช่อง Part Code ทีเดียว ราคาที่แก้ไว้ก็ถูกทับกลับเป็นราคาคลังทันที
+        // เงียบมาก ไม่มีข้อความเตือน ผู้ใช้เลยรู้สึกว่า "แก้ราคาแล้วไม่ติด"
+        //
+        // ตอนนี้เทียบกับ data-last-lookup ก่อน ถ้ารหัสเดิมจะไม่ทำอะไรเลย ราคาที่แก้เองจึงอยู่ครบ
+        // ถ้าเปลี่ยนรหัสจริงค่อยดึงใหม่ (คนละอะไหล่ = ราคาใหม่ ถูกต้องแล้วที่จะทับ)
         function doLookupPartForBillingRow(tr) {
-            const code = tr.querySelector('[data-field="part_code"]').value.trim();
+            const codeInput = tr.querySelector('[data-field="part_code"]');
+            if (!codeInput) return;
+            const code = codeInput.value.trim();
             if (!code) return;
+
+            const lastLookup = (codeInput.dataset.lastLookup || '').trim();
+            if (code === lastLookup) return;   // รหัสไม่ได้เปลี่ยน = ไม่ต้องดึงทับอะไรทั้งนั้น
 
             // อะไหล่นอกระบบ (NP) ไม่มีในตาราง parts ถ้าไปค้นจะขึ้น "ไม่พบรหัส" สีแดงทุกครั้งจนเข้าใจผิดว่ากรอกผิด
             // แถวแบบนี้ให้แอดมินพิมพ์รายละเอียด/ราคาในตารางเองแล้วกดบันทึก จึงข้ามการค้นหาไปเลย
             if (isManualPartCode(code)) {
+                codeInput.dataset.lastLookup = code;
                 const companyInput = tr.querySelector('[data-field="company"]');
                 if (companyInput && !companyInput.value.trim()) companyInput.value = 'บริษัท ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด';
                 showAlert('success', 'อะไหล่นอกระบบ ' + code + ' — พิมพ์รายละเอียดและราคาในแถวนี้เอง แล้วกด 💾 เพื่อบันทึก');
@@ -4713,6 +4918,7 @@
             if (typeof google !== 'undefined' && google.script) {
                 google.script.run.withSuccessHandler(function(res) {
                     if (res && res.found) {
+                        codeInput.dataset.lastLookup = code;
                         tr.querySelector('[data-field="part_detail"]').value = [res.name, res.brand, res.model].filter(Boolean).join(' - ');
                         tr.querySelector('[data-field="warranty_months"]').value = res.warranty || '';
                         tr.querySelector('[data-field="unit"]').value = res.unit || '';
@@ -4721,7 +4927,7 @@
                         // ราคาผู้รับเหมา - มีแค่ในตารางวางบิลหลัก (แอดมิน) เท่านั้น เช็คว่ามีช่องนี้ก่อนเซ็ตค่า (แถวอื่นอาจไม่มีคอลัมน์นี้)
                         const contractorPriceInput = tr.querySelector('[data-field="unit_price_contractor"]');
                         if (contractorPriceInput) contractorPriceInput.value = res.priceContractor || 0;
-                        showAlert('success', 'พบข้อมูลอะไหล่ ' + code + ' แล้ว - อย่าลืมกด 💾 เพื่อบันทึก');
+                        showAlert('success', 'พบข้อมูลอะไหล่ ' + code + ' แล้ว - ราคาถูกเติมจากคลังให้แล้ว แก้เองต่อได้ · อย่าลืมกด 💾');
                     } else {
                         showAlert('error', 'ไม่พบรหัสอะไหล่ ' + code + ' ในระบบ');
                     }
@@ -4740,10 +4946,128 @@
             document.getElementById('modalCustomerCase').textContent = customerCase || '';
             const assetEl = document.getElementById('modalAssetId');
             if (assetEl) assetEl.textContent = (assetId && String(assetId).trim()) ? assetId : '(ยังไม่ระบุ)';
+            renderModalExistingParts(customerCase, assetId);
             document.getElementById('modalPartRows').innerHTML = '';
             modalPartRowCount = 0;
             addModalPartRow();
             document.getElementById('addProductModal').classList.remove('hidden');
+        }
+
+        // แสดงอะไหล่ที่ผูกกับ "เลขงาน + เลขทรัพย์สิน" เดียวกันนี้อยู่แล้ว
+        // อ่านจากข้อมูลที่โหลดมาแล้วในหน้าจอ (currentBillingData) ไม่ต้องยิงเซิร์ฟเวอร์ใหม่ จึงขึ้นทันที
+        function renderModalExistingParts(customerCase, assetId) {
+            const box = document.getElementById('modalExistingParts');
+            if (!box) return;
+            const wantAsset = (assetId === null || assetId === undefined) ? '' : String(assetId).trim();
+            const existing = (currentBillingData || []).filter(function (r) {
+                if (String(r.customer_case || '') !== String(customerCase || '')) return false;
+                const rowAsset = (r.asset_id === null || r.asset_id === undefined) ? '' : String(r.asset_id).trim();
+                return rowAsset === wantAsset;
+            // แถวที่ยังไม่มีรหัสอะไหล่คือแถวเปล่าที่ระบบสร้างรอไว้ตอนจับคู่ ไม่ใช่อะไหล่จริง จึงไม่ต้องโชว์
+            }).filter(function (r) { return r.part_code && String(r.part_code).trim(); });
+
+            if (existing.length === 0) {
+                box.classList.add('hidden');
+                box.innerHTML = '';
+                return;
+            }
+
+            const esc = function (v) {
+                return (v === null || v === undefined) ? '' : String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            };
+            const money = function (v) {
+                if (v === null || v === undefined || v === '') return '-';
+                const n = parseFloat(v);
+                return isFinite(n) ? n.toLocaleString('th-TH', { minimumFractionDigits: 2 }) : '-';
+            };
+
+            // การ์ดหน้าตาเดียวกับกล่อง "เพิ่มอะไหล่" ด้านล่าง เพื่อให้ดูเป็นชุดเดียวกัน
+            // แก้ได้เฉพาะ "จำนวน" ในหน้านี้ ส่วนช่องอื่นแก้ที่ตารางวางบิลเหมือนเดิม
+            const cardsHtml = existing.map(function (r) {
+                const hasCt = !(r.unit_price_contractor === null || r.unit_price_contractor === undefined || r.unit_price_contractor === '');
+                const ctText = hasCt ? money(r.unit_price_contractor) : '<span class="text-amber-600 font-semibold">ยังไม่ตั้งราคา</span>';
+                return ''
+                + '<div class="border border-slate-200 rounded-lg p-3.5 bg-white" data-existing-id="' + esc(r.id) + '">'
+                +   '<div class="grid grid-cols-1 md:grid-cols-3 gap-4">'
+                +     '<div>'
+                +       '<label class="block text-slate-700 text-sm font-semibold mb-1">รหัสสินค้า</label>'
+                +       '<input type="text" value="' + esc(r.part_code) + '" readonly class="w-full px-3 py-1.5 rounded-md border border-slate-200 bg-slate-50 text-sm text-slate-600">'
+                +       '<p class="text-xs mt-1 text-slate-400" style="white-space:normal;">' + esc(r.part_detail || '-') + '</p>'
+                +     '</div>'
+                +     '<div>'
+                +       '<label class="block text-slate-700 text-sm font-semibold mb-1">จำนวน <span class="text-blood-600">(แก้ได้)</span></label>'
+                +       '<div class="flex gap-2">'
+                +         '<input type="number" min="0" step="any" value="' + esc(r.qty) + '" class="existing_qty flex-1 px-3 py-1.5 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">'
+                +         '<span class="self-center text-xs text-slate-400 whitespace-nowrap">' + esc(r.unit || '') + '</span>'
+                +       '</div>'
+                +       '<button type="button" onclick="saveExistingPartQty(\'' + esc(r.id) + '\')" class="existing_saveBtn mt-1.5 text-xs bg-blood-600 text-white px-3 py-1 rounded hover:bg-blood-700">'
+                +         '<i class="fa-solid fa-floppy-disk mr-1"></i> บันทึกจำนวน'
+                +       '</button>'
+                +       '<p class="existing_status text-xs mt-1 text-slate-400"></p>'
+                +     '</div>'
+                +     '<div>'
+                +       '<label class="block text-slate-700 text-sm font-semibold mb-1">ราคา/หน่วย</label>'
+                +       '<div class="text-sm text-slate-700">CJ: <b>' + money(r.unit_price) + '</b></div>'
+                +       '<div class="text-sm text-slate-700 mt-0.5">ผรม.: <b>' + ctText + '</b></div>'
+                +       '<p class="text-xs mt-1 text-slate-400">' + esc(billingTypeLabel(r.billing_type)) + '</p>'
+                +     '</div>'
+                +   '</div>'
+                + '</div>';
+            }).join('');
+
+            box.innerHTML = ''
+                + '<div class="border border-slate-200 rounded-xl overflow-hidden">'
+                +   '<div class="bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 border-b border-slate-200">'
+                +     'อะไหล่ที่มีอยู่แล้วของเลขทรัพย์สินนี้ (' + existing.length + ' ชิ้น)'
+                +     '<span class="font-normal text-slate-400"> · แก้จำนวนได้ตรงนี้เลย · ช่องอื่นแก้ที่ตารางวางบิล</span>'
+                +   '</div>'
+                +   '<div class="p-3 space-y-3 bg-slate-50/50">' + cardsHtml + '</div>'
+                + '</div>';
+            box.classList.remove('hidden');
+        }
+
+        // บันทึก "จำนวน" ของอะไหล่ที่มีอยู่แล้ว จากในหน้าต่างเพิ่มอะไหล่
+        //
+        // เซิร์ฟเวอร์จะคำนวณราคารวมทั้ง 2 ฝั่งให้ใหม่เองจากจำนวนที่เปลี่ยน (สูตรเดียวกับในตาราง)
+        // เสร็จแล้วอัปเดตข้อมูลในหน่วยความจำ + วาดตารางวางบิลข้างหลังใหม่ จะได้ตรงกันทันที
+        function saveExistingPartQty(id) {
+            const card = document.querySelector('#modalExistingParts [data-existing-id="' + id + '"]');
+            if (!card) return;
+            const qtyEl = card.querySelector('.existing_qty');
+            const statusEl = card.querySelector('.existing_status');
+            const btn = card.querySelector('.existing_saveBtn');
+            const qty = (qtyEl.value || '').trim();
+            if (qty === '' || !isFinite(parseFloat(qty)) || parseFloat(qty) < 0) {
+                statusEl.textContent = 'กรุณากรอกจำนวนเป็นตัวเลขที่ไม่ติดลบ';
+                statusEl.className = 'existing_status text-xs mt-1 text-red-500';
+                return;
+            }
+
+            btn.disabled = true;
+            statusEl.textContent = 'กำลังบันทึก...';
+            statusEl.className = 'existing_status text-xs mt-1 text-slate-400';
+
+            runServerCall('updateBillingDocumentRow', [currentSession.username, currentSession.token, id, { qty: qty }], function (res) {
+                btn.disabled = false;
+                if (res && res.success) {
+                    const cached = (currentBillingData || []).find(function (r) { return String(r.id) === String(id); });
+                    if (cached) {
+                        cached.qty = qty;
+                        if (res.row) Object.keys(res.row).forEach(function (k) { cached[k] = res.row[k]; });
+                    }
+                    statusEl.textContent = 'บันทึกแล้ว' + (res.row ? (' · ราคารวม CJ ' + (res.row.total_price ?? '-') + ' · ผรม. ' + (res.row.total_price_contractor ?? '-')) : '');
+                    statusEl.className = 'existing_status text-xs mt-1 text-emerald-600 font-semibold';
+                    // วาดตารางข้างหลังใหม่ ให้ตัวเลขตรงกับที่เพิ่งแก้
+                    renderBillingGrid(getBillingRowsForDisplay());
+                } else {
+                    statusEl.textContent = (res && res.message) || 'บันทึกล้มเหลว';
+                    statusEl.className = 'existing_status text-xs mt-1 text-red-500';
+                }
+            }, function (err) {
+                btn.disabled = false;
+                statusEl.textContent = 'เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : '');
+                statusEl.className = 'existing_status text-xs mt-1 text-red-500';
+            });
         }
 
         function closeAddProductModal() {
@@ -5985,6 +6309,20 @@
                     // ยังถูกตัดออกเหมือนเดิม กด CSV (CJ) แล้วขึ้นว่าไม่มีรายการ เหมือนปุ่มเสีย
                     const cached = (currentBillingData || []).find(r => String(r.id) === String(id));
                     if (cached) Object.keys(fields).forEach(k => { cached[k] = fields[k]; });
+
+                    // เติมค่าที่เซิร์ฟเวอร์คำนวณให้กลับลงหน้าจอ (ราคา/รวม ทั้ง 2 ฝั่ง)
+                    // ช่องพวกนี้เป็น readonly หน้าแอปคำนวณเองไม่ได้ ถ้าไม่เติมกลับ แอดมินจะเห็นเลขเก่าค้างอยู่
+                    // โดยเฉพาะตอนแก้ "ราคา/หน่วย (ผู้รับเหมา)" ซึ่งเป็นสิ่งที่ต้องมาแก้ทีหลังบ่อย ๆ
+                    if (res.row) {
+                        if (cached) Object.keys(res.row).forEach(k => { cached[k] = res.row[k]; });
+                        ['total_price', 'total_price_contractor'].forEach(function (k) {
+                            const cell = tr.querySelector('[data-col="' + k + '"]');
+                            if (!cell) return;
+                            const v = res.row[k];
+                            cell.textContent = (v === null || v === undefined || v === '') ? '' : v;
+                        });
+                    }
+
                     const typeSel = tr.querySelector('[data-field="billing_type"]');
                     if (typeSel) typeSel.className = 'grid-input w-full px-1 py-1 rounded border text-xs ' + billingTypeSelectClass(typeSel.value);
                     updateBillingExportButtonCounts();
@@ -6076,9 +6414,11 @@
                 prevCustomerCase = row.customer_case;
                 csv += fieldOrder.map(f => {
                     let val = (f === 'seq' && isSameSeqAsPrev) ? '' : row[f];
-                    // ถ้าบังคับราคาผู้รับเหมาแต่แถวนี้ยังไม่เคยตั้งราคาผู้รับเหมาไว้ (ข้อมูลเก่า/ลืมกรอก) ให้ fallback ไปใช้ราคา CJ แทนชั่วคราว กันเห็นค่าว่างเปล่า
+                    // ⚠⚠ ห้ามเอาราคา CJ มาใส่ในไฟล์ฝั่งผู้รับเหมาเด็ดขาด
+                    // ของเดิม fallback ไปใช้ราคา CJ เมื่อยังไม่ได้ตั้งราคาผู้รับเหมา = ราคาที่ CR เก็บกับ CJ หลุดออกไปทั้งไฟล์
+                    // แถวที่ยังไม่ตั้งราคาให้ลงขีดกลางแทน
                     if (useContractorPricing && (f === 'unit_price_contractor' || f === 'total_price_contractor') && (val === null || val === undefined || val === '')) {
-                        val = f === 'unit_price_contractor' ? row.unit_price : row.total_price;
+                        val = '-';
                     }
                     return textForcedFields.indexOf(f) !== -1 ? forceTextForExcel(val) : csvEscape(val);
                 }).join(',') + '\r\n';
@@ -6211,6 +6551,65 @@
         // สร้าง PDF ตารางวางบิลแบบดาวน์โหลดตรง - ส่งข้อมูลดิบไปให้เซิร์ฟเวอร์สร้างผ่าน Google Docs API
         // (เชื่อถือได้กว่าการแปลง HTML->PDF ตรงๆ มาก เพราะควบคุมสี/ตาราง/โลโก้ผ่าน DocumentApp โดยตรง)
         // pricingMode: ไม่ใส่ = ใช้พฤติกรรมเดิม (ตาม role ของ session) / 'cj' = บังคับราคา CJ / 'contractor' = บังคับราคาผู้รับเหมา (ใช้กับปุ่มแยกของแอดมิน)
+        // ใบเขียวฝั่งผู้รับเหมา เลือกตามช่วงวันที่ (ข้ามรอบบิลได้)
+        //
+        // ต่างจากปุ่ม PDF ปกติตรงที่ "ไม่ใช้ข้อมูลบนหน้าจอเลย" แต่ให้เซิร์ฟเวอร์ไปดึงใหม่ตามช่วงวันที่
+        // จึงได้ครบทั้งระบบ ไม่ถูกจำกัดด้วยรอบบิล/ตัวกรองที่เลือกค้างไว้บนหน้าจอ
+        //
+        // ⚠ เอกสารนี้เป็นของฝั่งผู้รับเหมาเสมอ เซิร์ฟเวอร์บังคับใช้ราคาผู้รับเหมาล้วน ราคา CJ ไม่ปนออกไป
+        function downloadContractorRangePdf(btnEl) {
+            const start = document.getElementById('contractorRangeStart').value;
+            const end = document.getElementById('contractorRangeEnd').value;
+            if (!start || !end) {
+                showAlert('error', 'กรุณาเลือกช่วงวันที่ให้ครบทั้ง "ตั้งแต่" และ "ถึงวันที่" ก่อน');
+                return;
+            }
+            const dateField = document.getElementById('contractorRangeDateField').value;
+            const contractorName = document.getElementById('contractorRangeContractor').value;
+
+            const btn = btnEl || document.getElementById('btn_downloadContractorRangePdf');
+            const btnLabel = btn.innerHTML;
+            btn.disabled = true;
+            btn.classList.add('opacity-60', 'cursor-not-allowed');
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i> กำลังสร้าง PDF...';
+            function resetBtn() {
+                btn.disabled = false;
+                btn.classList.remove('opacity-60', 'cursor-not-allowed');
+                btn.innerHTML = btnLabel;
+            }
+
+            runServerCall('downloadContractorBillingPdfByRange',
+                [currentSession.username, currentSession.token, start, end, dateField, contractorName],
+                function (res) {
+                    resetBtn();
+                    if (!res || !res.success) {
+                        showAlert('error', (res && res.message) || 'สร้าง PDF ล้มเหลว');
+                        return;
+                    }
+                    try {
+                        const byteCharacters = atob(res.base64);
+                        const byteNumbers = new Array(byteCharacters.length);
+                        for (let i = 0; i < byteCharacters.length; i++) byteNumbers[i] = byteCharacters.charCodeAt(i);
+                        const blob = new Blob([new Uint8Array(byteNumbers)], { type: 'application/pdf' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = res.filename || 'ใบเขียวผู้รับเหมา.pdf';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        showAlert('success', 'ดาวน์โหลดสำเร็จ ' + (res.rowCount || 0) + ' แถว (ราคาผู้รับเหมาล้วน)');
+                    } catch (e) {
+                        showAlert('error', 'ประมวลผลไฟล์ PDF ล้มเหลว: ' + e.message);
+                    }
+                },
+                function (err) {
+                    resetBtn();
+                    showAlert('error', 'เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : ''));
+                }, 120000);
+        }
+
         function downloadBillingPdf(pricingMode, btnElOverride) {
             if (!currentBillingData || currentBillingData.length === 0) {
                 showAlert('error', 'ยังไม่มีข้อมูล กรุณากด "โหลด/รีเฟรชข้อมูล" ก่อน');
@@ -7111,7 +7510,8 @@
                 cols.forEach(([key, editable, type]) => {
                     const val = row[key] !== undefined && row[key] !== null ? row[key] : '';
                     if (type === 'readonly') {
-                        cellsHtml += `<td class="p-2 text-slate-500 whitespace-nowrap">${val}</td>`;
+                        // ใส่ data-col ไว้ด้วย เพื่อให้ตอนกดบันทึกเติมราคารวมที่เซิร์ฟเวอร์คำนวณกลับลงช่องนี้ได้
+                        cellsHtml += `<td data-col="${key}" class="p-2 text-slate-500 whitespace-nowrap">${val}</td>`;
                     } else if (type === 'yesno') {
                         cellsHtml += `<td class="p-1">
                             <select data-field="${key}" class="grid-input w-full px-1 py-1 rounded border border-slate-200 text-xs bg-white">
@@ -7127,7 +7527,8 @@
                             </select>
                         </td>`;
                     } else if (type === 'partcode') {
-                        cellsHtml += `<td class="p-1"><input type="text" data-field="${key}" value="${String(val).replace(/"/g,'&quot;')}" class="grid-input completed-part-code-input w-full px-2 py-1 rounded border border-slate-200 text-xs" placeholder="เช่น P003"></td>`;
+                        // data-last-lookup เหมือนตารางวางบิลหลัก — กันดึงราคาจากคลังมาทับราคาที่แก้เองไว้
+                        cellsHtml += `<td class="p-1"><input type="text" data-field="${key}" value="${String(val).replace(/"/g,'&quot;')}" data-last-lookup="${String(val).replace(/"/g,'&quot;')}" class="grid-input completed-part-code-input w-full px-2 py-1 rounded border border-slate-200 text-xs" placeholder="เช่น P003"></td>`;
                     } else {
                         // เหตุผลเดียวกับตารางวางบิลหลัก: ช่องตัวเลขต้องรับทศนิยมได้ (เมตร/กก. ใช้จริงไม่ลงตัว)
                         const stepAttr2 = type === 'number' ? ' step="any"' : '';
@@ -7167,6 +7568,18 @@
                     // ปุ่ม CSV ของบิลรอบจะยังกรองด้วยประเภทเก็บเงินค่าเก่า
                     const cachedRow = (currentCompletedRoundDetailRows || []).find(r => String(r.id) === String(id));
                     if (cachedRow) Object.keys(fields).forEach(k => { cachedRow[k] = fields[k]; });
+
+                    // เติมราคารวมที่เซิร์ฟเวอร์คำนวณให้กลับลงช่อง readonly (เหตุผลเดียวกับ saveBillingRow)
+                    if (res.row) {
+                        if (cachedRow) Object.keys(res.row).forEach(k => { cachedRow[k] = res.row[k]; });
+                        ['total_price', 'total_price_contractor'].forEach(function (k) {
+                            const cell = tr.querySelector('[data-col="' + k + '"]');
+                            if (!cell) return;
+                            const v = res.row[k];
+                            cell.textContent = (v === null || v === undefined || v === '') ? '' : v;
+                        });
+                    }
+
                     const typeSelEl = tr.querySelector('[data-field="billing_type"]');
                     if (typeSelEl) typeSelEl.className = 'grid-input w-full px-1 py-1 rounded border text-xs ' + billingTypeSelectClass(typeSelEl.value);
                     showAlert('success', 'บันทึกแถวเรียบร้อย');
@@ -7235,9 +7648,9 @@
             csvRows.forEach(row => {
                 csv += fieldOrder.map(f => {
                     let val = row[f];
-                    // ถ้าบังคับราคาผู้รับเหมาแต่แถวนี้ยังไม่เคยตั้งราคาผู้รับเหมาไว้ ให้ fallback ไปใช้ราคา CJ แทนชั่วคราว กันเห็นค่าว่างเปล่า
+                    // ⚠⚠ ห้ามเอาราคา CJ มาใส่ในไฟล์ฝั่งผู้รับเหมาเด็ดขาด (เหตุผลเดียวกับใน exportBillingCSV)
                     if (useContractorPricing && (f === 'unit_price_contractor' || f === 'total_price_contractor') && (val === null || val === undefined || val === '')) {
-                        val = f === 'unit_price_contractor' ? row.unit_price : row.total_price;
+                        val = '-';
                     }
                     return textForcedFields.indexOf(f) !== -1 ? forceTextForExcel(val) : csvEscape(val);
                 }).join(',') + '\r\n';

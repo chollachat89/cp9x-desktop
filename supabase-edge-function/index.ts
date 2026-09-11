@@ -331,6 +331,15 @@ async function generateBillingPdfBase64(rows: any[], isAdmin: boolean): Promise<
     const contractorNames = Object.keys(contractorSet);
     const singleContractorName = contractorNames.length === 1 ? contractorNames[0] : null;
 
+    // ⚠⚠ จุดที่ห้ามพลาดเด็ดขาด: ราคาฝั่ง CJ ต้องไม่หลุดไปอยู่ในเอกสารของผู้รับเหมา
+    //
+    // บั๊กเดิม: ถ้าแถวไหนยังไม่ได้ตั้ง unit_price_contractor โค้ดจะ "fallback ไปใช้ราคา CJ แทน"
+    // ผลคือผู้รับเหมาเปิดใบเขียวของตัวเองแล้วเห็นราคาที่ CR เก็บกับ CJ เต็ม ๆ ซึ่งเป็นราคาต้นทุน/กำไรของเรา
+    // เงียบมาก ไม่มี error ไม่มีใครรู้ จนกว่าผู้รับเหมาจะเอ่ยขึ้นมาเอง
+    //
+    // แก้เป็น: ฝั่งผู้รับเหมาอ่านได้เฉพาะคอลัมน์ราคาผู้รับเหมาเท่านั้น
+    // แถวที่ยังไม่ได้ตั้งราคาจะคืน null แล้วไปแสดงเป็นขีดกลาง "-" ในเอกสาร
+    // (คืน null ไม่ใช่ 0 เพื่อให้แยกออกจากของที่ตั้งราคาไว้ 0 บาทจริง ๆ)
     function getDisplayPriceAndTotal(row: any) {
       const qty = parseFloat(row.qty) || 0;
       if (isAdmin) {
@@ -339,13 +348,17 @@ async function generateBillingPdfBase64(rows: any[], isAdmin: boolean): Promise<
         return { price, total };
       }
       const hasContractorPrice = row.unit_price_contractor !== null && row.unit_price_contractor !== undefined && row.unit_price_contractor !== '';
-      const price = hasContractorPrice ? (parseFloat(row.unit_price_contractor) || 0) : (parseFloat(row.unit_price) || 0);
-      const total = hasContractorPrice ? (parseFloat(row.total_price_contractor) || (qty * price)) : (parseFloat(row.total_price) || (qty * price));
+      if (!hasContractorPrice) return { price: null, total: null };
+      const price = parseFloat(row.unit_price_contractor) || 0;
+      const total = (row.total_price_contractor !== null && row.total_price_contractor !== undefined && row.total_price_contractor !== '')
+        ? (parseFloat(row.total_price_contractor) || 0)
+        : (qty * price);
       return { price, total };
     }
 
+    // แถวที่ไม่มีราคาผู้รับเหมาไม่ถูกนับเข้ายอดรวม (นับเป็น 0) ไม่ใช่เอาราคา CJ มาบวก
     let grandTotal = 0;
-    rows.forEach((r) => { grandTotal += getDisplayPriceAndTotal(r).total; });
+    rows.forEach((r) => { grandTotal += (getDisplayPriceAndTotal(r).total || 0); });
 
     const headers = ['ลำดับ', 'Customer Case', 'รหัสสาขา', 'ชื่อสาขา', 'งานบริการ', 'เลขทรัพย์สิน', 'Part Code', 'รายละเอียดอะไหล่', 'ประกัน(ด.)', 'จำนวน', 'หน่วย', 'ราคา/หน่วย', 'ราคา/รวม', 'วันที่รับแจ้ง', 'วันที่เข้างาน', 'Quotation', 'อะไหล่เก่าคืน CJ', 'ผู้รับผิดชอบ', 'บริษัท'];
     const colWidths = [30, 85, 45, 85, 75, 65, 55, 130, 40, 35, 35, 55, 55, 60, 60, 55, 50, 60, 75];
@@ -368,8 +381,9 @@ async function generateBillingPdfBase64(rows: any[], isAdmin: boolean): Promise<
         row.customer_case || '', row.branch_code || '', row.branch_name || '', row.service_type || '',
         row.asset_id || '', row.part_code || '', row.part_detail || '', row.warranty_months || '',
         row.qty !== null && row.qty !== undefined ? String(row.qty) : '', row.unit || '',
-        price ? price.toLocaleString('th-TH', { minimumFractionDigits: 2 }) : '',
-        total ? total.toLocaleString('th-TH', { minimumFractionDigits: 2 }) : '',
+        // price/total = null เฉพาะฝั่งผู้รับเหมาที่ยังไม่ได้ตั้งราคา -> แสดงขีดกลาง ไม่ใช่ปล่อยว่างและไม่ใช่ราคา CJ
+        price === null ? '-' : (price ? price.toLocaleString('th-TH', { minimumFractionDigits: 2 }) : ''),
+        total === null ? '-' : (total ? total.toLocaleString('th-TH', { minimumFractionDigits: 2 }) : ''),
         row.req_date || '', row.visit_date || '', row.quotation_ref || '', row.return_old_part || '',
         row.responsible || '', row.company || '',
       ];
@@ -2589,9 +2603,39 @@ Deno.serve(async (req: Request) => {
 
       // ==================== ตารางวางบิล ====================
       case 'getBillingDocuments': {
-        const [username, token, contractorFilter, jobIdsFilter, roundFilter] = args;
+        const [username, token, contractorFilter, jobIdsFilter, roundFilter, searchTermRaw] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ error: 'กรุณาเข้าสู่ระบบใหม่ (session หมดอายุหรือไม่ถูกต้อง)' });
+
+        // ---- โหมดค้นหา: พิมพ์คำค้นแล้วได้ข้อมูลเลย ไม่ต้องเลือกรอบบิลก่อน ----
+        //
+        // ปัญหาเดิม: ตารางแสดงแค่ "งานที่ยังไม่ตัดบิล" หรือ "รอบบิลที่เลือกไว้" เท่านั้น
+        // งานที่ตัดบิลไปแล้วจะหาไม่เจอเลย ถ้าไม่รู้ว่าอยู่รอบไหนก็ต้องไล่เปิดทีละรอบ
+        // โหมดนี้ค้นข้ามทุกรอบและทุกสถานะให้เลย เพื่อให้เข้าไปแก้อะไหล่ได้เร็ว
+        const searchTerm = (searchTermRaw === null || searchTermRaw === undefined) ? '' : String(searchTermRaw).trim();
+        if (searchTerm) {
+          // ป้องกันอักขระพิเศษของ PostgREST (% _ , ( ) ) ที่ทำให้รูปแบบ or(...) เพี้ยน
+          const safe = searchTerm.replace(/[%_,()]/g, ' ').trim();
+          if (!safe) return jsonResponse([]);
+          const like = '*' + safe + '*';
+          let sq = supabase.from('billing_documents').select('*')
+            .or('customer_case.ilike.' + like + ',asset_id.ilike.' + like + ',part_code.ilike.' + like + ',branch_name.ilike.' + like)
+            .order('round_no', { ascending: false })
+            .order('contractor', { ascending: true })
+            .order('seq', { ascending: true })
+            .order('created_at', { ascending: true })
+            .limit(500);
+          if (session.role === 'admin') {
+            if (contractorFilter) sq = sq.eq('contractor', contractorFilter);
+          } else {
+            // ผู้รับเหมาค้นได้เฉพาะงานของตัวเองที่ถูกส่งบิลแล้วเท่านั้น เหมือนเงื่อนไขปกติทุกประการ
+            sq = excludeBillingTypes(sq.eq('contractor', session.displayName).eq('sent_to_contractor', true), BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
+          }
+          const { data: sData, error: sErr } = await sq;
+          if (sErr) return jsonResponse({ error: sErr.message });
+          return jsonResponse(sData || []);
+        }
+
         const isHistoryMode = roundFilter !== undefined && roundFilter !== null && roundFilter !== '';
         let q = supabase.from('billing_documents').select('*');
         if (isHistoryMode) {
@@ -2653,24 +2697,110 @@ Deno.serve(async (req: Request) => {
             clean[key] = fields[key] === '' ? null : fields[key];
           }
         });
+        // ราคารวม = จำนวน × ราคาต่อหน่วย — ใช้สูตรเดียวกันเป๊ะทั้งฝั่ง CJ และฝั่งผู้รับเหมา
+        // (หน้าแอปคำนวณสดด้วยสูตรเดียวกันตอนพิมพ์ ตัวเลขบนจอกับในฐานข้อมูลจึงตรงกันเสมอ)
+        //
+        // num() บังคับให้ได้ตัวเลขจริงเสมอ — ของเดิมใช้ `?? 0` ซึ่งกันได้แค่ null/undefined
+        // แต่ parseFloat('') คืน NaN ซึ่งไม่ใช่ nullish จึงรอดผ่าน ?? ไปได้
+        // สุดท้ายได้ NaN ไปคูณ แล้วเขียน NaN ลงคอลัมน์ตัวเลข = อัปเดตพังทั้งแถว
+        const num = (v: any): number => {
+          if (v === null || v === undefined || v === '') return 0;
+          const n = typeof v === 'number' ? v : parseFloat(v);
+          return isFinite(n) ? n : 0;
+        };
         if (clean.qty !== undefined || clean.unit_price !== undefined) {
-          const qty = clean.qty ?? parseFloat(fields.qty) ?? 0;
-          const unitPrice = clean.unit_price ?? parseFloat(fields.unit_price) ?? 0;
-          clean.total_price = (qty || 0) * (unitPrice || 0);
+          const qty = num(clean.qty !== undefined ? clean.qty : fields.qty);
+          const unitPrice = num(clean.unit_price !== undefined ? clean.unit_price : fields.unit_price);
+          clean.total_price = qty * unitPrice;
         }
         if (clean.qty !== undefined || clean.unit_price_contractor !== undefined) {
-          const qty = clean.qty ?? parseFloat(fields.qty) ?? 0;
-          const unitPriceContractor = clean.unit_price_contractor ?? parseFloat(fields.unit_price_contractor) ?? 0;
-          clean.total_price_contractor = (qty || 0) * (unitPriceContractor || 0);
+          const qty = num(clean.qty !== undefined ? clean.qty : fields.qty);
+          const unitPriceContractor = num(clean.unit_price_contractor !== undefined ? clean.unit_price_contractor : fields.unit_price_contractor);
+          clean.total_price_contractor = qty * unitPriceContractor;
         }
         // billing_type เป็นคอลัมน์ NOT NULL และมี CHECK ให้รับแค่ 'normal'/'claim'/'contractor_cr'
         // ถ้าปล่อยค่าว่างหรือค่าแปลกผ่านไป การอัปเดตจะพังทั้งแถว จึงบังคับให้ลงที่ 'normal' เสมอเมื่อไม่ใช่ค่าที่รู้จัก
         if (clean.billing_type !== undefined) {
           clean.billing_type = normalizeBillingType(clean.billing_type);
         }
-        const { error } = await supabase.from('billing_documents').update(clean).eq('id', id);
+        // คืนแถวที่อัปเดตแล้วกลับไปด้วย เพื่อให้หน้าแอปเอาไปเติมช่องที่คำนวณฝั่งเซิร์ฟเวอร์
+        // (ราคา/รวม และ ราคา/รวม (ผู้รับเหมา)) ได้ทันทีโดยไม่ต้องโหลดตารางใหม่ทั้งชุด
+        // ถ้าไม่คืนมา พอแอดมินแก้ "ราคา/หน่วย (ผู้รับเหมา)" แล้วกดบันทึก ช่องราคารวมจะยังเป็นเลขเก่า
+        // ดูเหมือนแก้ไม่ติด ทั้งที่ในฐานข้อมูลถูกต้องแล้ว
+        const { data: updatedRows, error } = await supabase
+          .from('billing_documents').update(clean).eq('id', id).select('*');
         if (error) return jsonResponse({ success: false, message: error.message });
-        return jsonResponse({ success: true });
+        return jsonResponse({ success: true, row: (updatedRows && updatedRows.length > 0) ? updatedRows[0] : null });
+      }
+
+      // ==================== ใบเขียวฝั่งผู้รับเหมา เลือกตามช่วงวันที่ ====================
+      // ใช้ตอนอยากได้ใบเขียวของผู้รับเหมาข้ามรอบบิล เช่น "ทั้งเดือนกันยายน" โดยไม่ต้องไล่โหลดทีละรอบ
+      //
+      // ⚠ เอกสารนี้เป็นของฝั่งผู้รับเหมา จึงเรียก generateBillingPdfBase64(rows, false) เสมอ
+      //   ต่อให้คนกดเป็นแอดมินก็ตาม ราคาที่ออกมาต้องเป็นราคาผู้รับเหมาล้วน ห้ามมีราคา CJ ปนเด็ดขาด
+      //   แถวที่ยังไม่ได้ตั้งราคาผู้รับเหมาจะขึ้นขีดกลาง ไม่ใช่ดึงราคา CJ มาแทน (ดู getDisplayPriceAndTotal)
+      case 'downloadContractorBillingPdfByRange': {
+        const [username, token, startDate, endDate, dateFieldRaw, contractorName] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ใช้เมนูนี้ได้' });
+        if (!startDate || !endDate) return jsonResponse({ success: false, message: 'กรุณาเลือกช่วงวันที่ให้ครบทั้งวันเริ่มและวันสิ้นสุด' });
+
+        // เลือกได้ว่าจะกรองด้วยวันไหน — visit_date (วันที่เข้างาน) หรือ req_date (วันที่รับแจ้ง)
+        const dateField = (dateFieldRaw === 'req_date') ? 'req_date' : 'visit_date';
+        const dateFieldLabel = dateField === 'req_date' ? 'วันที่รับแจ้ง' : 'วันที่เข้างาน';
+
+        const startD = new Date(startDate + 'T00:00:00');
+        const endD = new Date(endDate + 'T23:59:59');
+        if (isNaN(startD.getTime()) || isNaN(endD.getTime())) return jsonResponse({ success: false, message: 'รูปแบบวันที่ไม่ถูกต้อง' });
+        if (startD.getTime() > endD.getTime()) return jsonResponse({ success: false, message: 'วันเริ่มต้องไม่อยู่หลังวันสิ้นสุด' });
+
+        // ดึงเป็นก้อนละ 1000 แถวจนหมด กัน "ได้ไม่ครบแบบเงียบ ๆ" เมื่อข้อมูลสะสมหลายปี
+        //
+        // ⚠ ต้องสร้าง query ใหม่ทุกหน้าในลูป ห้ามสร้างไว้นอกลูปแล้วเรียก .range() ซ้ำ
+        //   ตัว query builder ของ PostgREST ใช้ซ้ำไม่ได้ เงื่อนไขจะสะสมทับกันจนได้ผลผิด
+        //   (ทำแบบเดียวกับที่ downloadAllBillingXlsx ทำไว้แล้ว)
+        const allRows: any[] = [];
+        const PAGE = 1000;
+        for (let page = 0; page < 50; page++) {
+          // ดึงเฉพาะแถวที่ "ส่งบิลให้ผู้รับเหมาแล้ว" เพราะใบเขียวผู้รับเหมาเกิดขึ้นหลังส่งบิลเท่านั้น
+          // และตัดประเภทที่ไม่เก็บเงินฝั่งผู้รับเหมาออก (เคลมประกัน 3 เดือน / ใบเสนอราคา)
+          let q = supabase.from('billing_documents').select('*').eq('sent_to_contractor', true);
+          q = excludeBillingTypes(q, BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
+          if (contractorName) q = q.eq('contractor', contractorName);
+          q = q.order('round_no', { ascending: true }).order('contractor', { ascending: true })
+               .order('seq', { ascending: true }).order('created_at', { ascending: true });
+          const { data, error } = await q.range(page * PAGE, page * PAGE + PAGE - 1);
+          if (error) return jsonResponse({ success: false, message: 'ดึงข้อมูลล้มเหลว: ' + error.message });
+          const chunk = data || [];
+          allRows.push(...chunk);
+          if (chunk.length < PAGE) break;
+        }
+
+        // วันที่ในตารางเก็บเป็นข้อความ DD/MM/YYYY กรองใน SQL ไม่ได้ ต้องแปลงแล้วเทียบฝั่งนี้
+        // แถวที่อ่านวันที่ไม่ออก (ข้อมูลเก่ารูปแบบเพี้ยน) จะไม่ถูกนับเข้าช่วง — ไม่เดาให้
+        const rows = allRows.filter((r: any) => {
+          const d = parseReqDateString(r[dateField]);
+          if (!d) return false;
+          return d.getTime() >= startD.getTime() && d.getTime() <= endD.getTime();
+        });
+
+        if (rows.length === 0) {
+          return jsonResponse({
+            success: false,
+            message: 'ไม่พบรายการในช่วง ' + startDate + ' ถึง ' + endDate + ' (กรองด้วย' + dateFieldLabel + ')'
+              + (contractorName ? (' ของผู้รับเหมา "' + contractorName + '"') : '')
+              + ' — ลองขยายช่วงวันที่ หรือเปลี่ยนไปกรองด้วยวันอีกแบบ',
+          });
+        }
+
+        const result = await generateBillingPdfBase64(renumberBillingRowsForDocument(rows), false);
+        if (!result.success) return jsonResponse(result);
+        const safe = (s: string) => (s || '').replace(/[\\/:*?"<>|]/g, '_');
+        result.filename = 'ใบเขียวผู้รับเหมา_' + (contractorName ? (safe(contractorName) + '_') : '')
+          + safe(startDate) + '_ถึง_' + safe(endDate) + '.pdf';
+        result.rowCount = rows.length;
+        return jsonResponse(result);
       }
 
       case 'deleteBillingDocumentRow': {
