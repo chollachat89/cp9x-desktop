@@ -656,6 +656,26 @@
                     </select>
                 </div>
 
+                <!-- ค้นหาในตาราง — ใช้ตอนต้องการแก้อะไหล่ของเลขงานใดเลขงานหนึ่งโดยไม่ต้องเลื่อนหาทีละแถว
+                     ต่างจากตัวกรอง 2 อันข้างบนตรงที่อันนี้ "ไม่ยิงไปเซิร์ฟเวอร์" กรองจากข้อมูลที่โหลดมาแล้วทันที
+                     และตั้งใจให้ "ไม่มีผลกับปุ่มดาวน์โหลด" เพื่อกันพลาดหนัก:
+                     ถ้าให้มีผลด้วย พอลืมล้างช่องค้นหาแล้วกด CSV จะได้บิลไม่ครบแถวส่งให้ CJ = เก็บเงินขาด -->
+                <div class="mb-4">
+                    <label class="block text-slate-700 text-xs font-semibold mb-1">ค้นหาในตาราง (เลขงาน / เลขทรัพย์สิน / รหัสอะไหล่)</label>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <div class="relative">
+                            <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+                            <input type="text" id="billingJobSearch" oninput="debouncedApplyBillingSearch()" placeholder="เช่น CM20260904-0169 หรือ 1300000 หรือ P003"
+                                class="pl-8 pr-8 py-2 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm min-w-[300px]">
+                            <button type="button" id="billingJobSearchClear" onclick="clearBillingSearch()" title="ล้างคำค้น"
+                                class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700">
+                                <i class="fa-solid fa-circle-xmark"></i>
+                            </button>
+                        </div>
+                        <span id="billingSearchNote" class="hidden text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"></span>
+                    </div>
+                </div>
+
                 <div id="billingAdminControls">
                     <div class="flex flex-wrap items-end gap-3 mb-4 p-4 bg-blood-50 border border-blood-200 border-dashed rounded-xl">
                         <div>
@@ -835,6 +855,9 @@
                                     </label>
                                     <label class="flex items-center gap-1.5 text-xs text-sky-800 cursor-pointer bg-sky-100 border border-sky-300 rounded-lg px-3 py-2" title="เก็บเฉพาะฝั่งผู้รับเหมา">
                                         <input type="checkbox" id="xlsxTypeContractorCr" checked class="rounded border-sky-400"> เคลมอะไหล่
+                                    </label>
+                                    <label class="flex items-center gap-1.5 text-xs text-orange-800 cursor-pointer bg-orange-100 border border-orange-300 rounded-lg px-3 py-2" title="เก็บเฉพาะฝั่ง CJ">
+                                        <input type="checkbox" id="xlsxTypeQuotation" checked class="rounded border-orange-400"> ใบเสนอราคา
                                     </label>
                                 </div>
                             </div>
@@ -2333,6 +2356,9 @@
         const debouncedFilterSubmissions = debounce(function () { filterSubmissions(); }, 250);
         const debouncedFilterCompletedJobs = debounce(function () { filterCompletedJobs(); }, 250);
         const debouncedFilterPausedList = debounce(function () { filterPausedList(); }, 250);
+        // ตารางวางบิลมีช่องกรอกในทุกแถว การวาดใหม่จึงหนักกว่าตารางอ่านอย่างเดียว
+        // ถ้าวาดใหม่ทุกตัวอักษรที่พิมพ์ จะหน่วงตอนข้อมูลเยอะ จึงหน่วงไว้เหมือนตารางอื่น
+        const debouncedApplyBillingSearch = debounce(function () { applyBillingSearch(); }, 250);
 
         // 1. สลับหน้าจอ (Tab Switcher)
         // เปิด/ปิด sidebar บนมือถือ (จอเล็กกว่า md ของ Tailwind) - กดปุ่มแฮมเบอร์เกอร์ที่แถบด้านบน
@@ -3048,6 +3074,10 @@
         function clearBillingTable() {
             currentBillingData = [];
             document.getElementById('billingBody').innerHTML = '';
+            // ล้างคำค้นไปด้วย ไม่งั้นพอโหลดชุดถัดไปมาจะโดนคำค้นเก่ากรองทิ้งทันที
+            // ผู้ใช้จะเห็นตารางว่างแล้วนึกว่าโหลดไม่ติด
+            const searchEl = document.getElementById('billingJobSearch');
+            if (searchEl && searchEl.value) { searchEl.value = ''; applyBillingSearch(); }
             const statusEl = document.getElementById('billingStatus');
             statusEl.textContent = 'ล้างหน้าจอแล้ว (ข้อมูลเดิมยังอยู่ในระบบ) — กด "โหลด/รีเฟรชข้อมูล" หรือ "ดูตัวอย่างก่อนบันทึกรอบบิล" เพื่อดูชุดถัดไป';
             statusEl.className = 'text-sm text-slate-400 mb-3';
@@ -3469,7 +3499,9 @@
                     return;
                 }
                 currentBillingData = res || [];
-                renderBillingGrid(getBillingRowsForDisplay());
+                // วาดผ่าน applyBillingSearch() แทนการวาดตรง ๆ เพื่อให้คำค้นที่ค้างอยู่ในช่องยังมีผลหลังโหลดใหม่
+                // (ถ้าวาดตรง ๆ ตารางจะเด้งกลับมาแสดงทุกแถว ทั้งที่ช่องค้นหายังมีข้อความอยู่ = ดูเหมือนค้นหาพัง)
+                applyBillingSearch();
                 const scopeNote = jobIdsFilter && jobIdsFilter.length > 0 ? ' (แสดงเฉพาะชุดที่จับคู่ล่าสุด — กด "โหลด/รีเฟรชข้อมูล" เพื่อดูทั้งหมด)'
                     : (roundFilter ? ' (ข้อมูลย้อนหลังของรอบที่ ' + roundFilter + ' — รวมที่ส่งแล้ว/ตัดบิลแล้วด้วย)' : '');
                 statusEl.textContent = 'พบ ' + currentBillingData.length + ' รายการ' + scopeNote + ' — พิมพ์ Part Code แล้วคลิกออกจากช่อง จะดึงราคา/รายละเอียดอัตโนมัติ';
@@ -4158,10 +4190,14 @@
         //   normal        = เก็บเงินปกติ         -> ขึ้นทั้งบิล CJ และบิลผู้รับเหมา
         //   claim         = เคลมประกัน 3 เดือน   -> ไม่เก็บเงินทั้ง 2 ฝั่ง
         //   contractor_cr = เคลมอะไหล่           -> ขึ้นเฉพาะบิลผู้รับเหมา ฝั่ง CJ ไม่เก็บ
+        //   quotation     = ใบเสนอราคา          -> ขึ้นเฉพาะบิล CJ ฝั่งผู้รับเหมาไม่เก็บ (ตรงข้ามกับเคลมอะไหล่)
         // ค่าที่เก็บในฐานข้อมูลยังเป็น 'claim'/'contractor_cr' เหมือนเดิม เปลี่ยนแค่ชื่อที่แสดงให้ผู้ใช้เห็น
-        const BILLING_TYPE_VALUES = ['normal', 'claim', 'contractor_cr'];
+        //
+        // ⚠ ต้องตรงกับค่าชุดเดียวกันใน index.ts ฝั่งเซิร์ฟเวอร์เสมอ ถ้าแก้ที่นี่ต้องไปแก้ที่นั่นด้วย
+        const BILLING_TYPE_VALUES = ['normal', 'claim', 'contractor_cr', 'quotation'];
         const BILLING_TYPES_EXCLUDED_FROM_CJ = ['claim', 'contractor_cr'];
-        const BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR = ['claim'];
+        // ใบเสนอราคาไม่เก็บเงินฝั่งผู้รับเหมา จึงต้องหายไปจากบิล/ตาราง/ฟอร์มของฝั่งผู้รับเหมาทั้งหมด
+        const BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR = ['claim', 'quotation'];
 
         function normalizeBillingType(v) {
             const s = (v === null || v === undefined) ? '' : String(v).trim();
@@ -4172,6 +4208,7 @@
             const t = normalizeBillingType(v);
             if (t === 'claim') return 'เคลมประกัน 3 เดือน';
             if (t === 'contractor_cr') return 'เคลมอะไหล่';
+            if (t === 'quotation') return 'ใบเสนอราคา';
             return 'เก็บเงินปกติ';
         }
 
@@ -4187,16 +4224,18 @@
         // สีของช่องเลือกประเภทเก็บเงิน - บอกด้วยสายตาว่าแถวนี้จะหายไปจากบิลฝั่งไหน
         //   เคลมประกัน 3 เดือน (เหลือง) = ไม่ขึ้นทั้งบิล CJ และบิลผู้รับเหมา
         //   เคลมอะไหล่ (ฟ้า)            = ขึ้นเฉพาะบิลผู้รับเหมา ฝั่ง CJ ไม่เก็บ
+        //   ใบเสนอราคา (ส้ม)            = ขึ้นเฉพาะบิล CJ ฝั่งผู้รับเหมาไม่เก็บ
         function billingTypeSelectClass(v) {
             const t = normalizeBillingType(v);
             if (t === 'claim') return 'border-amber-300 bg-amber-50 text-amber-800 font-semibold';
             if (t === 'contractor_cr') return 'border-sky-300 bg-sky-50 text-sky-800 font-semibold';
+            if (t === 'quotation') return 'border-orange-300 bg-orange-50 text-orange-800 font-semibold';
             return 'border-slate-200 bg-white';
         }
 
         // นับจำนวนแถวแยกตามประเภทเก็บเงิน (ใช้ทั้งกับป้ายจำนวนบนปุ่ม และกับข้อความอธิบายตอนไม่มีรายการ)
         function countBillingRowsByType(rows) {
-            const counts = { normal: 0, claim: 0, contractor_cr: 0, total: 0 };
+            const counts = { normal: 0, claim: 0, contractor_cr: 0, quotation: 0, total: 0 };
             (rows || []).forEach(function (r) {
                 counts[normalizeBillingType(r.billing_type)]++;
                 counts.total++;
@@ -4213,6 +4252,7 @@
             const reasons = [];
             if (c.claim > 0) reasons.push('"เคลมประกัน 3 เดือน" ' + c.claim + ' แถว (ไม่เก็บเงินทั้ง 2 ฝั่ง)');
             if (side === 'cj' && c.contractor_cr > 0) reasons.push('"เคลมอะไหล่" ' + c.contractor_cr + ' แถว (เก็บเฉพาะฝั่งผู้รับเหมา)');
+            if (side === 'contractor' && c.quotation > 0) reasons.push('"ใบเสนอราคา" ' + c.quotation + ' แถว (เก็บเฉพาะฝั่ง CJ)');
             return 'ฝั่ง ' + sideName + ' ไม่มีรายการที่ต้องเก็บเงิน — ทั้ง ' + c.total + ' แถวที่แสดงอยู่ถูกตัดออกหมด'
                 + (reasons.length ? ' เพราะเป็น ' + reasons.join(' และ ') : '')
                 + ' · ถ้าแถวไหนต้องเก็บเงินฝั่งนี้จริง ให้แก้คอลัมน์ "ประเภทเก็บเงิน" ของแถวนั้นเป็น "เก็บเงินปกติ" ก่อน';
@@ -4257,6 +4297,55 @@
             }
 
             return renumberBillingRows(baseData);
+        }
+
+        // ---- ค้นหาในตาราง (เฉพาะสิ่งที่แสดงบนจอ ไม่มีผลกับปุ่มดาวน์โหลด) ----
+        //
+        // ⚠ ตั้งใจแยกออกจาก getBillingRowsForDisplay() ไม่เอาไปรวมไว้ข้างใน
+        // เพราะฟังก์ชันนั้นถูกใช้โดยปุ่ม CSV/PDF ด้วย ถ้าเอาคำค้นไปใส่ในนั้น
+        // พอผู้ใช้ลืมล้างช่องค้นหาแล้วกดออกบิล จะได้ไฟล์ที่มีไม่ครบทุกแถวโดยไม่รู้ตัว
+        // = ส่งบิลให้ CJ แบบเก็บเงินขาด ซึ่งเป็นความผิดพลาดเรื่องเงิน แก้ย้อนหลังยาก
+        //
+        // กรองหลังใส่เลขลำดับแล้ว เลขลำดับที่เห็นจึงยังเป็นเลขเดิมของตารางเต็ม
+        // (ถ้ากรองก่อน เลขจะถูกนับใหม่เป็น 1,2,3 ของชุดที่กรอง ทำให้อ้างอิงกับของจริงไม่ตรง)
+        function applyBillingSearchFilter(rows) {
+            const el = document.getElementById('billingJobSearch');
+            const term = el ? el.value.trim().toLowerCase() : '';
+            if (!term) return rows;
+            return (rows || []).filter(function (r) {
+                return [r.customer_case, r.asset_id, r.part_code, r.part_detail, r.branch_name]
+                    .some(function (v) {
+                        return v !== null && v !== undefined && String(v).toLowerCase().indexOf(term) !== -1;
+                    });
+            });
+        }
+
+        // วาดตารางใหม่ตามคำค้นล่าสุด + อัปเดตป้ายบอกจำนวนและปุ่มล้างคำค้น
+        function applyBillingSearch() {
+            const all = getBillingRowsForDisplay();
+            const shown = applyBillingSearchFilter(all);
+            renderBillingGrid(shown);
+
+            const el = document.getElementById('billingJobSearch');
+            const term = el ? el.value.trim() : '';
+            const note = document.getElementById('billingSearchNote');
+            const clearBtn = document.getElementById('billingJobSearchClear');
+            if (clearBtn) clearBtn.classList.toggle('hidden', !term);
+            if (note) {
+                note.classList.toggle('hidden', !term);
+                if (term) {
+                    note.textContent = shown.length === 0
+                        ? ('ไม่พบ "' + term + '" ในตาราง (ทั้งหมด ' + all.length + ' แถว)')
+                        : ('กำลังกรอง: แสดง ' + shown.length + ' จาก ' + all.length + ' แถว · ปุ่มดาวน์โหลดยังออกครบทุกแถวตามปกติ');
+                }
+            }
+        }
+
+        function clearBillingSearch() {
+            const el = document.getElementById('billingJobSearch');
+            if (el) el.value = '';
+            applyBillingSearch();
+            if (el) el.focus();
         }
 
         // เรียงลำดับและใส่เลขลำดับใหม่ให้ทุกครั้งที่แสดง/ดาวน์โหลด
@@ -4672,6 +4761,9 @@
             } else if (sel.value === 'contractor_cr') {
                 hint.textContent = 'อะไหล่ชิ้นนี้จะขึ้นเฉพาะใบวางบิลฝั่งผู้รับเหมา ฝั่ง CJ ไม่เก็บเงิน';
                 hint.className = 'modal_billingTypeHint text-xs mt-1 text-sky-600 font-semibold';
+            } else if (sel.value === 'quotation') {
+                hint.textContent = 'อะไหล่ชิ้นนี้จะขึ้นเฉพาะใบวางบิลฝั่ง CJ ฝั่งผู้รับเหมาไม่เก็บเงิน และไม่ต้องส่งฟอร์มแนบรูปกลับ';
+                hint.className = 'modal_billingTypeHint text-xs mt-1 text-orange-600 font-semibold';
             } else {
                 hint.textContent = 'ออกใบวางบิลทั้งฝั่ง CJ และฝั่งผู้รับเหมาตามปกติ';
                 hint.className = 'modal_billingTypeHint text-xs mt-1 text-slate-400';
@@ -4712,6 +4804,7 @@
                         <option value="normal">เก็บเงินปกติ — ออกใบวางบิลทั้ง CJ และผู้รับเหมา</option>
                         <option value="claim">เคลมประกัน 3 เดือน — ไม่เก็บเงินทั้ง CJ และผู้รับเหมา</option>
                         <option value="contractor_cr">เคลมอะไหล่ — ออกเฉพาะใบวางบิลผู้รับเหมา ไม่เก็บ CJ</option>
+                        <option value="quotation">ใบเสนอราคา — ออกเฉพาะใบวางบิล CJ ไม่เก็บผู้รับเหมา</option>
                     </select>
                     <p class="modal_billingTypeHint text-xs mt-1 text-slate-400">ค่าเริ่มต้นคือเก็บเงินปกติ</p>
                 </div>
@@ -6079,6 +6172,7 @@
             if (document.getElementById('xlsxTypeNormal').checked) types.push('normal');
             if (document.getElementById('xlsxTypeClaim').checked) types.push('claim');
             if (document.getElementById('xlsxTypeContractorCr').checked) types.push('contractor_cr');
+            if (document.getElementById('xlsxTypeQuotation').checked) types.push('quotation');
             if (types.length === 0) {
                 resetBtn();
                 showAlert('error', 'กรุณาติ๊กเลือกประเภทการเก็บเงินอย่างน้อย 1 อย่างก่อนดาวน์โหลด');

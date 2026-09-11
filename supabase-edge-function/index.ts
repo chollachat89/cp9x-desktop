@@ -53,10 +53,17 @@ function isManualPartCode(code: any): boolean {
   return /^NP/i.test((code === null || code === undefined) ? '' : code.toString().trim());
 }
 
-const BILLING_TYPE_VALUES = ['normal', 'claim', 'contractor_cr'];
+// ประเภทการเก็บเงิน 4 แบบ — ต่างกันที่ "ฝั่งไหนถูกเก็บเงินบ้าง"
+//   normal        เก็บเงินปกติ        CJ ✅  ผู้รับเหมา ✅
+//   claim         เคลมประกัน 3 เดือน   CJ ❌  ผู้รับเหมา ❌   (ไม่เก็บใครเลย)
+//   contractor_cr เคลมอะไหล่          CJ ❌  ผู้รับเหมา ✅
+//   quotation     ใบเสนอราคา          CJ ✅  ผู้รับเหมา ❌   (ตรงข้ามกับเคลมอะไหล่)
+const BILLING_TYPE_VALUES = ['normal', 'claim', 'contractor_cr', 'quotation'];
 // ประเภทที่ต้องไม่ปรากฏในเอกสาร/ยอดของแต่ละฝั่ง
 const BILLING_TYPES_EXCLUDED_FROM_CJ = ['claim', 'contractor_cr'];
-const BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR = ['claim'];
+// quotation (ใบเสนอราคา) ไม่เก็บเงินฝั่งผู้รับเหมา จึงต้องหายไปจากทุกอย่างของฝั่งผู้รับเหมา
+// รวมถึงแท็บ "ฟอร์มวางบิล" ด้วย = ผู้รับเหมาไม่ต้องส่งฟอร์มแนบรูปกลับสำหรับงานประเภทนี้
+const BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR = ['claim', 'quotation'];
 
 function normalizeBillingType(v: any): string {
   const s = (v === null || v === undefined) ? '' : String(v).trim();
@@ -67,6 +74,7 @@ function billingTypeLabel(v: any): string {
   const t = normalizeBillingType(v);
   if (t === 'claim') return 'เคลมประกัน 3 เดือน';
   if (t === 'contractor_cr') return 'เคลมอะไหล่';
+  if (t === 'quotation') return 'ใบเสนอราคา';
   return 'เก็บเงินปกติ';
 }
 
@@ -1053,6 +1061,7 @@ async function generateAllBillingXlsxBase64(rows: any[]): Promise<any> {
       normal: null,
       claim: 'FFFEF3C7',          // เหลือง = เคลมประกัน 3 เดือน (ไม่เก็บเงินทั้ง 2 ฝั่ง)
       contractor_cr: 'FFE0F2FE',  // ฟ้า = เคลมอะไหล่ (เก็บเฉพาะฝั่งผู้รับเหมา)
+      quotation: 'FFFFEDD5',      // ส้ม = ใบเสนอราคา (เก็บเฉพาะฝั่ง CJ)
     };
 
     rows.forEach((r: any) => {
@@ -2745,7 +2754,10 @@ Deno.serve(async (req: Request) => {
           g.item_count++;
           // 'contractor_cr' (เคลมอะไหล่) ฝั่ง CJ ไม่เก็บ จึงไม่บวกเข้ายอด CJ
           if (BILLING_TYPES_EXCLUDED_FROM_CJ.indexOf(bType) === -1) g.total_cj += parseFloat(r.total_price) || 0;
-          g.total_contractor += parseFloat(r.total_price_contractor) || 0;
+          // เดิมบรรทัดนี้บวกยอดผู้รับเหมาทุกแถวโดยไม่ดูประเภทเลย
+          // พอมี 'quotation' (ใบเสนอราคา) ที่ไม่เก็บเงินฝั่งผู้รับเหมา ยอดฝั่งผู้รับเหมาจะเกินความจริงทันที
+          // จึงต้องเช็คฝั่งผู้รับเหมาให้สมมาตรกับฝั่ง CJ ด้านบน
+          if (BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR.indexOf(bType) === -1) g.total_contractor += parseFloat(r.total_price_contractor) || 0;
           if (r.sent_at && (!g.sent_at || r.sent_at < g.sent_at)) g.sent_at = r.sent_at;
           if (r.completed_at) { g.any_completed = true; if (!g.completed_at || r.completed_at > g.completed_at) g.completed_at = r.completed_at; }
           else { g.all_completed = false; }
