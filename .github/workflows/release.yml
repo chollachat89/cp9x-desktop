@@ -38,7 +38,14 @@ jobs:
           echo "tag = $TAG_VERSION | package.json = $PKG_VERSION"
           if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
             echo "::error::เวอร์ชันไม่ตรงกัน! tag คือ v$TAG_VERSION แต่ package.json คือ $PKG_VERSION"
-            echo "::error::วิธีแก้: แก้ version ใน package.json ให้เป็น $TAG_VERSION แล้ว commit + push ใหม่ ก่อนสร้าง tag"
+            echo "::error::ผลที่เกิด: จะไม่มีการ build เลย tag นี้จะกลายเป็น tag เปล่าที่ไม่มีไฟล์ .exe และไม่มี latest.yml"
+            echo "::error::ผู้ใช้จะไม่ได้รับอัปเดต เพราะ auto-update อ่านจาก latest.yml เท่านั้น"
+            echo "::error::"
+            echo "::error::วิธีแก้ที่เร็วที่สุด: สร้าง tag ใหม่ให้ตรงกับ package.json แล้ว push"
+            echo "::error::    git tag v$PKG_VERSION && git push origin v$PKG_VERSION"
+            echo "::error::"
+            echo "::error::กันพลาดรอบหน้า: อย่าแก้ version ในไฟล์เองแล้ว tag มือ ให้ใช้ npm run ship แทน"
+            echo "::error::    npm run ship    (จะขึ้นเลข + commit + tag ให้ตรงกันเองอัตโนมัติ)"
             exit 1
           fi
 

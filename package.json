@@ -16,7 +16,9 @@
     "pack": "electron-builder --dir",
     "build": "electron-builder --win --x64",
     "release": "electron-builder --win --x64 --publish always",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "electron-builder install-app-deps",
+    "ship": "npm version patch -m \"v%s\" && git push origin main --follow-tags",
+    "ship:minor": "npm version minor -m \"v%s\" && git push origin main --follow-tags"
   },
   "dependencies": {
     "electron-log": "^5.4.4",
