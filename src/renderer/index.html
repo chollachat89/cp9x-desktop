@@ -473,7 +473,7 @@
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">รหัสสาขา</label>
                                 <!-- พอกรอกรหัสสาขาเสร็จ ให้โหลดทะเบียนทรัพย์สินของสาขานั้นมาใส่ dropdown ด้านล่างทันที -->
-                                <input type="text" id="cl_branchCode" onblur="doLookupBranchGeneric('cl_branchCode','cl_branchName','cl_branchStatus'); loadBranchAssets(this.value.trim(), '');" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm" placeholder="เช่น 0002">
+                                <input type="text" id="cl_branchCode" onblur="doLookupBranchGeneric('cl_branchCode','cl_branchName','cl_branchStatus'); loadBranchAssets(this.value.trim(), ''); verifyCloseBranchMatch();" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm" placeholder="เช่น 0002">
                                 <p id="cl_branchStatus" class="text-xs mt-1 text-slate-400"></p>
                             </div>
                             <div>
@@ -1404,11 +1404,11 @@
                         class="flex-1 min-w-[240px] px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
                     <select id="submissionsFilterStatus" onchange="filterSubmissions()" class="px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm bg-white">
                         <option value="">ทุกสถานะ</option>
-                        <option value="pending">รอตรวจสอบ</option>
-                        <option value="approved">อนุมัติแล้ว</option>
+                        <option value="pending">รอผู้ตรวจสอบ (ขั้นที่ 1)</option>
+                        <option value="approved">ผ่านขั้นที่ 1 แล้ว</option>
                         <option value="rejected">ตีกลับ</option>
-                        <option value="waitFinish">อนุมัติแล้ว - รอสิ้นสุดงาน</option>
-                        <option value="finished">สิ้นสุดงานแล้ว</option>
+                        <option value="waitFinish">ผ่านขั้นที่ 1 - รอ TUCK CR</option>
+                        <option value="finished">อนุมัติขั้นสุดท้ายแล้ว</option>
                     </select>
                 </div>
                 <div class="table-scroll overflow-x-auto border border-slate-200 rounded-xl">
@@ -1420,9 +1420,9 @@
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">ผู้รับเหมา</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">สาขา</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">ไฟล์</th>
-                                <th class="p-2 text-left font-semibold whitespace-nowrap">สถานะตรวจสอบ</th>
-                                <th class="p-2 text-left font-semibold whitespace-nowrap">ผู้ตรวจสอบ (ขั้นที่ 2)</th>
-                                <th class="p-2 text-left font-semibold min-w-[220px]">หมายเหตุ / ดำเนินการ</th>
+                                <th class="p-2 text-left font-semibold whitespace-nowrap">สถานะขั้นที่ 1 (ผู้ตรวจสอบ)</th>
+                                <th class="p-2 text-left font-semibold whitespace-nowrap">อนุมัติขั้นสุดท้าย (TUCK CR)</th>
+                                <th class="p-2 text-left font-semibold min-w-[220px]">หมายเหตุ / ดำเนินการขั้นที่ 1</th>
                             </tr>
                         </thead>
                         <tbody id="submissionsBody"></tbody>
@@ -1880,7 +1880,7 @@
         let currentMode = 'open';
 
         // ==================== ระบบ Login / Session ====================
-        let currentSession = null; // { username, token, role, displayName, isChecker }
+        let currentSession = null; // { username, token, role, displayName, isChecker, isFinalApprover }
 
         function saveSessionToStorage(session) {
             localStorage.setItem('crMaintSession', JSON.stringify(session));
@@ -1915,9 +1915,10 @@
                 btn.disabled = false;
                 btn.textContent = 'เข้าสู่ระบบ';
                 if (res && res.success) {
-                    // isChecker = ธง "ผู้ตรวจสอบ" แยกจาก role (ผู้ตรวจสอบยังเป็นแอดมินเต็มเหมือนเดิม เห็นทุกเมนู)
-                    // มีแค่ขั้น "สิ้นสุดงาน / ตีกลับชั้นที่ 2" เท่านั้นที่จำกัดไว้ให้เฉพาะคนที่มีธงนี้
-                    currentSession = { username: res.username, token: res.token, role: res.role, displayName: res.displayName, isChecker: res.isChecker === true };
+                    // 2 ธงนี้แยกจาก role (ทั้งคู่ยังเป็นแอดมินเต็มเหมือนเดิม เห็นทุกเมนู) ใช้จำกัดแค่ว่าใครกดขั้นไหนได้
+                    //   isChecker        = ผู้ตรวจสอบ 3 คน — กดอนุมัติ/ตีกลับในขั้นที่ 1
+                    //   isFinalApprover  = TUCK CR — กดอนุมัติขั้นสุดท้าย/ตีกลับในขั้นที่ 2 (ขั้นที่ตัดบิลจริง)
+                    currentSession = { username: res.username, token: res.token, role: res.role, displayName: res.displayName, isChecker: res.isChecker === true, isFinalApprover: res.isFinalApprover === true };
                     saveSessionToStorage(currentSession);
                     enterApp();
                 } else {
@@ -1993,7 +1994,9 @@
 
             if (currentSession.role !== 'admin') {
                 switchMode('billing');
-                pollJobFormsBadge(); // ผู้รับเหมา: เช็คเลขแจ้งเตือนงานที่ต้องดำเนินการ (รวมงานที่ถูกตีกลับ) ทันทีตอนเข้าระบบ
+                // TUCK CR (ไม่ใช่ role admin) ก็ต้องเห็นเลขแจ้งเตือนไฟล์ที่รออนุมัติขั้นสุดท้ายด้วย
+                if (currentSession.isFinalApprover) pollSubmissionsBadge();
+                else pollJobFormsBadge(); // ผู้รับเหมา: เช็คเลขแจ้งเตือนงานที่ต้องดำเนินการ (รวมงานที่ถูกตีกลับ) ทันทีตอนเข้าระบบ
             } else {
                 pollSubmissionsBadge(); // แอดมิน: เช็คเลขแจ้งเตือนไฟล์ที่ผู้รับเหมาส่งกลับทันทีตอนเข้าระบบ
                 pollAdminBadgeCounts(); // แอดมิน: เช็คเลขแจ้งเตือนรอดำเนินการ + พักงาน ทันทีตอนเข้าระบบ
@@ -2007,6 +2010,13 @@
                 const el = document.getElementById(id);
                 if (el) el.style.display = isAdmin ? '' : 'none';
             });
+
+            // TUCK CR ต้องเปิดเมนู "ไฟล์ผู้รับเหมาส่งกลับ" ได้เสมอ ถึงจะกดอนุมัติขั้นสุดท้ายได้
+            // (เผื่อบัญชีนี้ไม่ได้ตั้ง role เป็น admin จะได้ไม่ถูกซ่อนเมนูจนกดอะไรไม่ได้เลย)
+            if (currentSession.isFinalApprover) {
+                const submissionsTab = document.getElementById('tabSubmissions');
+                if (submissionsTab) submissionsTab.style.display = '';
+            }
 
             // ปุ่มที่แก้ไข/ลบ/สร้างข้อมูลในตารางวางบิล - แอดมินเท่านั้น
             const adminOnlyBillingControls = document.getElementById('billingAdminControls');
@@ -2375,6 +2385,7 @@
             else if (currentMode === 'jobforms' && !isTypingOrPicking) loadJobFormsTab();
             else if (currentMode === 'submissions' && !isTypingOrPicking) loadJobFormSubmissions();
             else if (currentSession.role === 'admin') { pollSubmissionsBadge(); pollAdminBadgeCounts(); }
+            else if (currentSession.isFinalApprover) pollSubmissionsBadge();
             else pollJobFormsBadge();
         }, AUTO_REFRESH_INTERVAL_MS);
 
@@ -2718,6 +2729,10 @@
                         statusEl.textContent = 'ตรวจสอบล้มเหลว: ' + res.error;
                         statusEl.className = 'text-xs mt-1 text-red-500';
                     } else if (res && res.exists) {
+                        // เติมสาขาจากตอน "เปิดงาน" ให้อัตโนมัติ — 1 เลขงาน = 1 สาขาเสมอ
+                        // กรอกเองแล้วพลาดสาขาเดียว งานจะไปโผล่ผิดสาขาทั้งในตารางวางบิล ใบเขียว และรายงาน
+                        // (เซิร์ฟเวอร์ยังบล็อกซ้ำอีกชั้นตอนกดบันทึก เผื่อผู้ใช้แก้ทับทีหลัง)
+                        applyOpenBranchToCloseForm(res.branch);
                         // เปิดงานไว้แล้ว - เช็คต่อว่า "เลขงาน+เลขทรัพย์สิน" คู่นี้เคยปิดไปแล้วหรือยัง (กันปิดซ้ำทรัพย์สินชิ้นเดิม)
                         google.script.run.withSuccessHandler(function (closeRes) {
                             if (closeRes && closeRes.exists) {
@@ -2744,6 +2759,60 @@
                     statusEl.className = 'text-xs mt-1 text-red-500';
                 }).checkOpenIssueExists(jobId);
             }
+        }
+
+        // ==================== บังคับสาขาปิดงาน = สาขาตอนเปิดงาน ====================
+        // อ้างอิงจากเลขงานอย่างเดียว เพราะ 1 เลขงานผูกกับสาขาเดียวเสมอ
+        //
+        // เก็บรหัสสาขาที่ถูกต้องไว้ในตัวแปร เพื่อเตือนทันทีถ้าผู้ใช้ไปแก้ช่องรหัสสาขาทับทีหลัง
+        // (ไม่ล็อกช่องเป็น readonly เพราะข้อมูลเปิดงานเก่าบางรายการสาขาว่างหรือกรอกไม่ครบ ยังต้องแก้ได้)
+        let closeFormExpectedBranch = '';
+
+        // ตัดเอาเฉพาะรหัสสาขา (ตัวเลขชุดแรก) เพื่อเทียบแบบไม่สนรูปแบบการเขียน
+        // รองรับ "0464-บางเสร่" · "0464 บางเสร่" · "0464-0464-บางเสร่" · "0464"
+        function branchCodeKey(text) {
+            const m = String(text || '').trim().match(/^\s*(\d{2,})/);
+            return m ? m[1].replace(/^0+/, '') || '0' : '';
+        }
+
+        function applyOpenBranchToCloseForm(openBranchText) {
+            const statusEl = document.getElementById('cl_branchStatus');
+            closeFormExpectedBranch = String(openBranchText || '').trim();
+            if (!closeFormExpectedBranch || closeFormExpectedBranch === '-') {
+                // งานเก่าที่ตอนเปิดงานไม่ได้กรอกสาขา — ปล่อยให้กรอกเองตามปกติ ไม่บล็อก
+                return;
+            }
+            const codeEl = document.getElementById('cl_branchCode');
+            const current = String(codeEl.value || '').trim();
+            if (current && branchCodeKey(current) === branchCodeKey(closeFormExpectedBranch)) {
+                verifyCloseBranchMatch();
+                return;
+            }
+            setBranchAndLookup('cl_branchCode', 'cl_branchName', 'cl_branchStatus', closeFormExpectedBranch);
+            // สาขาเปลี่ยน ทะเบียนทรัพย์สินต้องโหลดใหม่ตามสาขาที่ถูกต้อง ไม่งั้นลิสต์ยังค้างเป็นของสาขาเดิม
+            // (คงเลขทรัพย์สินที่กรอก/ดูดมาไว้ ให้ตัวโหลดเป็นคนตัดสินว่ามีในสาขานี้ไหม)
+            const assetEl = document.getElementById('cl_assetId');
+            const codeMatch = String(closeFormExpectedBranch).match(/\d{2,}/);
+            loadBranchAssets(codeMatch ? codeMatch[0] : '', assetEl ? assetEl.value.trim() : '');
+            if (statusEl) {
+                statusEl.textContent = '✓ เติมสาขาจากตอนเปิดงานให้แล้ว: ' + closeFormExpectedBranch;
+                statusEl.className = 'text-xs mt-1 text-emerald-600';
+            }
+        }
+
+        // เตือนทันทีถ้าสาขาในฟอร์มไม่ตรงกับตอนเปิดงาน (เซิร์ฟเวอร์บล็อกอีกชั้นตอนบันทึกอยู่แล้ว)
+        // คืน true = ตรงกัน หรือยังไม่มีข้อมูลพอให้ตัดสิน
+        function verifyCloseBranchMatch() {
+            const statusEl = document.getElementById('cl_branchStatus');
+            if (!closeFormExpectedBranch || closeFormExpectedBranch === '-') return true;
+            const current = String(document.getElementById('cl_branchCode').value || '').trim();
+            if (!current) return true;
+            if (branchCodeKey(current) === branchCodeKey(closeFormExpectedBranch)) return true;
+            if (statusEl) {
+                statusEl.textContent = '✗ สาขาไม่ตรงกับตอนเปิดงาน (เลขงานนี้เปิดไว้ที่ "' + closeFormExpectedBranch + '")';
+                statusEl.className = 'text-xs mt-1 text-red-500 font-semibold';
+            }
+            return false;
         }
 
         // 2c. Lookup สาขา อัตโนมัติ แบบทั่วไป ใช้ได้ทั้งฟอร์มเปิดงาน/ปิดงาน
@@ -5829,7 +5898,7 @@
 
             let filtered = currentSubmissionsData;
             if (statusFilter === 'waitFinish') {
-                // อนุมัติแล้วแต่ยังไม่มีใครกดสิ้นสุดงาน = กองที่รอตรวจชั้นที่ 2
+                // ผ่านขั้นที่ 1 แล้วแต่ TUCK CR ยังไม่กดขั้นสุดท้าย = กองที่รออนุมัติสุดท้าย
                 filtered = filtered.filter(row => row.status === 'approved' && !row.finished_at);
             } else if (statusFilter === 'finished') {
                 filtered = filtered.filter(row => !!row.finished_at);
@@ -5847,8 +5916,8 @@
         function renderSubmissions(rows) {
             const tbody = document.getElementById('submissionsBody');
             const statusMap = {
-                pending: { cls: 'bg-amber-100 text-amber-700', text: 'รอตรวจสอบ' },
-                approved: { cls: 'bg-emerald-100 text-emerald-700', text: 'อนุมัติแล้ว' },
+                pending: { cls: 'bg-amber-100 text-amber-700', text: 'รอผู้ตรวจสอบ' },
+                approved: { cls: 'bg-emerald-100 text-emerald-700', text: 'ผ่านขั้นที่ 1' },
                 rejected: { cls: 'bg-red-100 text-red-700', text: 'ตีกลับ' }
             };
             tbody.innerHTML = rows.map(row => {
@@ -5857,50 +5926,64 @@
                     ? `<div class="text-[10px] text-slate-400 mt-1">โดย ${row.reviewed_by} • ${formatTimestamp(row.reviewed_at)}</div>`
                     : '';
 
-                // ตรวจสอบแล้ว (อนุมัติ/ตีกลับ) - เหลือแค่หมายเหตุอ่านอย่างเดียว ไม่มีปุ่มให้กดซ้ำ
-                // ยังรอตรวจสอบอยู่ - มีช่องกรอกหมายเหตุ + ปุ่มอนุมัติ/ตีกลับให้กด
-                const remarkColumnHtml = row.status === 'pending'
-                    ? `<textarea id="remark_${row.id}" rows="1" placeholder="หมายเหตุ (บังคับกรอกถ้าตีกลับ)" class="w-full px-2 py-1 rounded border border-slate-200 text-xs resize-y">${row.admin_remark || ''}</textarea>
-                        <div class="flex gap-1 mt-1">
-                            <button type="button" onclick="reviewSubmission('${row.id}', 'approved')" class="text-[10px] bg-emerald-600 text-white px-2 py-1 rounded hover:bg-emerald-700">อนุมัติ</button>
-                            <button type="button" onclick="reviewSubmission('${row.id}', 'rejected')" class="text-[10px] bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700">ตีกลับ</button>
-                        </div>`
-                    : `<div class="text-xs text-slate-600 whitespace-pre-wrap">${row.admin_remark || '-'}</div>`;
-
-                // คอลัมน์ "ผู้ตรวจสอบ (ขั้นที่ 2)"
-                //   ยังไม่อนุมัติ         -> ยังทำอะไรไม่ได้ ต้องรอแอดมินอนุมัติก่อน
-                //   อนุมัติแล้ว + เป็นผู้ตรวจสอบ -> เห็นปุ่ม "สิ้นสุดงาน" กับ "ตีกลับ"
-                //   อนุมัติแล้ว + ไม่ใช่ผู้ตรวจสอบ -> เห็นแค่ข้อความว่ารอผู้ตรวจสอบ (แอดมินกดเองไม่ได้)
-                //   สิ้นสุดแล้ว           -> โชว์ชื่อคนกดกับเวลา
+                // ---- ลำดับการอนุมัติ (v1.0.61 สลับจากเดิม) ----
+                //   ขั้นที่ 1 = ผู้ตรวจสอบ 3 คน กดอนุมัติ/ตีกลับ (กดคนเดียวใน 3 คนก็ผ่าน)
+                //   ขั้นที่ 2 = TUCK CR กดอนุมัติขั้นสุดท้าย/ตีกลับ — ขั้นนี้เท่านั้นที่ตัดบิลจริง
+                // TUCK CR กดขั้นที่ 1 ไม่ได้ ต้องรอผู้ตรวจสอบกดก่อนเสมอ
                 const isChecker = !!(currentSession && currentSession.isChecker);
+                const isFinalApprover = !!(currentSession && currentSession.isFinalApprover);
+
+                // คอลัมน์ขั้นที่ 1 (ในช่อง "หมายเหตุ / ดำเนินการ")
+                // ยังรอตรวจสอบ + เป็นผู้ตรวจสอบ -> มีช่องหมายเหตุ + ปุ่มอนุมัติ/ตีกลับ
+                // ยังรอตรวจสอบ + ไม่ใช่ผู้ตรวจสอบ -> อ่านอย่างเดียว พร้อมบอกว่าใครต้องเป็นคนกด
+                let remarkColumnHtml;
+                if (row.status === 'pending' && isChecker && !isFinalApprover) {
+                    remarkColumnHtml = `<textarea id="remark_${row.id}" rows="1" placeholder="หมายเหตุ (บังคับกรอกถ้าตีกลับ)" class="w-full px-2 py-1 rounded border border-slate-200 text-xs resize-y">${row.admin_remark || ''}</textarea>
+                        <div class="flex gap-1 mt-1">
+                            <button type="button" onclick="reviewSubmission('${row.id}', 'approved')" class="text-[10px] bg-emerald-600 text-white px-2 py-1 rounded hover:bg-emerald-700">อนุมัติ (ขั้นที่ 1)</button>
+                            <button type="button" onclick="reviewSubmission('${row.id}', 'rejected')" class="text-[10px] bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700">ตีกลับ</button>
+                        </div>`;
+                } else if (row.status === 'pending') {
+                    remarkColumnHtml = `<div class="text-xs text-slate-600 whitespace-pre-wrap">${row.admin_remark || '-'}</div>
+                        <div class="text-[10px] text-amber-600 mt-1">รอผู้ตรวจสอบกดขั้นที่ 1</div>
+                        <div class="text-[10px] text-slate-400">${isFinalApprover ? 'TUCK CR กดขั้นนี้ไม่ได้ ต้องรอผู้ตรวจสอบก่อน' : 'บัญชีนี้ไม่มีสิทธิ์ในขั้นที่ 1'}</div>`;
+                } else {
+                    remarkColumnHtml = `<div class="text-xs text-slate-600 whitespace-pre-wrap">${row.admin_remark || '-'}</div>`;
+                }
+
+                // คอลัมน์ "อนุมัติขั้นสุดท้าย (TUCK CR)"
+                //   ยังไม่ผ่านขั้นที่ 1        -> ทำอะไรไม่ได้ ต้องรอผู้ตรวจสอบก่อน
+                //   ผ่านขั้นที่ 1 + เป็น TUCK CR -> เห็นปุ่ม "อนุมัติขั้นสุดท้าย" กับ "ตีกลับ"
+                //   ผ่านขั้นที่ 1 + ไม่ใช่      -> เห็นแค่ข้อความว่ารอ TUCK CR
+                //   อนุมัติสุดท้ายแล้ว          -> โชว์ชื่อคนกดกับเวลา
                 let finishCellHtml;
                 if (row.finished_at) {
-                    finishCellHtml = `<span class="text-xs font-semibold px-2 py-1 rounded-full bg-slate-800 text-white">สิ้นสุดแล้ว</span>
+                    finishCellHtml = `<span class="text-xs font-semibold px-2 py-1 rounded-full bg-slate-800 text-white">อนุมัติสุดท้ายแล้ว</span>
                         <div class="text-[10px] text-slate-400 mt-1">โดย ${row.finished_by || row.checker_by || '-'} • ${formatTimestamp(row.finished_at)}</div>`;
-                } else if (row.status === 'approved' && isChecker) {
+                } else if (row.status === 'approved' && isFinalApprover) {
                     finishCellHtml = `<div class="flex gap-1">
                             <button type="button" onclick="finishSubmission('${row.id}', 'finished')" title="กดแล้วจะตัดบิลของเลขงานนี้ออกจากตารางวางบิลของผู้รับเหมาทันที"
                                 class="text-[10px] bg-slate-800 text-white px-2 py-1 rounded hover:bg-slate-900 whitespace-nowrap">
-                                <i class="fa-solid fa-flag-checkered mr-1"></i> สิ้นสุดงาน
+                                <i class="fa-solid fa-flag-checkered mr-1"></i> อนุมัติขั้นสุดท้าย
                             </button>
-                            <button type="button" onclick="finishSubmission('${row.id}', 'rejected')" title="ตีกลับให้ผู้รับเหมาแก้ใหม่ (ไม่ตัดบิล) ใช้กรณีแอดมินอนุมัติมาแล้วแต่ตรวจเจอว่ายังไม่เรียบร้อย"
+                            <button type="button" onclick="finishSubmission('${row.id}', 'rejected')" title="ตีกลับให้ผู้รับเหมาแก้ใหม่ (ไม่ตัดบิล) ใช้กรณีผู้ตรวจสอบอนุมัติมาแล้วแต่ตรวจเจอว่ายังไม่เรียบร้อย"
                                 class="text-[10px] bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700 whitespace-nowrap">
                                 ตีกลับ
                             </button>
                         </div>
                         <div class="text-[10px] text-amber-600 mt-1">รอตัดบิล</div>`;
                 } else if (row.status === 'approved') {
-                    finishCellHtml = `<span class="text-[10px] text-amber-600">รอผู้ตรวจสอบ</span>
-                        <div class="text-[10px] text-slate-400 mt-0.5">แอดมินกดขั้นนี้ไม่ได้</div>`;
+                    finishCellHtml = `<span class="text-[10px] text-amber-600">รอ TUCK CR</span>
+                        <div class="text-[10px] text-slate-400 mt-0.5">ผู้ตรวจสอบ/แอดมินกดขั้นนี้ไม่ได้</div>`;
                 } else {
-                    finishCellHtml = `<span class="text-[10px] text-slate-400">ต้องอนุมัติก่อน</span>`;
+                    finishCellHtml = `<span class="text-[10px] text-slate-400">ต้องผ่านขั้นที่ 1 ก่อน</span>`;
                 }
 
                 // ประวัติว่าใครทำอะไรไว้บ้าง — เก็บไว้ให้ตามย้อนหลังได้ทั้ง 2 ฝ่าย
                 const historyLines = [];
-                if (row.reviewed_by) historyLines.push(`<div><span class="text-slate-400">อนุมัติโดย</span> <b>${row.reviewed_by}</b> • ${formatTimestamp(row.reviewed_at)}</div>`);
+                if (row.reviewed_by) historyLines.push(`<div><span class="text-slate-400">ขั้นที่ 1 โดย</span> <b>${row.reviewed_by}</b> • ${formatTimestamp(row.reviewed_at)}</div>`);
                 if (row.checker_by) {
-                    const act = row.checker_decision === 'rejected' ? 'ตีกลับโดย' : 'สิ้นสุดงานโดย';
+                    const act = row.checker_decision === 'rejected' ? 'ขั้นสุดท้าย ตีกลับโดย' : 'ขั้นสุดท้าย อนุมัติโดย';
                     historyLines.push(`<div><span class="text-slate-400">${act}</span> <b>${row.checker_by}</b> • ${formatTimestamp(row.checker_at)}</div>`);
                 }
                 const historyHtml = historyLines.length
@@ -5926,7 +6009,8 @@
             }).join('');
         }
 
-        // ปุ่ม "อนุมัติ"/"ตีกลับ" ในแท็บ "ไฟล์ผู้รับเหมาส่งกลับ" - ถ้าตีกลับ บังคับกรอกหมายเหตุก่อนเสมอ
+        // ขั้นที่ 1 (ผู้ตรวจสอบ 3 คน) — ปุ่ม "อนุมัติ"/"ตีกลับ" ในแท็บ "ไฟล์ผู้รับเหมาส่งกลับ"
+        // ถ้าตีกลับ บังคับกรอกหมายเหตุก่อนเสมอ
         // (ผู้รับเหมาจะเห็นหมายเหตุนี้ และเลขงานนี้จะกลับไปอยู่ในโซน "งานที่ต้องดำเนินการ" ของผู้รับเหมาโดยอัตโนมัติ)
         function reviewSubmission(id, decision) {
             const textarea = document.getElementById('remark_' + id);
@@ -5939,7 +6023,7 @@
             }
 
             const confirmMsg = decision === 'approved'
-                ? 'ยืนยันอนุมัติไฟล์นี้?\n\n(ขั้นนี้ยังไม่ตัดบิล ต้องให้ผู้ตรวจสอบกด "สิ้นสุดงาน" อีกครั้งจึงจะตัดบิล)'
+                ? 'ยืนยันอนุมัติขั้นที่ 1 ของไฟล์นี้?\n\n(ขั้นนี้ยังไม่ตัดบิล ต้องให้ TUCK CR กด "อนุมัติขั้นสุดท้าย" อีกครั้งจึงจะตัดบิล)'
                 : 'ยืนยันตีกลับไฟล์นี้? ผู้รับเหมาจะต้องแก้ไขและส่งฟอร์มใหม่';
             if (!confirm(confirmMsg)) return;
 
@@ -5964,17 +6048,17 @@
             });
         }
 
-        // ขั้นตรวจชั้นที่ 2 (ผู้ตรวจสอบ) — ทำได้ 2 อย่าง
-        //   decision = 'finished' -> ตัดบิลจริง แล้วย้ายไปเมนู "งานที่เสร็จสิ้น"
+        // ขั้นที่ 2 / ขั้นสุดท้าย (TUCK CR) — ทำได้ 2 อย่าง
+        //   decision = 'finished' -> อนุมัติขั้นสุดท้าย ตัดบิลจริง แล้วย้ายไปเมนู "งานที่เสร็จสิ้น"
         //   decision = 'rejected' -> ตีกลับให้ผู้รับเหมาแก้ใหม่ ไม่แตะบิลเลย
-        //     (มีไว้กันกรณีแอดมินอนุมัติมาแล้วแต่ตรวจซ้ำเจอว่ายังไม่เรียบร้อย)
+        //     (มีไว้กันกรณีผู้ตรวจสอบอนุมัติมาแล้วแต่ตรวจซ้ำเจอว่ายังไม่เรียบร้อย)
         //
-        // ทั้ง 2 อย่างบันทึกชื่อคนกดไว้ ตารางจึงแสดงครบทั้งชื่อผู้อนุมัติและชื่อผู้ตรวจสอบ
+        // ทั้ง 2 อย่างบันทึกชื่อคนกดไว้ ตารางจึงแสดงครบทั้งชื่อผู้ตรวจสอบขั้นที่ 1 และผู้อนุมัติขั้นสุดท้าย
         function finishSubmission(id, decision) {
             const act = (decision === 'rejected') ? 'rejected' : 'finished';
             const row = currentSubmissionsData.find(r => String(r.id) === String(id));
             const jobId = row ? (row.customer_case || '') : '';
-            const approvedBy = row && row.reviewed_by ? ('\n(รายการนี้อนุมัติโดย ' + row.reviewed_by + ')') : '';
+            const approvedBy = row && row.reviewed_by ? ('\n(ขั้นที่ 1 อนุมัติโดย ' + row.reviewed_by + ')') : '';
 
             let remark = '';
             if (act === 'rejected') {
@@ -5985,7 +6069,7 @@
                     return;
                 }
             } else {
-                if (!confirm('ยืนยัน "สิ้นสุดงาน" เลขงาน ' + jobId + ' ?' + approvedBy + '\n\nกดแล้วระบบจะตัดบิลของเลขงานนี้ออกจากตารางวางบิลของผู้รับเหมาทันที และย้ายไปเมนู "งานที่เสร็จสิ้น"')) return;
+                if (!confirm('ยืนยัน "อนุมัติขั้นสุดท้าย" เลขงาน ' + jobId + ' ?' + approvedBy + '\n\nกดแล้วระบบจะตัดบิลของเลขงานนี้ออกจากตารางวางบิลของผู้รับเหมาทันที และย้ายไปเมนู "งานที่เสร็จสิ้น"')) return;
             }
 
             runServerCall('finishJobFormSubmission', [currentSession.username, currentSession.token, id, act, remark], function (res) {
@@ -6844,6 +6928,12 @@
                     { id: 'cl_closeDate',  msg: 'กรุณาระบุวันที่ปิดงาน' },
                 ]);
                 if (!ok) return;
+                // สาขาต้องตรงกับตอนเปิดงานของเลขงานนี้ (เซิร์ฟเวอร์บล็อกซ้ำอีกชั้นตอนบันทึกจริง)
+                if (!verifyCloseBranchMatch()) {
+                    showAlert('error', 'สาขาไม่ตรงกับตอนเปิดงาน: เลขงานนี้เปิดไว้ที่สาขา "' + closeFormExpectedBranch + '" กรุณาแก้รหัสสาขาให้ตรงก่อนบันทึก');
+                    document.getElementById('cl_branchCode').focus();
+                    return;
+                }
                 if (getPartsAsText().trim() === '') {
                     showAlert('error', 'กรุณากรอกรายการอะไหล่ที่เปลี่ยนอย่างน้อย 1 รายการ (ถ้าไม่ได้เปลี่ยนอะไหล่ ให้ระบุว่า "ไม่มีการเปลี่ยนอะไหล่")');
                     return;
@@ -6915,6 +7005,8 @@
                                 if (mode === 'close') {
                                     document.getElementById('rawTextClose').value = ''; clearPartsRows(); addPartRow();
                                     document.getElementById('cl_branchStatus').textContent = ''; setDefaultCloseDateTime();
+                                    // ล้างสาขาที่ผูกกับเลขงานเดิม ไม่งั้นงานถัดไปจะโดนเตือนว่าสาขาไม่ตรงทั้งที่ยังไม่ได้กรอกเลขงานใหม่
+                                    closeFormExpectedBranch = '';
                                     // form.reset() ล้างค่าใน select แต่ตัวเลือกที่โหลดมายังค้างอยู่ และช่องพิมพ์เองยังโชว์อยู่
                                     // ต้องล้างกลับเป็นสถานะเริ่มต้นเอง ไม่งั้นงานถัดไปจะเห็นลิสต์ทรัพย์สินของสาขาเก่า
                                     loadBranchAssets('', '');

@@ -1253,6 +1253,38 @@ function branchDisplayName(branchCode: any, branchName: any): string {
   return code + '-' + name;
 }
 
+// ---- เทียบ "สาขา" ของเปิดงานกับปิดงานว่าเป็นสาขาเดียวกันไหม ----
+//
+// ค่าที่เก็บจริงมาได้หลายหน้าตา เพราะมาจากการพิมพ์มือบ้าง lookup บ้าง และของเก่ามีรหัสซ้ำติดมาด้วย
+//   "0464-บางเสร่"  ·  "0464 บางเสร่"  ·  "0464-0464-บางเสร่"  ·  "บางเสร่"  ·  "0464"
+//
+// จึงเทียบที่ "รหัสสาขา" (ตัวเลขชุดแรก) เป็นหลัก เพราะเป็นตัวเดียวที่ไม่กำกวม
+// ถ้าฝั่งใดฝั่งหนึ่งไม่มีรหัสเลย ค่อยถอยไปเทียบชื่อแบบตัดช่องว่าง/ขีด/รหัสซ้ำออก
+// คืน true = ถือว่าตรงกัน (รวมกรณีข้อมูลเดิมไม่พอให้ตัดสิน จะได้ไม่บล็อกงานเก่าที่กรอกไม่ครบ)
+function branchCodeOf(branch: any): string {
+  const s = (branch === null || branch === undefined) ? '' : branch.toString().trim();
+  const m = s.match(/^\s*(\d{2,})/);
+  return m ? m[1].replace(/^0+/, '') || '0' : '';
+}
+function branchNameKeyOf(branch: any): string {
+  let s = (branch === null || branch === undefined) ? '' : branch.toString().trim();
+  // ตัดรหัสนำหน้าออกให้หมด (รองรับกรณีรหัสซ้ำ 2 ชั้น) แล้วเหลือเฉพาะชื่อ
+  s = s.replace(/^(\s*\d{2,}\s*[-\s]\s*)+/, '');
+  return s.replace(/[\s\-_.]/g, '').toLowerCase();
+}
+function isSameBranch(a: any, b: any): boolean {
+  const aStr = (a === null || a === undefined) ? '' : a.toString().trim();
+  const bStr = (b === null || b === undefined) ? '' : b.toString().trim();
+  if (!aStr || !bStr || aStr === '-' || bStr === '-') return true; // ข้อมูลไม่พอให้ตัดสิน = ไม่บล็อก
+  const aCode = branchCodeOf(aStr);
+  const bCode = branchCodeOf(bStr);
+  if (aCode && bCode) return aCode === bCode;
+  const aName = branchNameKeyOf(aStr);
+  const bName = branchNameKeyOf(bStr);
+  if (!aName || !bName) return true;
+  return aName === bName;
+}
+
 // วาดฟอร์มแนบรูป 1 แผ่นลงใน sheet ที่ส่งเข้ามา
 // หัวกระดาษทำตามไฟล์ต้นฉบับทุกช่อง — 1 แผ่นรองรับ "2 เลขทรัพย์สิน" (แถว 2 กับแถว 3)
 // job: { customerCase, branchCode, branchName, serviceType, assets: [{ assetId, description, warrantyStart, warrantyExpire } x1-2] }
@@ -1952,24 +1984,32 @@ Deno.serve(async (req: Request) => {
     if (error || !data || data.length === 0) return { valid: false };
     const user = data[0];
     if (!user.session_token || user.session_token !== token) return { valid: false };
-    // is_checker = ธง "ผู้ตรวจสอบ" แยกจาก role
-    // ทำเป็นธงต่างหากแทนการเปลี่ยน role เพราะผู้ตรวจสอบต้องใช้งานทุกเมนูได้เหมือนแอดมินอยู่แล้ว
+    // ธง 2 ตัวนี้แยกจาก role เพราะทั้งผู้ตรวจสอบและผู้อนุมัติสุดท้ายยังต้องใช้ทุกเมนูได้เหมือนแอดมิน
     // ถ้าไปเปลี่ยน role เป็น 'checker' บัญชีนั้นจะหลุดสิทธิ์แอดมินทั้งหมดทันที
+    //
+    //   is_checker        = ผู้ตรวจสอบ 3 คน — กด "อนุมัติ/ตีกลับ" ในขั้นที่ 1
+    //   is_final_approver = TUCK CR — กด "อนุมัติขั้นสุดท้าย/ตีกลับ" ในขั้นที่ 2 (ขั้นที่ตัดบิลจริง)
+    //
+    // ⚠ 2 ธงนี้ต้องไม่อยู่ในบัญชีเดียวกัน ไม่งั้นคนเดียวกดผ่านได้ทั้ง 2 ขั้น = การตรวจ 2 ชั้นเสียความหมาย
+    //    โค้ดขั้นที่ 1 จึงบล็อก is_final_approver ไว้อีกชั้นหนึ่งด้วย ไม่พึ่งข้อมูลใน DB อย่างเดียว
     return {
       valid: true,
       role: user.role,
       displayName: user.display_name,
       username: user.username,
       isChecker: user.is_checker === true,
+      isFinalApprover: user.is_final_approver === true,
     };
   }
 
+  // คืน branch มาด้วย เพื่อให้ฟอร์มปิดงานเติมสาขาจากเลขงานให้อัตโนมัติ (กันปิดผิดสาขา)
   async function checkOpenIssueExists(jobId: string): Promise<any> {
     try {
       if (!jobId) return { exists: false };
-      const { data, error } = await supabase.from('open_issues').select('id').eq('main_id', jobId).limit(1);
+      const { data, error } = await supabase.from('open_issues').select('id,branch').eq('main_id', jobId).limit(1);
       if (error) return { error: error.message };
-      return { exists: !!(data && data.length > 0) };
+      const found = !!(data && data.length > 0);
+      return { exists: found, branch: found ? (data![0].branch || '') : '' };
     } catch (e) { return { error: String(e) }; }
   }
 
@@ -2221,7 +2261,7 @@ Deno.serve(async (req: Request) => {
         if (hash !== user.password_hash) return jsonResponse({ success: false, message: 'รหัสผ่านไม่ถูกต้อง' });
         const token = genToken();
         await supabase.from('contractors').update({ session_token: token, session_created_at: new Date().toISOString() }).eq('id', user.id);
-        return jsonResponse({ success: true, token, username: user.username, role: user.role, displayName: user.display_name, isChecker: user.is_checker === true });
+        return jsonResponse({ success: true, token, username: user.username, role: user.role, displayName: user.display_name, isChecker: user.is_checker === true, isFinalApprover: user.is_final_approver === true });
       }
 
       case 'logoutUser': {
@@ -2532,8 +2572,24 @@ Deno.serve(async (req: Request) => {
         // "วันที่เข้าแก้ไข" ต้องไม่มาก่อน "วันที่ร้องขอ" ของงานนั้น
         // เช่น ร้องขอ 1/2/2026 แต่กรอกวันที่เข้าแก้ไขเป็น 1/1/2026 = เป็นไปไม่ได้ ต้องเป็นการกรอกผิด
         // ปล่อยผ่านไปจะทำให้ตัวกรองรอบบิล (ที่ใช้วันที่เข้าแก้ไข) จัดงานลงผิดรอบ และรายงานระยะเวลาติดลบ
-        const { data: openRowForDate } = await supabase.from('open_issues').select('req_date').eq('main_id', jobId).limit(1);
-        const reqDateText = (openRowForDate && openRowForDate.length > 0) ? openRowForDate[0].req_date : null;
+        const { data: openRowForDate } = await supabase.from('open_issues').select('req_date,branch').eq('main_id', jobId).limit(1);
+        const openRowRef = (openRowForDate && openRowForDate.length > 0) ? openRowForDate[0] : null;
+
+        // ---- สาขาตอนปิดงานต้องตรงกับตอนเปิดงาน ----
+        // อ้างอิงจาก "เลขงาน" เป็นหลัก เพราะ 1 เลขงาน = 1 สาขาเสมอ
+        // ถ้าปิดผิดสาขา งานจะไปโผล่ผิดสาขาในตารางวางบิล ใบเขียว และรายงาน
+        // ตามแก้ย้อนหลังยากมากเพราะบิลอาจถูกส่งให้ผู้รับเหมาไปแล้ว จึงบล็อกตั้งแต่ตอนบันทึก
+        const openBranchText = openRowRef ? openRowRef.branch : null;
+        const closeBranchText = (f.branch || '').toString().trim();
+        if (!isSameBranch(openBranchText, closeBranchText)) {
+          return jsonResponse({
+            success: false,
+            message: 'สาขาไม่ตรงกับตอนเปิดงาน: เลขงาน "' + jobId + '" เปิดงานไว้ที่สาขา "' + openBranchText
+              + '" แต่ปิดงานกรอกมาเป็น "' + closeBranchText + '" กรุณาแก้สาขาให้ตรงกับตอนเปิดงานก่อนบันทึก',
+          });
+        }
+
+        const reqDateText = openRowRef ? openRowRef.req_date : null;
         const reqD = parseReqDateString(reqDateText);
         const fixD = parseFixDateString((f.fixDate || '').toString());
         if (reqD && fixD && fixD < reqD) {
@@ -3682,7 +3738,8 @@ Deno.serve(async (req: Request) => {
         const [username, token] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ error: 'กรุณาเข้าสู่ระบบใหม่' });
-        if (session.role !== 'admin') return jsonResponse({ error: 'เฉพาะแอดมินเท่านั้นที่ดูรายการนี้ได้' });
+        // TUCK CR ต้องเปิดเมนูนี้ได้เสมอ ถึงจะกดอนุมัติขั้นสุดท้ายได้ แม้บัญชีจะไม่ได้ตั้ง role เป็น admin
+        if (session.role !== 'admin' && !session.isFinalApprover) return jsonResponse({ error: 'เฉพาะแอดมินและผู้อนุมัติขั้นสุดท้ายเท่านั้นที่ดูรายการนี้ได้' });
         const { data, error } = await supabase.from('job_form_submissions').select('*').order('submitted_at', { ascending: false }).limit(500);
         if (error) return jsonResponse({ error: error.message });
         const unreadIds = (data || []).filter((r: any) => r.is_read === false).map((r: any) => r.id);
@@ -3695,7 +3752,7 @@ Deno.serve(async (req: Request) => {
       case 'getUnreadJobFormSubmissionCount': {
         const [username, token] = args;
         const session = await verifySession(username, token);
-        if (!session.valid || session.role !== 'admin') return jsonResponse({ count: 0 });
+        if (!session.valid || (session.role !== 'admin' && !session.isFinalApprover)) return jsonResponse({ count: 0 });
         const { count, error } = await supabase.from('job_form_submissions').select('id', { count: 'exact', head: true }).eq('is_read', false);
         if (error) return jsonResponse({ count: 0 });
         return jsonResponse({ count: count || 0 });
@@ -3705,23 +3762,42 @@ Deno.serve(async (req: Request) => {
         const [username, token] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
-        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ทำรายการนี้ได้' });
+        if (session.role !== 'admin' && !session.isFinalApprover) return jsonResponse({ success: false, message: 'เฉพาะแอดมินและผู้อนุมัติขั้นสุดท้ายเท่านั้นที่ทำรายการนี้ได้' });
         const { error } = await supabase.from('job_form_submissions').update({ is_read: true, read_at: new Date().toISOString() }).eq('is_read', false);
         if (error) return jsonResponse({ success: false, message: error.message });
         return jsonResponse({ success: true });
       }
 
+      // ==================== ขั้นที่ 1: ผู้ตรวจสอบ 3 คน ====================
+      // ลำดับใหม่ (v1.0.61) สลับจากเดิม:
+      //   ขั้นที่ 1 = ผู้ตรวจสอบ 3 คน (is_checker) กด "อนุมัติ/ตีกลับ" — กดคนเดียวใน 3 คนก็ผ่าน
+      //   ขั้นที่ 2 = TUCK CR (is_final_approver) กด "อนุมัติขั้นสุดท้าย/ตีกลับ" — ขั้นนี้เท่านั้นที่ตัดบิลจริง
+      //
+      // ⚠ TUCK CR กดขั้นที่ 1 ไม่ได้ ต้องรอให้ผู้ตรวจสอบกดก่อนเสมอ
+      //    ถ้าปล่อยให้กดได้ คนเดียวจะกดผ่านครบทั้ง 2 ขั้น = การตรวจ 2 ชั้นไม่เหลือความหมาย
       case 'reviewJobFormSubmission': {
         const [username, token, submissionId, decision, remark] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
-        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ตรวจสอบได้' });
+        if (session.isFinalApprover) {
+          return jsonResponse({ success: false, message: 'บัญชีนี้เป็นผู้อนุมัติขั้นสุดท้าย จึงกดในขั้นที่ 1 ไม่ได้ — ต้องรอให้ผู้ตรวจสอบอนุมัติก่อน แล้วค่อยมากดขั้นสุดท้าย' });
+        }
+        if (!session.isChecker) {
+          return jsonResponse({ success: false, message: 'บัญชีนี้ไม่มีสิทธิ์ในขั้นที่ 1 — ขั้นนี้ต้องให้ผู้ตรวจสอบเป็นคนกดเท่านั้น' });
+        }
         if (decision !== 'approved' && decision !== 'rejected') return jsonResponse({ success: false, message: 'สถานะไม่ถูกต้อง' });
         if (decision === 'rejected' && (!remark || !remark.toString().trim())) return jsonResponse({ success: false, message: 'กรุณาระบุหมายเหตุ/เหตุผลที่ตีกลับ ก่อนดำเนินการ' });
 
-        // ⚠ ขั้น "อนุมัติ" ไม่ตัดบิลแล้ว — ย้ายไปอยู่ที่ปุ่ม "สิ้นสุดงาน" (finishJobFormSubmission) แทน
-        // เพื่อให้มีการตรวจ 2 ชั้น: คนหนึ่งอนุมัติเอกสาร อีกคนตรวจซ้ำแล้วกดสิ้นสุดจึงตัดบิลจริง
-        // ทั้ง 2 ชื่อจะถูกบันทึกไว้และแสดงในตาราง ตรวจย้อนหลังได้ว่าใครทำขั้นไหน
+        // กันกดซ้ำทับของที่ผ่านขั้นสุดท้ายไปแล้ว
+        // ถ้าไม่กัน ผู้ตรวจสอบจะดึงงานที่ตัดบิลไปแล้วกลับมาเป็น rejected ได้ ทั้งที่เงินถูกตัดไปแล้ว
+        const { data: preRows, error: preErr } = await supabase
+          .from('job_form_submissions').select('finished_at').eq('id', submissionId).limit(1);
+        if (preErr) return jsonResponse({ success: false, message: preErr.message });
+        if (!preRows || preRows.length === 0) return jsonResponse({ success: false, message: 'ไม่พบรายการนี้ (อาจถูกลบไปแล้ว กดโหลด/รีเฟรชอีกครั้ง)' });
+        if (preRows[0].finished_at) return jsonResponse({ success: false, message: 'รายการนี้ผ่านการอนุมัติขั้นสุดท้ายและตัดบิลไปแล้ว แก้ไขในขั้นที่ 1 ไม่ได้' });
+
+        // ⚠ ขั้นนี้ไม่ตัดบิล — การตัดบิลอยู่ที่ขั้นสุดท้ายของ TUCK CR (finishJobFormSubmission)
+        // ทั้ง 2 ชื่อถูกบันทึกไว้และแสดงในตาราง ตรวจย้อนหลังได้ว่าใครทำขั้นไหน
         const fields = {
           status: decision,
           admin_remark: remark ? remark.toString().trim() : null,
@@ -3734,24 +3810,23 @@ Deno.serve(async (req: Request) => {
         return jsonResponse({
           success: true,
           message: decision === 'approved'
-            ? 'อนุมัติเรียบร้อยแล้ว — ยังไม่ตัดบิล รอกด "สิ้นสุดงาน" อีกครั้งเพื่อตัดบิลออกจากตารางของผู้รับเหมา'
+            ? 'อนุมัติขั้นที่ 1 เรียบร้อยแล้ว — ยังไม่ตัดบิล รอ TUCK CR อนุมัติขั้นสุดท้ายจึงจะตัดบิลออกจากตารางของผู้รับเหมา'
             : 'ตีกลับเรียบร้อยแล้ว - ผู้รับเหมาจะเห็นหมายเหตุนี้และต้องส่งฟอร์มใหม่',
         });
       }
 
-      // ==================== ขั้นตรวจชั้นที่ 2: ผู้ตรวจสอบ ====================
-      // ทำได้ 2 อย่าง: "สิ้นสุดงาน" (ตัดบิลจริง) หรือ "ตีกลับ" (ส่งกลับให้ผู้รับเหมาแก้)
+      // ==================== ขั้นที่ 2 (ขั้นสุดท้าย): TUCK CR ====================
+      // ทำได้ 2 อย่าง: "อนุมัติขั้นสุดท้าย" (ตัดบิลจริง) หรือ "ตีกลับ" (ส่งกลับให้ผู้รับเหมาแก้)
       //
-      // ⚠ เฉพาะบัญชีที่ถูกตั้งธง is_checker = true เท่านั้น
-      //    แอดมินทั่วไป "กดไม่ได้" ตามที่ออกแบบให้เป็นการตรวจ 2 ฝ่าย
-      //    คนอนุมัติ (แอดมิน) กับคนสิ้นสุดงาน (ผู้ตรวจสอบ) เป็นคนละขั้นกัน
-      //    และ "ตีกลับ" ของผู้ตรวจสอบมีไว้กันกรณีแอดมินอนุมัติแบบตรวจไม่ละเอียดหรือตกหล่น
+      // ⚠ เฉพาะบัญชีที่ถูกตั้งธง is_final_approver = true (TUCK CR) เท่านั้น
+      //    ผู้ตรวจสอบ 3 คนและแอดมินทั่วไป "กดไม่ได้" ตามที่ออกแบบให้เป็นการตรวจ 2 ฝ่าย
+      //    และ "ตีกลับ" ของขั้นนี้มีไว้กันกรณีผู้ตรวจสอบอนุมัติมาแบบตรวจไม่ละเอียดหรือตกหล่น
       case 'finishJobFormSubmission': {
         const [username, token, submissionId, decisionRaw, remarkRaw] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
-        if (!session.isChecker) {
-          return jsonResponse({ success: false, message: 'บัญชีนี้ไม่มีสิทธิ์ในขั้นผู้ตรวจสอบ — ขั้นนี้ต้องให้ผู้ตรวจสอบเป็นคนกดเท่านั้น (แอดมินทำได้แค่ขั้นอนุมัติ)' });
+        if (!session.isFinalApprover) {
+          return jsonResponse({ success: false, message: 'บัญชีนี้ไม่มีสิทธิ์ในขั้นสุดท้าย — ขั้นนี้ต้องให้ TUCK CR เป็นคนกดเท่านั้น (ผู้ตรวจสอบทำได้แค่ขั้นที่ 1)' });
         }
 
         // ไม่ส่ง decision มา = ถือว่า "สิ้นสุดงาน" เพื่อให้แอปเวอร์ชันเก่าที่ยังส่งแค่ 3 ค่ายังใช้ได้
@@ -3769,15 +3844,15 @@ Deno.serve(async (req: Request) => {
         if (!subRows || subRows.length === 0) return jsonResponse({ success: false, message: 'ไม่พบรายการนี้ (อาจถูกลบไปแล้ว กดโหลด/รีเฟรชอีกครั้ง)' });
         const sub = subRows[0];
         if (sub.status !== 'approved') {
-          return jsonResponse({ success: false, message: 'ต้องให้แอดมินอนุมัติรายการนี้ก่อน ผู้ตรวจสอบจึงจะดำเนินการต่อได้ (สถานะตอนนี้: ' + (sub.status === 'rejected' ? 'ตีกลับ' : 'รอตรวจสอบ') + ')' });
+          return jsonResponse({ success: false, message: 'ต้องให้ผู้ตรวจสอบอนุมัติในขั้นที่ 1 ก่อน TUCK CR จึงจะกดขั้นสุดท้ายได้ (สถานะตอนนี้: ' + (sub.status === 'rejected' ? 'ตีกลับ' : 'รอผู้ตรวจสอบ') + ')' });
         }
-        if (sub.finished_at) return jsonResponse({ success: false, message: 'รายการนี้สิ้นสุดงานไปแล้ว ไม่ต้องกดซ้ำ' });
+        if (sub.finished_at) return jsonResponse({ success: false, message: 'รายการนี้อนุมัติขั้นสุดท้ายไปแล้ว ไม่ต้องกดซ้ำ' });
 
         const nowIso = new Date().toISOString();
 
-        // ---- กรณีผู้ตรวจสอบ "ตีกลับ" ----
+        // ---- กรณี TUCK CR "ตีกลับ" ----
         // ไม่แตะบิลเลย แค่ดึงสถานะกลับไปเป็นตีกลับ ผู้รับเหมาจะเห็นหมายเหตุและต้องส่งฟอร์มใหม่
-        // เก็บชื่อผู้อนุมัติเดิมไว้ไม่ลบ จะได้ตามได้ว่าใครอนุมัติผ่านมาก่อนหน้า
+        // เก็บชื่อผู้ตรวจสอบขั้นที่ 1 ไว้ไม่ลบ จะได้ตามได้ว่าใครอนุมัติผ่านมาก่อนหน้า
         if (decision === 'rejected') {
           const { error: rejErr } = await supabase.from('job_form_submissions').update({
             status: 'rejected',
@@ -3792,11 +3867,11 @@ Deno.serve(async (req: Request) => {
           return jsonResponse({
             success: true,
             message: 'ตีกลับเรียบร้อยแล้ว — ไม่ได้ตัดบิล ผู้รับเหมาจะเห็นหมายเหตุนี้และต้องส่งฟอร์มใหม่'
-              + (sub.reviewed_by ? (' (รายการนี้เคยอนุมัติโดย ' + sub.reviewed_by + ')') : ''),
+              + (sub.reviewed_by ? (' (ขั้นที่ 1 อนุมัติโดย ' + sub.reviewed_by + ')') : ''),
           });
         }
 
-        // ---- กรณีผู้ตรวจสอบ "สิ้นสุดงาน" ----
+        // ---- กรณี TUCK CR "อนุมัติขั้นสุดท้าย" ----
         // ตัดบิลเฉพาะแถวที่ "ส่งบิลให้ผู้รับเหมาไปแล้ว และยังไม่เคยตัด" เท่านั้น
         //
         // บั๊กเดิม: กรองแค่ .eq('customer_case', jobId) อย่างเดียว ไม่ได้ดูสถานะการส่งบิลเลย
@@ -3826,14 +3901,14 @@ Deno.serve(async (req: Request) => {
           checker_decision: 'finished',
           checker_remark: remark || null,
         }).eq('id', submissionId);
-        if (finErr) return jsonResponse({ success: false, message: 'ตัดบิลแล้วแต่บันทึกชื่อผู้สิ้นสุดงานไม่สำเร็จ: ' + finErr.message });
+        if (finErr) return jsonResponse({ success: false, message: 'ตัดบิลแล้วแต่บันทึกชื่อผู้อนุมัติขั้นสุดท้ายไม่สำเร็จ: ' + finErr.message });
 
         return jsonResponse({
           success: true,
           message: (closedCount > 0
-            ? ('สิ้นสุดงานเรียบร้อย — ตัดบิล ' + closedCount + ' แถวของเลขงานนี้ออกจากตารางวางบิลของผู้รับเหมาแล้ว')
-            : 'สิ้นสุดงานเรียบร้อย (ไม่มีแถวที่ต้องตัดบิล เพราะยังไม่ได้ส่งบิลให้ผู้รับเหมา หรือตัดบิลไปแล้วก่อนหน้านี้)')
-            + (sub.reviewed_by ? (' · อนุมัติโดย ' + sub.reviewed_by + ' · สิ้นสุดโดย ' + session.displayName) : ''),
+            ? ('อนุมัติขั้นสุดท้ายเรียบร้อย — ตัดบิล ' + closedCount + ' แถวของเลขงานนี้ออกจากตารางวางบิลของผู้รับเหมาแล้ว')
+            : 'อนุมัติขั้นสุดท้ายเรียบร้อย (ไม่มีแถวที่ต้องตัดบิล เพราะยังไม่ได้ส่งบิลให้ผู้รับเหมา หรือตัดบิลไปแล้วก่อนหน้านี้)')
+            + (sub.reviewed_by ? (' · ขั้นที่ 1 โดย ' + sub.reviewed_by + ' · ขั้นสุดท้ายโดย ' + session.displayName) : ''),
         });
       }
 
