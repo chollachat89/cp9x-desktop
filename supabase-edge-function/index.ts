@@ -1253,6 +1253,25 @@ function branchDisplayName(branchCode: any, branchName: any): string {
   return code + '-' + name;
 }
 
+// ---- ใครคือ "TUCK CR" ผู้อนุมัติขั้นสุดท้าย ----
+//
+// ปกติดูจากคอลัมน์ is_final_approver ใน DB เป็นหลัก
+// แต่เผื่อกรณียังไม่ได้รัน SQL ตั้งธง หรือตั้งแล้วชื่อผู้ใช้สะกดไม่ตรงกับที่ระบุในไฟล์ migration
+// จึงมีตัวสำรองที่ดูจากชื่อผู้ใช้/ชื่อที่แสดงให้ด้วย ระบบจะได้ไม่ค้างจนกดอนุมัติขั้นสุดท้ายไม่ได้เลย
+//
+// ตัดช่องว่างและอักขระคั่นออกก่อนเทียบ จึงรองรับทุกแบบ:
+//   "TUCK CR" · "tuck cr" · "TUCK_CR" · "tuck-cr" · "tuckcr" · "TUCK"
+// เมื่อรัน SQL ตั้งธงเรียบร้อยแล้ว ค่าใน DB จะเป็นตัวตัดสินอยู่ดี ตัวสำรองนี้แค่กันระบบล็อกตัวเอง
+function looksLikeTuckCr(user: any): boolean {
+  const norm = (v: any) => (v === null || v === undefined ? '' : v.toString().toLowerCase().replace(/[\s._\-]/g, ''));
+  const u = norm(user && user.username);
+  const d = norm(user && user.display_name);
+  return u.indexOf('tuckcr') !== -1 || d.indexOf('tuckcr') !== -1 || u === 'tuck' || d === 'tuck';
+}
+function resolveIsFinalApprover(user: any): boolean {
+  return user && (user.is_final_approver === true || looksLikeTuckCr(user));
+}
+
 // ---- เทียบ "สาขา" ของเปิดงานกับปิดงานว่าเป็นสาขาเดียวกันไหม ----
 //
 // ค่าที่เก็บจริงมาได้หลายหน้าตา เพราะมาจากการพิมพ์มือบ้าง lookup บ้าง และของเก่ามีรหัสซ้ำติดมาด้วย
@@ -1997,8 +2016,10 @@ Deno.serve(async (req: Request) => {
       role: user.role,
       displayName: user.display_name,
       username: user.username,
-      isChecker: user.is_checker === true,
-      isFinalApprover: user.is_final_approver === true,
+      // TUCK CR ห้ามถือสิทธิ์ขั้นที่ 1 พร้อมกัน ไม่งั้นคนเดียวกดผ่านได้ทั้ง 2 ขั้น
+      // ตัดสิทธิ์ขั้นที่ 1 ออกให้ตรงนี้เลย ไม่ต้องรอให้ข้อมูลใน DB ถูกต้องก่อน
+      isChecker: user.is_checker === true && !resolveIsFinalApprover(user),
+      isFinalApprover: resolveIsFinalApprover(user),
     };
   }
 
@@ -2261,7 +2282,8 @@ Deno.serve(async (req: Request) => {
         if (hash !== user.password_hash) return jsonResponse({ success: false, message: 'รหัสผ่านไม่ถูกต้อง' });
         const token = genToken();
         await supabase.from('contractors').update({ session_token: token, session_created_at: new Date().toISOString() }).eq('id', user.id);
-        return jsonResponse({ success: true, token, username: user.username, role: user.role, displayName: user.display_name, isChecker: user.is_checker === true, isFinalApprover: user.is_final_approver === true });
+        const finalApprover = resolveIsFinalApprover(user);
+        return jsonResponse({ success: true, token, username: user.username, role: user.role, displayName: user.display_name, isChecker: user.is_checker === true && !finalApprover, isFinalApprover: finalApprover });
       }
 
       case 'logoutUser': {
@@ -3790,8 +3812,12 @@ Deno.serve(async (req: Request) => {
 
         // กันกดซ้ำทับของที่ผ่านขั้นสุดท้ายไปแล้ว
         // ถ้าไม่กัน ผู้ตรวจสอบจะดึงงานที่ตัดบิลไปแล้วกลับมาเป็น rejected ได้ ทั้งที่เงินถูกตัดไปแล้ว
+        // ⚠ ใช้ select('*') ไม่ระบุชื่อคอลัมน์
+        // ถ้าระบุชื่อคอลัมน์ที่ยังไม่มีในฐานข้อมูล (เช่น finished_at ที่มาจาก SQL รอบ v1.0.57
+        // ซึ่งอาจยังไม่ได้รัน) PostgREST จะตอบเป็น error ทั้งคำสั่ง ทำให้กดอะไรไม่ได้เลยทั้งขั้นตอน
+        // select('*') คืนเฉพาะคอลัมน์ที่มีจริง คอลัมน์ที่ขาดจะเป็น undefined ซึ่งโค้ดข้างล่างรับได้
         const { data: preRows, error: preErr } = await supabase
-          .from('job_form_submissions').select('finished_at').eq('id', submissionId).limit(1);
+          .from('job_form_submissions').select('*').eq('id', submissionId).limit(1);
         if (preErr) return jsonResponse({ success: false, message: preErr.message });
         if (!preRows || preRows.length === 0) return jsonResponse({ success: false, message: 'ไม่พบรายการนี้ (อาจถูกลบไปแล้ว กดโหลด/รีเฟรชอีกครั้ง)' });
         if (preRows[0].finished_at) return jsonResponse({ success: false, message: 'รายการนี้ผ่านการอนุมัติขั้นสุดท้ายและตัดบิลไปแล้ว แก้ไขในขั้นที่ 1 ไม่ได้' });
@@ -3836,9 +3862,12 @@ Deno.serve(async (req: Request) => {
           return jsonResponse({ success: false, message: 'กรุณาระบุหมายเหตุ/เหตุผลที่ตีกลับ ก่อนดำเนินการ' });
         }
 
+        // ⚠ select('*') ด้วยเหตุผลเดียวกับขั้นที่ 1 — ระบุชื่อคอลัมน์ที่ยังไม่มีแล้วจะพังทั้งคำสั่ง
+        // เดิมระบุ finished_at ไว้ตรง ๆ ถ้าฐานข้อมูลยังไม่มีคอลัมน์นี้ ขั้นสุดท้ายจะล้มตั้งแต่บรรทัดนี้
+        // ทั้งปุ่มอนุมัติสุดท้ายและปุ่มตีกลับจึงใช้ไม่ได้ทั้งคู่ โดยไม่มีอะไรบอกว่าเพราะอะไร
         const { data: subRows, error: subErr } = await supabase
           .from('job_form_submissions')
-          .select('customer_case,status,finished_at,reviewed_by')
+          .select('*')
           .eq('id', submissionId).limit(1);
         if (subErr) return jsonResponse({ success: false, message: subErr.message });
         if (!subRows || subRows.length === 0) return jsonResponse({ success: false, message: 'ไม่พบรายการนี้ (อาจถูกลบไปแล้ว กดโหลด/รีเฟรชอีกครั้ง)' });
@@ -3854,7 +3883,7 @@ Deno.serve(async (req: Request) => {
         // ไม่แตะบิลเลย แค่ดึงสถานะกลับไปเป็นตีกลับ ผู้รับเหมาจะเห็นหมายเหตุและต้องส่งฟอร์มใหม่
         // เก็บชื่อผู้ตรวจสอบขั้นที่ 1 ไว้ไม่ลบ จะได้ตามได้ว่าใครอนุมัติผ่านมาก่อนหน้า
         if (decision === 'rejected') {
-          const { error: rejErr } = await supabase.from('job_form_submissions').update({
+          let { error: rejErr } = await supabase.from('job_form_submissions').update({
             status: 'rejected',
             admin_remark: remark,
             checker_by: session.displayName,
@@ -3863,7 +3892,26 @@ Deno.serve(async (req: Request) => {
             checker_remark: remark,
             is_read: true,
           }).eq('id', submissionId);
-          if (rejErr) return jsonResponse({ success: false, message: rejErr.message });
+
+          // เผื่อฐานข้อมูลยังไม่มีคอลัมน์ประวัติผู้ตรวจ (ยังไม่ได้รัน SQL ที่เพิ่มคอลัมน์ checker_*)
+          // เดิมจะพังทั้งคำสั่งแล้วตีกลับไม่ได้เลย — ตอนนี้ถอยไปบันทึกเฉพาะคอลัมน์หลักที่มีแน่นอน
+          // ผลคือตีกลับได้จริง เสียแค่ประวัติชื่อผู้กด ซึ่งดีกว่าปล่อยให้ใช้งานไม่ได้ทั้งฟีเจอร์
+          if (rejErr && /column|schema cache/i.test(rejErr.message || '')) {
+            const retry = await supabase.from('job_form_submissions').update({
+              status: 'rejected',
+              admin_remark: remark,
+              is_read: true,
+            }).eq('id', submissionId);
+            rejErr = retry.error;
+            if (!rejErr) {
+              return jsonResponse({
+                success: true,
+                message: 'ตีกลับเรียบร้อยแล้ว — ไม่ได้ตัดบิล ผู้รับเหมาจะเห็นหมายเหตุนี้และต้องส่งฟอร์มใหม่'
+                  + ' · ⚠ ยังไม่ได้บันทึกชื่อผู้ตีกลับ เพราะฐานข้อมูลยังไม่มีคอลัมน์ประวัติผู้ตรวจ ให้รันไฟล์ SQL v1.0.62 เพื่อเพิ่มคอลัมน์',
+              });
+            }
+          }
+          if (rejErr) return jsonResponse({ success: false, message: 'ตีกลับไม่สำเร็จ: ' + rejErr.message });
           return jsonResponse({
             success: true,
             message: 'ตีกลับเรียบร้อยแล้ว — ไม่ได้ตัดบิล ผู้รับเหมาจะเห็นหมายเหตุนี้และต้องส่งฟอร์มใหม่'
@@ -3893,7 +3941,7 @@ Deno.serve(async (req: Request) => {
         }
 
         // บันทึกหลังตัดบิลสำเร็จเท่านั้น ถ้าตัดบิลพลาดจะได้กดใหม่ได้ ไม่ค้างสถานะครึ่ง ๆ กลาง ๆ
-        const { error: finErr } = await supabase.from('job_form_submissions').update({
+        let { error: finErr } = await supabase.from('job_form_submissions').update({
           finished_at: nowIso,
           finished_by: session.displayName,
           checker_by: session.displayName,
@@ -3901,7 +3949,17 @@ Deno.serve(async (req: Request) => {
           checker_decision: 'finished',
           checker_remark: remark || null,
         }).eq('id', submissionId);
-        if (finErr) return jsonResponse({ success: false, message: 'ตัดบิลแล้วแต่บันทึกชื่อผู้อนุมัติขั้นสุดท้ายไม่สำเร็จ: ' + finErr.message });
+
+        // เผื่อคอลัมน์ประวัติผู้ตรวจยังไม่มีในฐานข้อมูล (ยังไม่ได้รัน SQL) — ถอยไปบันทึกเฉพาะ 2 คอลัมน์หลัก
+        // ถ้าไม่ถอย บิลจะถูกตัดไปแล้วแต่สถานะไม่ถูกบันทึก = กดซ้ำได้เรื่อย ๆ และงานค้างครึ่ง ๆ กลาง ๆ
+        if (finErr && /column|schema cache/i.test(finErr.message || '')) {
+          const retry = await supabase.from('job_form_submissions').update({
+            finished_at: nowIso,
+            finished_by: session.displayName,
+          }).eq('id', submissionId);
+          finErr = retry.error;
+        }
+        if (finErr) return jsonResponse({ success: false, message: 'ตัดบิลแล้วแต่บันทึกชื่อผู้อนุมัติขั้นสุดท้ายไม่สำเร็จ: ' + finErr.message + ' — ให้รันไฟล์ SQL v1.0.62 เพื่อเพิ่มคอลัมน์ที่ขาด' });
 
         return jsonResponse({
           success: true,

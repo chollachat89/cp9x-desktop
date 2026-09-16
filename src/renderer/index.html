@@ -1595,6 +1595,40 @@
         </div>
     </div>
 
+    <!-- Modal กรอกเหตุผลที่ตีกลับ ของขั้นสุดท้าย (TUCK CR)
+         เดิมใช้ prompt() ซึ่ง Electron ไม่รองรับ กดปุ่มตีกลับแล้วไม่เกิดอะไรขึ้นเลย -->
+    <div id="rejectReasonModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg">
+            <div class="flex items-center justify-between p-5 border-b border-slate-200">
+                <h3 class="text-lg font-bold text-slate-800">
+                    <i class="fa-solid fa-rotate-left mr-2 text-red-600"></i> ตีกลับให้ผู้รับเหมาแก้ใหม่
+                    <span class="block text-xs font-semibold text-slate-500 mt-0.5">
+                        เลขงาน <span id="rejectReasonJobId" class="text-slate-700">-</span>
+                        <span id="rejectReasonApprovedBy"></span>
+                    </span>
+                </h3>
+                <button type="button" onclick="closeRejectReasonModal()" class="text-slate-400 hover:text-slate-700 text-xl leading-none">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="p-5">
+                <label class="block text-sm font-semibold text-slate-700 mb-1.5">เหตุผลที่ตีกลับ (บังคับกรอก)</label>
+                <textarea id="rejectReasonText" rows="4" placeholder="ผู้รับเหมาจะเห็นข้อความนี้ และต้องแก้ตามนี้แล้วส่งฟอร์มใหม่"
+                    class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm resize-y"></textarea>
+                <p id="rejectReasonError" class="hidden text-xs mt-1.5 text-red-500 font-semibold">กรุณากรอกเหตุผลที่ตีกลับ ก่อนดำเนินการ</p>
+                <p class="text-xs mt-2 text-slate-500">ตีกลับแล้ว <b>ไม่ตัดบิล</b> — เลขงานนี้จะกลับไปอยู่ในโซน "งานที่ต้องดำเนินการ" ของผู้รับเหมาโดยอัตโนมัติ</p>
+            </div>
+            <div class="flex items-center justify-end gap-2 p-5 border-t border-slate-200 bg-slate-50 rounded-b-xl">
+                <button type="button" onclick="closeRejectReasonModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2 px-5 rounded-lg hover:bg-slate-100 transition-colors">
+                    ยกเลิก
+                </button>
+                <button type="button" id="rejectReasonConfirmBtn" onclick="confirmRejectReason()" class="bg-red-600 text-white font-semibold py-2 px-5 rounded-lg hover:bg-red-700 transition-colors">
+                    ยืนยันตีกลับ
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal เลือกตารางที่จะซิงค์ไป Google Sheet (แอดมินเท่านั้น) -->
     <div id="syncTablesModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[85vh] overflow-y-auto">
@@ -5867,6 +5901,46 @@
         let currentSubmissionsData = [];
         let currentCompletedData = [];
 
+        // บอกให้ชัดว่าบัญชีที่ล็อกอินอยู่ทำหน้าที่ขั้นไหน และตอนนี้มีกี่งานรอตัวเองอยู่
+        //
+        // มีไว้เพราะ "ไม่มีปุ่มให้กด" เกิดได้จาก 2 สาเหตุที่หน้าตาเหมือนกันเป๊ะ แต่แก้คนละทาง:
+        //   1. งานทุกงานยังค้างอยู่ขั้นที่ 1 — ต้องรอผู้ตรวจสอบกดก่อน ไม่ใช่ความผิดพลาดอะไร
+        //   2. บัญชีนี้ยังไม่ได้ตั้งธงสิทธิ์ใน DB — ต้องไปรัน SQL ตั้งสิทธิ์
+        // ถ้าไม่บอกไว้ ผู้ใช้จะแยกไม่ออกว่าระบบพังหรือแค่ยังไม่ถึงคิวตัวเอง
+        function renderSubmissionsRoleBanner(statusEl) {
+            if (!statusEl) return;
+            const rows = currentSubmissionsData || [];
+            const waitStep1 = rows.filter(r => r.status === 'pending').length;
+            const waitFinal = rows.filter(r => r.status === 'approved' && !r.finished_at).length;
+            const done = rows.filter(r => !!r.finished_at).length;
+            const isChecker = !!(currentSession && currentSession.isChecker);
+            const isFinalApprover = !!(currentSession && currentSession.isFinalApprover);
+
+            const counts = 'พบ ' + rows.length + ' ไฟล์ · รอขั้นที่ 1: ' + waitStep1
+                + ' · รอ TUCK CR: ' + waitFinal + ' · อนุมัติสุดท้ายแล้ว: ' + done;
+
+            let role, mine, cls;
+            if (isFinalApprover) {
+                role = 'คุณคือผู้อนุมัติขั้นสุดท้าย (TUCK CR)';
+                mine = waitFinal > 0
+                    ? ('มี ' + waitFinal + ' งานรอคุณกด "อนุมัติขั้นสุดท้าย"')
+                    : 'ตอนนี้ยังไม่มีงานรอคุณ — ต้องให้ผู้ตรวจสอบกดอนุมัติขั้นที่ 1 ก่อน ปุ่มถึงจะขึ้น';
+                cls = waitFinal > 0 ? 'text-sm text-emerald-600 mb-3' : 'text-sm text-amber-600 mb-3';
+            } else if (isChecker) {
+                role = 'คุณคือผู้ตรวจสอบ (ขั้นที่ 1)';
+                mine = waitStep1 > 0
+                    ? ('มี ' + waitStep1 + ' งานรอคุณกดอนุมัติ/ตีกลับ')
+                    : 'ตอนนี้ไม่มีงานรอขั้นที่ 1';
+                cls = waitStep1 > 0 ? 'text-sm text-emerald-600 mb-3' : 'text-sm text-slate-500 mb-3';
+            } else {
+                role = 'บัญชีนี้ยังไม่มีสิทธิ์กดอนุมัติขั้นไหนเลย (ดูได้อย่างเดียว)';
+                mine = 'ถ้าบัญชีนี้ควรกดได้ แปลว่ายังไม่ได้ตั้งสิทธิ์ในฐานข้อมูล — ให้รัน SQL v1.0.61 บล็อก A และ C';
+                cls = 'text-sm text-red-500 mb-3';
+            }
+            statusEl.textContent = counts + ' — ' + role + ' · ' + mine;
+            statusEl.className = cls;
+        }
+
         // โหลดรายการไฟล์ที่ผู้รับเหมาส่งกลับมาทั้งหมด แล้ว mark ว่า "อ่านแล้ว" ทันที
         // (เลขแจ้งเตือนที่แท็บจะหายไปหลังเปิดดู แต่ไฟล์/รายการยังอยู่ถาวรในเมนูนี้เสมอ ไม่ถูกลบ)
         function loadJobFormSubmissions() {
@@ -5882,8 +5956,7 @@
                 }
                 currentSubmissionsData = res || [];
                 filterSubmissions();
-                statusEl.textContent = 'พบ ' + currentSubmissionsData.length + ' ไฟล์';
-                statusEl.className = 'text-sm text-emerald-600 mb-3';
+                renderSubmissionsRoleBanner(statusEl);
                 updateSubmissionsBadge(0); // getJobFormSubmissions mark ว่าอ่านแล้วให้ในตัวเดียวกันแล้ว (ไม่ต้องยิงซ้ำอีกรอบ)
             }, function (err) {
                 statusEl.textContent = 'เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : '');
@@ -5911,6 +5984,8 @@
                 );
             }
             renderSubmissions(filtered);
+            // อัปเดตแถบบอกหน้าที่/จำนวนงานรอ ทุกครั้งที่ข้อมูลเปลี่ยน (รวมตอนเพิ่งกดอนุมัติเสร็จ)
+            renderSubmissionsRoleBanner(document.getElementById('submissionsStatus'));
         }
 
         function renderSubmissions(rows) {
@@ -6060,17 +6135,56 @@
             const jobId = row ? (row.customer_case || '') : '';
             const approvedBy = row && row.reviewed_by ? ('\n(ขั้นที่ 1 อนุมัติโดย ' + row.reviewed_by + ')') : '';
 
-            let remark = '';
             if (act === 'rejected') {
                 // ตีกลับต้องมีเหตุผลเสมอ ผู้รับเหมาจะเห็นข้อความนี้และต้องแก้ตามนั้น
-                remark = (prompt('เหตุผลที่ตีกลับ เลขงาน ' + jobId + ' (ผู้รับเหมาจะเห็นข้อความนี้)' + approvedBy) || '').trim();
-                if (!remark) {
-                    showAlert('error', 'กรุณากรอกเหตุผลที่ตีกลับ ก่อนดำเนินการ');
-                    return;
-                }
-            } else {
-                if (!confirm('ยืนยัน "อนุมัติขั้นสุดท้าย" เลขงาน ' + jobId + ' ?' + approvedBy + '\n\nกดแล้วระบบจะตัดบิลของเลขงานนี้ออกจากตารางวางบิลของผู้รับเหมาทันที และย้ายไปเมนู "งานที่เสร็จสิ้น"')) return;
+                //
+                // ⚠ เดิมตรงนี้ใช้ prompt() ซึ่ง Electron ไม่รองรับ (ไม่ใช่ว่าแค่หน้าตาไม่สวย แต่ใช้ไม่ได้เลย)
+                // กดปุ่มตีกลับแล้วจึงไม่มีอะไรเกิดขึ้น ตีกลับในขั้นสุดท้ายไม่ได้เลยสักครั้ง
+                // เปลี่ยนมาใช้หน้าต่างกรอกเหตุผลของแอปเองแทน
+                openRejectReasonModal(id, jobId, row ? row.reviewed_by : '');
+                return;
             }
+
+            if (!confirm('ยืนยัน "อนุมัติขั้นสุดท้าย" เลขงาน ' + jobId + ' ?' + approvedBy + '\n\nกดแล้วระบบจะตัดบิลของเลขงานนี้ออกจากตารางวางบิลของผู้รับเหมาทันที และย้ายไปเมนู "งานที่เสร็จสิ้น"')) return;
+            submitFinishDecision(id, 'finished', '');
+        }
+
+        // ---- หน้าต่างกรอกเหตุผลที่ตีกลับ (ขั้นสุดท้าย) ----
+        let rejectReasonTargetId = null;
+
+        function openRejectReasonModal(id, jobId, reviewedBy) {
+            rejectReasonTargetId = id;
+            document.getElementById('rejectReasonJobId').textContent = jobId || '-';
+            document.getElementById('rejectReasonApprovedBy').textContent =
+                reviewedBy ? (' · ขั้นที่ 1 อนุมัติโดย ' + reviewedBy) : '';
+            const textEl = document.getElementById('rejectReasonText');
+            textEl.value = '';
+            document.getElementById('rejectReasonError').classList.add('hidden');
+            document.getElementById('rejectReasonModal').classList.remove('hidden');
+            setTimeout(function () { textEl.focus(); }, 50);
+        }
+
+        function closeRejectReasonModal() {
+            rejectReasonTargetId = null;
+            document.getElementById('rejectReasonModal').classList.add('hidden');
+        }
+
+        function confirmRejectReason() {
+            const id = rejectReasonTargetId;
+            if (!id) return;
+            const remark = document.getElementById('rejectReasonText').value.trim();
+            if (!remark) {
+                document.getElementById('rejectReasonError').classList.remove('hidden');
+                document.getElementById('rejectReasonText').focus();
+                return;
+            }
+            closeRejectReasonModal();
+            submitFinishDecision(id, 'rejected', remark);
+        }
+
+        // ยิงคำสั่งขั้นสุดท้ายจริง — ใช้ร่วมกันทั้ง "อนุมัติขั้นสุดท้าย" และ "ตีกลับ"
+        function submitFinishDecision(id, act, remark) {
+            const row = currentSubmissionsData.find(r => String(r.id) === String(id));
 
             runServerCall('finishJobFormSubmission', [currentSession.username, currentSession.token, id, act, remark], function (res) {
                 if (res && res.success) {
