@@ -1,0 +1,30 @@
+# ไฟล์นี้ Cloudflare Pages อ่านเอง เพื่อกำหนด HTTP header ของแต่ละ path
+# (แอปเดสก์ท็อป Electron ไม่ได้ใช้ไฟล์นี้เลย ติดไปกับแพ็กเกจเฉย ๆ ไม่มีผลอะไร)
+
+# ---- ตัวแอป: ห้ามแคช ----
+# สำคัญมาก ถ้าปล่อยให้แคช ผู้ใช้บนมือถือจะค้างอยู่กับเวอร์ชันเก่าไปเรื่อย ๆ
+# แก้บั๊กแล้ว deploy ใหม่ก็ยังเห็นของเดิม แล้วไล่หาสาเหตุผิดทาง
+# no-cache ไม่ได้แปลว่าไม่เก็บ แต่แปลว่าต้องถามเซิร์ฟเวอร์ก่อนใช้ทุกครั้ง โหลดยังเร็วเหมือนเดิม
+/
+  Cache-Control: no-cache
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+
+/index.html
+  Cache-Control: no-cache
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+
+/*.js
+  Cache-Control: no-cache
+
+/*.css
+  Cache-Control: no-cache
+
+/manifest.webmanifest
+  Cache-Control: no-cache
+
+# ---- ไอคอน: แคชได้ยาว ----
+# ไอคอนแทบไม่เปลี่ยน ให้เก็บไว้ 30 วัน ลดการโหลดซ้ำ
+/*.png
+  Cache-Control: public, max-age=2592000

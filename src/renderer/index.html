@@ -3,8 +3,23 @@
 <head>
     <base target="_top">
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- viewport-fit=cover = ใช้พื้นที่เต็มจอบนเครื่องที่มีรอยบาก (iPhone) ร่วมกับ safe-area ใน CSS ด้านล่าง
+         maximum-scale ไม่ใส่ เพราะจะห้ามผู้ใช้ซูมตาราง ซึ่งเป็นวิธีเดียวที่อ่านตัวเลขเล็ก ๆ บนมือถือได้ -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>CP9-X</title>
+
+    <!-- ==================== ติดตั้งเป็นแอปบน iPad / มือถือ ====================
+         เปิดเว็บใน Safari แล้วกด "แชร์ > เพิ่มไปยังหน้าจอโฮม" จะได้ไอคอนและเปิดแบบเต็มจอไม่มีแถบ URL
+         ไฟล์พวกนี้ไม่มีผลกับแอปเดสก์ท็อป Electron เลย (โหลดแล้วไม่ถูกใช้) จึงใช้ไฟล์ index.html ชุดเดียวกันได้ -->
+    <link rel="manifest" href="./manifest.webmanifest">
+    <meta name="theme-color" content="#15803d">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="CP9X">
+    <meta name="format-detection" content="telephone=no">
+    <link rel="apple-touch-icon" href="./icon-180.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -134,6 +149,142 @@
             border-radius: 0.85rem;
             background: linear-gradient(135deg, #16a34a 0%, #0e7490 100%);
             box-shadow: 0 6px 18px -4px rgba(16, 185, 129, 0.55);
+        }
+
+        /* ==========================================================
+           ใช้งานบน iPad และมือถือ
+           ==========================================================
+           แอปนี้เป็นหน้าเว็บล้วน ๆ อยู่แล้ว (คุยกับเซิร์ฟเวอร์ผ่าน fetch ไม่มีโค้ดเฉพาะ Electron)
+           จึงเปิดผ่าน Safari/Chrome บนแท็บเล็ตและมือถือได้ โดยใช้ไฟล์ชุดเดียวกับแอปเดสก์ท็อป
+           CSS ทั้งบล็อกนี้ไม่มีผลกับจอคอมพิวเตอร์เลย เพราะอยู่ใต้ media query ของจอเล็ก/จอสัมผัสทั้งหมด
+
+           iPad แนวนอน (1024px ขึ้นไป) ใช้หน้าตาเดิมได้ทั้งหมด ไม่ต้องแก้อะไร
+           ที่ต้องปรับจริงคือจอต่ำกว่า 768px (มือถือ) และการกดด้วยนิ้ว */
+
+        /* ---------- เว้นระยะขอบจอให้พ้นรอยบากและแถบล่างของ iPhone ---------- */
+        @supports (padding: env(safe-area-inset-left)) {
+            body {
+                padding-left: env(safe-area-inset-left);
+                padding-right: env(safe-area-inset-right);
+                padding-bottom: env(safe-area-inset-bottom);
+            }
+        }
+
+        /* ---------- เปิดจากไอคอนหน้าจอโฮม: ต้องเว้นที่ให้แถบสถานะด้วย ----------
+           iOS ตั้ง apple-mobile-web-app-status-bar-style เป็น black-translucent
+           เพื่อให้สีเขียวของแอปไหลขึ้นไปถึงขอบบนจอ สวยกว่าปล่อยเป็นแถบขาวคาดไว้
+           แต่ผลคือ "แถบสถานะทับเนื้อหา" — นาฬิกา/wifi/แบตเตอรี่ไปซ้อนกับหัวแอปพอดี
+
+           จึงต้องดัน #topBar กับเมนูข้างลงมาเท่าความสูงแถบสถานะ (env(safe-area-inset-top))
+           ทำเฉพาะตอนเปิดจากไอคอนหน้าจอโฮมเท่านั้น เพราะถ้าเปิดในเบราว์เซอร์ปกติ
+           ตัวเบราว์เซอร์กันที่ให้อยู่แล้ว ใส่เพิ่มจะกลายเป็นช่องว่างเปล่า ๆ ซ้อนอีกชั้น
+
+           ใช้คลาส .pwa-standalone ที่ JS ติดให้ แทน media query (display-mode: standalone)
+           เพราะ Safari บน iOS รุ่นเก่ายังไม่รองรับ media query ตัวนั้น แต่บอกผ่าน
+           navigator.standalone ได้ — ส่วน Android ใช้ display-mode ได้ปกติ โค้ดจึงเช็คทั้ง 2 ทาง */
+        html.pwa-standalone #topBar { padding-top: calc(0.625rem + env(safe-area-inset-top)); }
+        html.pwa-standalone #sidebar { padding-top: env(safe-area-inset-top); }
+        html.pwa-standalone #loginScreen { padding-top: calc(1rem + env(safe-area-inset-top)); }
+        /* ตารางสูงเต็มจอ ต้องหักความสูงแถบสถานะออกด้วย ไม่งั้นแถวล่างสุดโดนบังตลอด */
+        html.pwa-standalone .table-scroll { max-height: calc(100vh - 320px - env(safe-area-inset-top)); }
+
+        /* ---------- จอสัมผัส: ปุ่มต้องกดติด ----------
+           ปุ่มในตารางหลายตัวเป็น text-[10px] + py-1 ซึ่งสูงราว 20px
+           นิ้วคนกดแม่นยำได้ประมาณ 44px (ค่าที่ Apple แนะนำ) ต่ำกว่านั้นกดพลาดบ่อยมาก
+           ขยายเฉพาะบนเครื่องที่ชี้ด้วยนิ้วจริง ๆ (pointer: coarse) เมาส์ไม่โดนกระทบ */
+        @media (pointer: coarse) {
+            .table-scroll button,
+            .table-scroll a.text-blood-600,
+            button.text-\[10px\] {
+                min-height: 34px;
+                padding-left: .6rem;
+                padding-right: .6rem;
+            }
+            /* ช่องกรอกต้องไม่ต่ำกว่า 16px ไม่งั้น Safari บน iOS จะซูมหน้าจอเข้าไปเองทุกครั้งที่แตะช่อง
+               แล้วซูมไม่กลับ ทำให้ตารางเพี้ยนทั้งหน้า — เป็นพฤติกรรมของ iOS ปิดไม่ได้ นอกจากขยายตัวอักษร */
+            input, select, textarea { font-size: 16px !important; }
+            .table-scroll .grid-input { font-size: 16px !important; padding-top: 4px; padding-bottom: 4px; }
+        }
+
+        /* ---------- เลื่อนตารางแนวนอนให้ลื่นแบบแอปเนทีฟ ---------- */
+        .table-scroll { -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+
+        @media (max-width: 767px) {
+            /* ตารางสูงเต็มจอได้เลย เพราะบนมือถือไม่มีเมนูข้างมากินพื้นที่ */
+            .table-scroll { max-height: calc(100vh - 230px); }
+            html.pwa-standalone .table-scroll { max-height: calc(100vh - 230px - env(safe-area-inset-top)); }
+
+            /* ---------- เมนู "ไฟล์ผู้รับเหมาส่งกลับ" : เปลี่ยนแถวตารางเป็นการ์ด ----------
+               ตารางนี้มี 8 คอลัมน์ ใช้บนจอกว้าง 390px ไม่ไหว ต้องเลื่อนซ้ายขวาตลอดเวลา
+               และเป็นหน้าที่ผู้ตรวจสอบต้องกดอนุมัติ/ตีกลับจริง จึงต้องใช้ได้เต็มที่บนมือถือ
+
+               ทำด้วย CSS ล้วน ไม่แตะโค้ด render สักบรรทัด:
+               ซ่อนหัวตาราง แล้วให้แต่ละแถวกลายเป็นการ์ด ส่วนชื่อคอลัมน์ดึงมาจาก data-label ของแต่ละช่อง
+               ข้อดีคือฝั่งเดสก์ท็อปยังเป็นตารางเดิมเป๊ะ ไม่ต้องดูแลโค้ด 2 ชุด */
+            #sectionSubmissions .table-scroll {
+                max-height: none;
+                border: 0;
+                overflow: visible;
+            }
+            #sectionSubmissions table,
+            #sectionSubmissions tbody,
+            #sectionSubmissions tr,
+            #sectionSubmissions td { display: block; width: 100%; }
+            #sectionSubmissions thead { display: none; }
+            #sectionSubmissions tbody tr {
+                border: 1px solid #e2e8f0;
+                border-radius: .75rem;
+                background: #fff !important;
+                margin-bottom: .75rem;
+                padding: .25rem .25rem .5rem;
+                box-shadow: 0 1px 2px rgba(15, 23, 42, .06);
+            }
+            #sectionSubmissions tbody td {
+                border: 0;
+                padding: .4rem .6rem;
+                white-space: normal !important;   /* ยกเลิก whitespace-nowrap ของตาราง ไม่งั้นข้อความล้นการ์ด */
+                word-break: break-word;
+            }
+            /* ชื่อคอลัมน์แสดงเป็นป้ายเล็ก ๆ เหนือค่าในแต่ละช่อง */
+            #sectionSubmissions tbody td::before {
+                content: attr(data-label);
+                display: block;
+                font-size: 10px;
+                font-weight: 600;
+                color: #94a3b8;
+                margin-bottom: 2px;
+            }
+            /* ช่องที่ไม่ได้ใส่ data-label ไว้ ไม่ต้องขึ้นป้ายเปล่า */
+            #sectionSubmissions tbody td:not([data-label])::before { content: none; }
+            /* เส้นคั่นบาง ๆ เหนือช่อง "ดำเนินการ" ให้แยกส่วนอ่านกับส่วนกดออกจากกัน */
+            #sectionSubmissions tbody td[data-label^="หมายเหตุ"] {
+                border-top: 1px solid #f1f5f9;
+                margin-top: .25rem;
+                padding-top: .5rem;
+            }
+            /* ปุ่มในการ์ดให้เต็มความกว้างครึ่งหนึ่ง กดง่ายกว่าปุ่มจิ๋วติดกัน */
+            #sectionSubmissions tbody td .flex.gap-1 > button { flex: 1 1 0; min-height: 40px; }
+
+            /* ---------- ตารางอื่นที่กว้างมาก: ตรึงคอลัมน์แรกไว้ ----------
+               ตารางวางบิลมี 25 คอลัมน์ เลื่อนไปไม่กี่ทีก็ลืมแล้วว่ากำลังดูแถวไหนอยู่
+               ตรึงคอลัมน์แรก (ลำดับ/เลขงาน) ไว้ทางซ้าย จะได้อ้างอิงได้ตลอดขณะเลื่อน */
+            #sectionBilling .table-scroll thead th:first-child,
+            #sectionBilling .table-scroll tbody td:first-child,
+            #sectionStatusReport .table-scroll thead th:first-child,
+            #sectionStatusReport .table-scroll tbody td:first-child {
+                position: sticky; left: 0; z-index: 9;
+                background: #fff;
+                box-shadow: 1px 0 0 #e2e8f0;
+            }
+            #sectionBilling .table-scroll thead th:first-child,
+            #sectionStatusReport .table-scroll thead th:first-child {
+                z-index: 11;                      /* ต้องสูงกว่าหัวตาราง (10) ไม่งั้นมุมซ้ายบนซ้อนทับกันเอง */
+                background: #f8fafc;
+            }
+
+            /* หัวข้อหน้าและแถบปุ่มบนมือถือ: ลดระยะขอบให้เหลือพื้นที่แสดงข้อมูลมากขึ้น */
+            #sectionBilling .p-6, #sectionSubmissions .p-6,
+            #sectionStatusReport .p-6, #sectionCompleted .p-6 { padding: 1rem .75rem; }
         }
     </style>
 
@@ -289,6 +440,12 @@
                     <i class="fa-solid fa-rotate mr-1"></i>ตรวจอัปเดต
                 </button>
             </div>
+            <!-- ปุ่มติดตั้งลงหน้าจอโฮม — โผล่เฉพาะบน Android/Chrome ตอนที่ติดตั้งได้จริงเท่านั้น
+                 (บน iPhone/iPad ต้องกด "แชร์ > เพิ่มไปยังหน้าจอโฮม" เอง Safari ไม่เปิดให้เรียกจากปุ่มในเว็บ) -->
+            <button type="button" id="btnInstallApp" onclick="installAppNow()"
+                class="hidden w-full mt-2 bg-white/10 hover:bg-white/20 text-emerald-50 text-xs font-semibold py-2 px-3 rounded-md transition-colors">
+                <i class="fa-solid fa-mobile-screen-button mr-1.5"></i>ติดตั้งลงหน้าจอโฮม
+            </button>
         </div>
     </aside>
 
@@ -1227,6 +1384,20 @@
                     <button type="button" onclick="clearPmBillingDateRange()" class="text-slate-500 text-xs underline hover:text-slate-700 pb-2">
                         ล้างช่วงวันที่
                     </button>
+                    <div>
+                        <label class="block text-slate-700 text-xs font-semibold mb-1">ราคาที่จะใช้ในใบเสนอราคา</label>
+                        <select id="pmBillingPriceMode" class="px-3 py-1.5 rounded-md border border-slate-300 text-sm bg-white min-w-[190px]">
+                            <option value="cj">ราคา CJ</option>
+                            <option value="con">ราคาผู้รับเหมา</option>
+                            <option value="both">ทั้งสองราคา (ไฟล์เดียว)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-slate-700 text-xs font-semibold mb-1">แยกตามผู้รับเหมา</label>
+                        <select id="pmBillingContractorFilter" class="px-3 py-1.5 rounded-md border border-slate-300 text-sm bg-white min-w-[170px]">
+                            <option value="">ทุกผู้รับเหมา</option>
+                        </select>
+                    </div>
                     <div class="ml-auto">
                         <label class="block text-slate-700 text-xs font-semibold mb-1">กรองตามรอบบิล PM</label>
                         <select id="pmBillingRoundFilter" onchange="loadPmBillingDocuments()" class="px-3 py-1.5 rounded-md border border-slate-300 text-sm bg-white min-w-[220px]">
@@ -1246,7 +1417,8 @@
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">ช่างเข้างาน</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">รอบ PM</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">วันที่เข้างาน</th>
-                                <th class="p-2 text-left font-semibold whitespace-nowrap">ราคา</th>
+                                <th class="p-2 text-left font-semibold whitespace-nowrap">ราคา CJ</th>
+                                <th class="p-2 text-left font-semibold whitespace-nowrap">ราคาผู้รับเหมา</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap min-w-[220px]">Description ในใบเสนอราคา (แก้ไขได้)</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">หมายเหตุ</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">จัดการ</th>
@@ -1278,7 +1450,8 @@
                                     <th class="p-2 text-left border-b border-slate-200">เลขที่เอกสาร</th>
                                     <th class="p-2 text-left border-b border-slate-200">รอบ PM</th>
                                     <th class="p-2 text-right border-b border-slate-200">จำนวนรายการ</th>
-                                    <th class="p-2 text-right border-b border-slate-200">ยอดรวม (ก่อน VAT)</th>
+                                    <th class="p-2 text-right border-b border-slate-200">ยอดรวม CJ (ก่อน VAT)</th>
+                                    <th class="p-2 text-right border-b border-slate-200">ยอดรวม ผรม. (ก่อน VAT)</th>
                                     <th class="p-2 text-left border-b border-slate-200">วันที่บันทึก</th>
                                     <th class="p-2 text-center border-b border-slate-200">ดาวน์โหลด</th>
                                 </tr>
@@ -1369,9 +1542,15 @@
                             <input type="text" id="pmAddItemBranchName" class="w-full px-3 py-1.5 rounded-md border border-slate-300 text-sm">
                         </div>
                     </div>
-                    <div>
-                        <label class="block text-slate-700 text-xs font-semibold mb-1">ราคา</label>
-                        <input type="number" step="0.01" id="pmAddItemPrice" placeholder="0.00" class="w-full px-3 py-1.5 rounded-md border border-slate-300 text-sm">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-slate-700 text-xs font-semibold mb-1">ราคา CJ</label>
+                            <input type="number" step="0.01" id="pmAddItemPrice" placeholder="0.00" class="w-full px-3 py-1.5 rounded-md border border-slate-300 text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-slate-700 text-xs font-semibold mb-1">ราคาผู้รับเหมา</label>
+                            <input type="number" step="0.01" id="pmAddItemPriceCon" placeholder="เว้นว่าง = ยังไม่ตั้ง" class="w-full px-3 py-1.5 rounded-md border border-slate-300 text-sm">
+                        </div>
                     </div>
                     <div>
                         <label class="block text-slate-700 text-xs font-semibold mb-1">หมายเหตุ (ถ้ามี)</label>
@@ -1848,6 +2027,68 @@
     </div>
 
     <script>
+        // ==================== เปิดจากไอคอนหน้าจอโฮม (iOS / Android) ====================
+        //
+        // ติดคลาส .pwa-standalone ให้ <html> เพื่อให้ CSS ด้านบนเว้นที่ให้แถบสถานะได้ถูก
+        // ต้องเช็ค 2 ทาง เพราะ 2 ระบบบอกคนละแบบ:
+        //   navigator.standalone                     = iOS (Safari บอกแบบนี้ทางเดียว รุ่นเก่าไม่มี display-mode)
+        //   matchMedia('(display-mode: standalone)') = Android/Chrome และ Safari รุ่นใหม่
+        //
+        // ต้องรันตรงนี้ (ก่อนโค้ดอื่น) ไม่ใช่รอ DOMContentLoaded ไม่งั้นจะเห็นหัวแอปกระตุกลงมาหลังโหลดเสร็จ
+        (function detectStandalone() {
+            var standalone = false;
+            try {
+                standalone = window.navigator.standalone === true
+                    || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+                    || (window.matchMedia && window.matchMedia('(display-mode: fullscreen)').matches);
+            } catch (e) { standalone = false; }
+            if (standalone) document.documentElement.classList.add('pwa-standalone');
+        })();
+
+        // ==================== Service Worker (เฉพาะตอนเปิดผ่านเว็บ) ====================
+        //
+        // มีไว้เพื่อ "ให้ Android ติดตั้งแอปได้เหมือน iPhone" เป็นหลัก
+        // Chrome บน Android จะไม่เสนอปุ่มติดตั้งให้เลย ถ้าเว็บไม่มี service worker ที่ดักเหตุการณ์ fetch
+        // (iOS ไม่มีเงื่อนไขนี้ กด "เพิ่มไปยังหน้าจอโฮม" ได้อยู่แล้ว จึงดูเหมือน Android ใช้ยากกว่า)
+        //
+        // ⚠ ตัวนี้ "ไม่แคชไฟล์แอปเลย" ตั้งใจให้เป็นแบบนั้น
+        //    ถ้าแคชไฟล์แอป ผู้ใช้จะค้างอยู่กับเวอร์ชันเก่าแม้ deploy ใหม่แล้ว ซึ่งเป็นปัญหาที่ตามยากที่สุด
+        //    หน้าที่ของมันมีแค่ส่งต่อไปเน็ตตรง ๆ และตอบข้อความเวลาเน็ตหลุดเท่านั้น
+        //
+        // ข้ามทั้งหมดเมื่อรันในแอปเดสก์ท็อป Electron (โหลดผ่าน file:// ซึ่งลงทะเบียนไม่ได้อยู่แล้ว)
+        if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
+            window.addEventListener('load', function () {
+                navigator.serviceWorker.register('./sw.js').catch(function () {
+                    // ลงทะเบียนไม่สำเร็จไม่เป็นไร แอปยังใช้ได้ครบทุกอย่าง เสียแค่ปุ่มติดตั้งอัตโนมัติบน Android
+                });
+            });
+        }
+
+        // ---- ปุ่ม "ติดตั้งแอป" สำหรับ Android ----
+        // Chrome ยิง beforeinstallprompt มาให้ตอนที่ติดตั้งได้ เราเก็บไว้แล้วโชว์ปุ่มเอง
+        // เพราะถ้าไม่เก็บ Chrome จะซ่อนตัวเลือกไว้ในเมนู 3 จุด ซึ่งผู้ใช้ทั่วไปหาไม่เจอ
+        var deferredInstallPrompt = null;
+        window.addEventListener('beforeinstallprompt', function (e) {
+            e.preventDefault();
+            deferredInstallPrompt = e;
+            var btn = document.getElementById('btnInstallApp');
+            if (btn) btn.classList.remove('hidden');
+        });
+        window.addEventListener('appinstalled', function () {
+            deferredInstallPrompt = null;
+            var btn = document.getElementById('btnInstallApp');
+            if (btn) btn.classList.add('hidden');
+        });
+        function installAppNow() {
+            if (!deferredInstallPrompt) return;
+            deferredInstallPrompt.prompt();
+            deferredInstallPrompt.userChoice.finally(function () {
+                deferredInstallPrompt = null;   // ใช้ได้ครั้งเดียว Chrome จะยิง event ใหม่มาเองถ้ายังติดตั้งได้
+                var btn = document.getElementById('btnInstallApp');
+                if (btn) btn.classList.add('hidden');
+            });
+        }
+
         // ==================== ชั้นเชื่อมต่อเซิร์ฟเวอร์: Supabase Edge Function แทน Apps Script ====================
         // หน้าเว็บนี้เป็นไฟล์ Html.html ตัวจริงทั้งหมด (เหมือนต้นฉบับ 100%) จุดเดียวที่ต่างคือส่วนนี้:
         // แทนที่จะรันบน Google Apps Script (ซึ่งมี google.script.run ให้ใช้เองอัตโนมัติ) เราสร้าง "ตัวปลอม"
@@ -3978,12 +4219,54 @@
             return bCode || bName || '-';
         }
 
+        // เติมรายชื่อผู้รับเหมาในตัวกรอง จากข้อมูลที่โหลดมาจริง ๆ ของรอบที่เลือกอยู่
+        // เก็บค่าที่เลือกไว้เดิมถ้ายังมีอยู่ในรายการใหม่ จะได้ไม่เด้งกลับเป็น "ทุกผู้รับเหมา" ทุกครั้งที่รีเฟรช
+        function fillPmContractorOptions(rows) {
+            const sel = document.getElementById('pmBillingContractorFilter');
+            if (!sel) return;
+            const keep = sel.value;
+            const names = [];
+            (rows || []).forEach(r => {
+                const n = (r.contractor || '').toString().trim();
+                if (n && names.indexOf(n) === -1) names.push(n);
+            });
+            names.sort();
+            sel.innerHTML = '<option value="">ทุกผู้รับเหมา</option>'
+                + names.map(n => '<option value="' + n.replace(/"/g, '&quot;') + '">' + n + '</option>').join('');
+            if (keep && names.indexOf(keep) !== -1) sel.value = keep;
+        }
+
+        // เอกสารออกมาแล้วแต่มีบางแถวยังไม่ได้ตั้งราคาในฝั่งที่เลือก -> คิดเป็น 0 บาท
+        // ต้องบอกก่อนที่เอกสารจะถูกส่งออกไป ไม่ใช่ปล่อยให้ไปรู้เอาตอนลูกค้าทัก
+        function pmWarnNoPrice(res) {
+            if (!res) return;
+            const parts = [];
+            if (res.noPrice) parts.push((res.priceLabel || 'ราคา') + ' ' + res.noPrice + ' รายการ');
+            if (res.noPriceCj) parts.push('ราคา CJ ' + res.noPriceCj + ' รายการ');
+            if (res.noPriceCon) parts.push('ราคาผู้รับเหมา ' + res.noPriceCon + ' รายการ');
+            if (!parts.length) return;
+            showAlert('error', 'ดาวน์โหลดแล้ว แต่ยังไม่ได้ตั้งราคา ' + parts.join(' · ')
+                + ' — รายการเหล่านั้นจะขึ้นเป็น 0 บาทในเอกสาร กรุณาเติมราคาในตารางก่อนส่งให้ลูกค้า');
+        }
+
+        // ตัวเลือกที่จะส่งไปให้เซิร์ฟเวอร์ตอนดาวน์โหลด — ที่เดียวจบ ใช้ร่วมกันทุกปุ่มดาวน์โหลด
+        function pmDownloadOpts() {
+            const m = document.getElementById('pmBillingPriceMode');
+            const c = document.getElementById('pmBillingContractorFilter');
+            return [m ? m.value : 'cj', c ? c.value : ''];
+        }
+
         function renderPmBillingTable(rows) {
+            fillPmContractorOptions(rows);
             const isAdmin = currentSession && currentSession.role === 'admin';
             document.getElementById('pmBillingBody').innerHTML = rows.map(r => {
                 const priceCell = isAdmin
                     ? `<input type="number" step="0.01" data-id="${r.id}" data-field="price" data-original="${r.price ?? ''}" value="${r.price ?? ''}" placeholder="0.00" onblur="savePmBillingField(this)" class="w-24 px-2 py-1 rounded border border-slate-200 text-xs">`
                     : formatMoneyTh(r.price);
+                // ราคาผู้รับเหมาแยกขาดจากราคา CJ — ยังไม่ได้ตั้งราคาให้ขึ้นขีดกลาง ห้ามเอาราคา CJ มาแสดงแทน
+                const priceConCell = isAdmin
+                    ? `<input type="number" step="0.01" data-id="${r.id}" data-field="price_contractor" data-original="${r.price_contractor ?? ''}" value="${r.price_contractor ?? ''}" placeholder="ยังไม่ตั้ง" onblur="savePmBillingField(this)" class="w-24 px-2 py-1 rounded border border-slate-200 text-xs">`
+                    : (r.price_contractor === null || r.price_contractor === undefined || r.price_contractor === '' ? '-' : formatMoneyTh(r.price_contractor));
                 const descValue = (r.desc_override || '').toString().replace(/"/g, '&quot;');
                 const descCell = isAdmin
                     ? `<input type="text" data-id="${r.id}" data-field="desc_override" data-original="${descValue}" value="${descValue}" placeholder="${pmDefaultDesc(r).replace(/"/g, '&quot;')} (ค่าเริ่มต้น)" onblur="savePmBillingField(this)" class="w-56 px-2 py-1 rounded border border-slate-200 text-xs">`
@@ -4002,6 +4285,7 @@
                     <td class="p-2 whitespace-nowrap">${pmQuarterLabel(r)}</td>
                     <td class="p-2 whitespace-nowrap">${r.visit_date || '-'}</td>
                     <td class="p-2 whitespace-nowrap">${priceCell}</td>
+                    <td class="p-2 whitespace-nowrap">${priceConCell}</td>
                     <td class="p-2 whitespace-nowrap">${descCell}</td>
                     <td class="p-2 whitespace-nowrap">${r.remark || ''}</td>
                     <td class="p-2 whitespace-nowrap">${deleteCell}</td>
@@ -4079,7 +4363,7 @@
                 btnEl.innerHTML = originalHtml;
             }
 
-            runServerCall('downloadPmBillingRoundPdf', [currentSession.username, currentSession.token, roundNo], function (res) {
+            runServerCall('downloadPmBillingRoundPdf', [currentSession.username, currentSession.token, roundNo].concat(pmDownloadOpts()), function (res) {
                 resetBtn();
                 if (res && res.success) {
                     try {
@@ -4096,6 +4380,7 @@
                         a.click();
                         document.body.removeChild(a);
                         URL.revokeObjectURL(url);
+                        pmWarnNoPrice(res);
                     } catch (e) {
                         showAlert('error', 'เปิดไฟล์ PDF ล้มเหลว: ' + (e && e.message ? e.message : ''));
                     }
@@ -4127,7 +4412,7 @@
                 btnEl.innerHTML = originalHtml;
             }
 
-            runServerCall('downloadPmBillingRoundExcel', [currentSession.username, currentSession.token, roundNo], function (res) {
+            runServerCall('downloadPmBillingRoundExcel', [currentSession.username, currentSession.token, roundNo].concat(pmDownloadOpts()), function (res) {
                 resetBtn();
                 if (res && res.success) {
                     try {
@@ -4144,6 +4429,7 @@
                         a.click();
                         document.body.removeChild(a);
                         URL.revokeObjectURL(url);
+                        pmWarnNoPrice(res);
                     } catch (e) {
                         showAlert('error', 'เปิดไฟล์ Excel ล้มเหลว: ' + (e && e.message ? e.message : ''));
                     }
@@ -4208,6 +4494,7 @@
                     '<td class="p-2 border-b border-slate-100">' + (r.round_period || '-') + '</td>' +
                     '<td class="p-2 border-b border-slate-100 text-right">' + (r.item_count || 0) + '</td>' +
                     '<td class="p-2 border-b border-slate-100 text-right">' + numberFmt(r.total_amount) + '</td>' +
+                    '<td class="p-2 border-b border-slate-100 text-right">' + numberFmt(r.total_amount_contractor) + '</td>' +
                     '<td class="p-2 border-b border-slate-100">' + dateFmt(r.created_at) + '</td>' +
                     '<td class="p-2 border-b border-slate-100 text-center"></td>';
 
@@ -4248,7 +4535,7 @@
                 btnEl.innerHTML = originalHtml;
             }
 
-            runServerCall('downloadPmBillingRoundPdf', [currentSession.username, currentSession.token, roundNo], function (res) {
+            runServerCall('downloadPmBillingRoundPdf', [currentSession.username, currentSession.token, roundNo].concat(pmDownloadOpts()), function (res) {
                 resetBtn();
                 if (res && res.success) {
                     try {
@@ -4265,6 +4552,7 @@
                         a.click();
                         document.body.removeChild(a);
                         URL.revokeObjectURL(url);
+                        pmWarnNoPrice(res);
                     } catch (e) {
                         showAlert('error', 'เปิดไฟล์ PDF ล้มเหลว: ' + (e && e.message ? e.message : ''));
                     }
@@ -4289,7 +4577,7 @@
                 btnEl.innerHTML = originalHtml;
             }
 
-            runServerCall('downloadPmBillingRoundExcel', [currentSession.username, currentSession.token, roundNo], function (res) {
+            runServerCall('downloadPmBillingRoundExcel', [currentSession.username, currentSession.token, roundNo].concat(pmDownloadOpts()), function (res) {
                 resetBtn();
                 if (res && res.success) {
                     try {
@@ -4306,6 +4594,7 @@
                         a.click();
                         document.body.removeChild(a);
                         URL.revokeObjectURL(url);
+                        pmWarnNoPrice(res);
                     } catch (e) {
                         showAlert('error', 'เปิดไฟล์ Excel ล้มเหลว: ' + (e && e.message ? e.message : ''));
                     }
@@ -4333,6 +4622,8 @@
             document.getElementById('pmAddItemBranchName').value = '';
             document.getElementById('pmAddItemPrice').value = '';
             document.getElementById('pmAddItemRemark').value = '';
+            const conEl = document.getElementById('pmAddItemPriceCon');
+            if (conEl) conEl.value = '';
             document.getElementById('pmAddLineItemModal').classList.remove('hidden');
         }
 
@@ -4350,6 +4641,7 @@
                 branch_code: document.getElementById('pmAddItemBranchCode').value.trim(),
                 branch_name: document.getElementById('pmAddItemBranchName').value.trim(),
                 price: document.getElementById('pmAddItemPrice').value,
+                price_contractor: document.getElementById('pmAddItemPriceCon').value,
                 remark: document.getElementById('pmAddItemRemark').value.trim(),
             };
             const btn = document.getElementById('btn_submitPmAddLineItem');
@@ -6065,18 +6357,20 @@
                     ? `<div class="text-[10px] text-slate-600 mt-1.5 pt-1.5 border-t border-slate-100 space-y-0.5">${historyLines.join('')}</div>`
                     : '';
 
+                // data-label = ชื่อคอลัมน์ ใช้ตอนจอมือถือที่ CSS เปลี่ยนแถวเป็นการ์ดแล้วไม่มีหัวตารางให้ดู
+                // (บนจอคอมพิวเตอร์ไม่มีผลอะไร เป็นแค่ attribute เฉย ๆ)
                 return `<tr class="border-t border-slate-100">
-                    <td class="p-2 whitespace-nowrap">${formatTimestamp(row.submitted_at)}</td>
-                    <td class="p-2 whitespace-nowrap">${row.customer_case || ''}</td>
-                    <td class="p-2 whitespace-nowrap">${row.contractor || ''}</td>
-                    <td class="p-2 whitespace-nowrap">${row.branch_name || ''}</td>
-                    <td class="p-2 whitespace-nowrap"><a href="${row.file_url}" target="_blank" class="text-blood-600 underline">${row.file_name || 'เปิดไฟล์'}</a></td>
-                    <td class="p-2 whitespace-nowrap">
+                    <td data-label="วันที่ส่ง" class="p-2 whitespace-nowrap">${formatTimestamp(row.submitted_at)}</td>
+                    <td data-label="เลขที่งาน" class="p-2 whitespace-nowrap">${row.customer_case || ''}</td>
+                    <td data-label="ผู้รับเหมา" class="p-2 whitespace-nowrap">${row.contractor || ''}</td>
+                    <td data-label="สาขา" class="p-2 whitespace-nowrap">${row.branch_name || ''}</td>
+                    <td data-label="ไฟล์" class="p-2 whitespace-nowrap"><a href="${row.file_url}" target="_blank" class="text-blood-600 underline">${row.file_name || 'เปิดไฟล์'}</a></td>
+                    <td data-label="สถานะขั้นที่ 1 (ผู้ตรวจสอบ)" class="p-2 whitespace-nowrap">
                         <span class="text-xs font-semibold px-2 py-1 rounded-full ${st.cls}">${st.text}</span>
                         ${reviewedInfo}
                     </td>
-                    <td class="p-2 whitespace-nowrap">${finishCellHtml}</td>
-                    <td class="p-2">
+                    <td data-label="อนุมัติขั้นสุดท้าย (TUCK CR)" class="p-2 whitespace-nowrap">${finishCellHtml}</td>
+                    <td data-label="หมายเหตุ / ดำเนินการขั้นที่ 1" class="p-2">
                         ${remarkColumnHtml}
                         ${historyHtml}
                     </td>

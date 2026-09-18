@@ -542,6 +542,45 @@ async function generateBillingPdfBase64(rows: any[], isAdmin: boolean): Promise<
 // สร้างเลขที่เอกสารรูปแบบ CRE-CJ-PM-{ปี พ.ศ. 2 หลัก}{เดือน 2 หลัก}-{ลำดับ 4 หลัก} ตามต้นฉบับจริง (เช่น CRE-CJ-PM-6908-0001)
 // ปี/เดือน อิงจากวันที่ "สร้างรอบบิลนี้" (created_at แถวแรกสุดของรอบ) ไม่ใช่วันที่กดดาวน์โหลด/ดู — กันเลขเปลี่ยนไปมา
 // ลำดับ 4 หลัก = รอบบิล PM ลำดับที่เท่าไหร่ในเดือนนั้น (นับจากทุกรอบที่เคยสร้างในเดือน/ปีเดียวกัน เรียงตามเลขรอบบิล) — ใช้ร่วมกันทั้งตอนดาวน์โหลด PDF และตอนแสดงประวัติรอบบิล
+// ── เมนู PM รองรับสองราคา: ของ CJ กับของผู้รับเหมา ──
+// นิยามไว้ที่เดียว ทุกที่ที่ต้องรู้ว่า "ราคาฝั่งไหน" ให้เรียกผ่านตรงนี้
+// จะได้ไม่มีทางที่ PDF กับ Excel คิดคนละแบบ
+const PM_PRICE_MODES: Record<string, { field: string; label: string; suffix: string }> = {
+  cj:  { field: 'price',            label: 'ราคา CJ',      suffix: '' },
+  con: { field: 'price_contractor', label: 'ราคาผู้รับเหมา', suffix: '-ผู้รับเหมา' },
+};
+// รวม PDF หลายฉบับเป็นเล่มเดียว — ใช้ตอนขอ "ทั้งสองราคา"
+// ได้ใบเสนอราคาราคา CJ ก่อน แล้วต่อด้วยราคาผู้รับเหมาในไฟล์เดียวกัน
+// ไม่ได้ยัดคอลัมน์เพิ่มลงหน้าเดิม เพราะ A4 แนวตั้งแคบอยู่แล้ว ยัดไปตัวหนังสือจะเบียดจนอ่านไม่ออก
+async function pmMergePdfs(parts: Uint8Array[]): Promise<string> {
+  const [{ PDFDocument }] = await Promise.all([loadPdfLib()]);
+  const out = await PDFDocument.create();
+  for (const p of parts) {
+    const src = await PDFDocument.load(p);
+    const pages = await out.copyPages(src, src.getPageIndices());
+    pages.forEach((pg: any) => out.addPage(pg));
+  }
+  const bytes = await out.save();
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+function pmPriceMode(mode: any) {
+  const k = (mode === 'con' || mode === 'contractor') ? 'con' : 'cj';
+  return PM_PRICE_MODES[k];
+}
+// กรองตามผู้รับเหมา — ค่าว่าง/ไม่ส่งมา = เอาทุกราย
+function pmFilterContractor(rows: any[], contractor: any): any[] {
+  const want = (contractor === null || contractor === undefined) ? '' : String(contractor).trim();
+  if (!want) return rows;
+  return rows.filter((r: any) => String(r.contractor || '').trim() === want);
+}
+// รายการที่ "ยังไม่ได้ตั้งราคา" ในฝั่งที่เลือก — ห้ามเงียบ ต้องบอกผู้ใช้ก่อนเอาเอกสารไปใช้
+function pmNoPriceCount(rows: any[], field: string): number {
+  return rows.filter((r: any) => r[field] === null || r[field] === undefined || r[field] === '').length;
+}
+
 function computePmDocNo(roundNo: number | string, roundMinCreated: Record<string, string>): string {
   const refCreatedAt = roundMinCreated[String(roundNo)] || new Date().toISOString();
   const refDate = new Date(refCreatedAt);
@@ -594,7 +633,8 @@ function thaiBahtText(amountInput: number): string {
 // สร้าง PDF "ใบเสนอราคา" 1 ฉบับต่อรอบบิล PM 1 รอบ โดยจำลองหน้าตาให้ตรงกับแบบฟอร์ม Excel ต้นฉบับที่บริษัทใช้ส่งลูกค้าอยู่แล้ว
 // (หัวกระดาษบริษัท / เรียน-สำเนาเรียน / ตารางรายการ Item-Description-Qty-Unit-Unit Price-Amount / สรุปยอด+VAT+จำนวนเงินตัวอักษร / เงื่อนไข+ลายเซ็น)
 // แต่ละแถวรายการ = งาน PM 1 สาขาที่บันทึกไว้ในรอบบิลนี้ — Description = รหัสสาขา + ชื่อสาขา ตามที่ตกลงกันไว้
-async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | string, docNo: string): Promise<any> {
+async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | string, docNo: string, mode?: any): Promise<any> {
+  const PM = pmPriceMode(mode);
   if (!rows || rows.length === 0) return { success: false, message: 'ไม่มีข้อมูลสำหรับสร้างใบเสนอราคา' };
   try {
     const [regularBytes, boldBytes] = await Promise.all([
@@ -633,7 +673,8 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
     // Description แก้ไขเองได้ต่อแถว (ช่อง desc_override ที่แก้ในตาราง PM ก่อนดาวน์โหลด) — ถ้ายังไม่แก้ ใช้ค่าเริ่มต้น "รหัสสาขา + ชื่อสาขา" เหมือนเดิม
     const lineItems = rows.map((r: any) => {
       const qty = 1;
-      const unitPrice = parseFloat(r.price) || 0;
+      // ใช้ราคาของฝั่งที่เลือก — ไม่ได้ตั้งราคาไว้ = 0 ไม่ใช่ไปหยิบราคาอีกฝั่งมาใช้
+      const unitPrice = parseFloat(r[PM.field]) || 0;
       const amount = qty * unitPrice;
       // ข้อมูลจริงในระบบ PM: branch_name มักมีรหัสสาขาติดมาด้วยอยู่แล้ว (เช่น "1349-ตลาดเมืองใหม่มาร์เก็ต เคหะบางพลี")
       // ถ้าเอา branch_code มาต่อหน้าซ้ำอีกจะกลายเป็น "1349-1349-..." จึงต้องเช็คก่อนว่า branch_name ขึ้นต้นด้วยรหัสสาขาอยู่แล้วหรือยัง
@@ -837,7 +878,7 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
     let binary = '';
     for (let i = 0; i < pdfBytes.length; i++) binary += String.fromCharCode(pdfBytes[i]);
     const base64 = btoa(binary);
-    return { success: true, base64, filename: docNo + '.pdf' };
+    return { success: true, base64, filename: docNo + PM.suffix + '.pdf', bytes: pdfBytes, priceLabel: PM.label };
   } catch (error) {
     return { success: false, message: 'สร้างใบเสนอราคา PM ล้มเหลว: ' + String(error) };
   }
@@ -845,12 +886,15 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
 
 // สร้าง "ใบเสนอราคา" งาน PM เป็นไฟล์ .xlsx จริง (ไม่ใช่ PDF) — หน้าตา/สี/เส้นขอบตรงกับ generatePmQuotationPdfBase64() ด้านบน
 // เพื่อให้ผู้ใช้แก้ไข/พิมพ์ต่อได้เองใน Excel โดยตรง เหมือนไฟล์แบบฟอร์มต้นฉบับของบริษัท
-async function generatePmQuotationXlsxBase64(rows: any[], roundNo: number | string, docNo: string): Promise<any> {
+// mode  = ราคาฝั่งไหน · book = ถ้าส่งสมุดงานมา จะเพิ่มเป็นอีกชีตในเล่มเดิม (ใช้ตอนขอทั้งสองราคาในไฟล์เดียว)
+// ส่ง book มา = ไม่เขียนไฟล์ออก คืนสมุดงานกลับไปให้ผู้เรียกเขียนเองทีเดียวตอนจบ
+async function generatePmQuotationXlsxBase64(rows: any[], roundNo: number | string, docNo: string, mode?: any, book?: any): Promise<any> {
+  const PM = pmPriceMode(mode);
   if (!rows || rows.length === 0) return { success: false, message: 'ไม่มีข้อมูลสำหรับสร้างใบเสนอราคา' };
   try {
     const ExcelJS = await loadExcelJS();
-    const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet('ใบเสนอราคา', { pageSetup: { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.4, right: 0.4, top: 0.4, bottom: 0.4, header: 0, footer: 0 } } });
+    const workbook = book || new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet(book ? PM.label : 'ใบเสนอราคา', { pageSetup: { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.4, right: 0.4, top: 0.4, bottom: 0.4, header: 0, footer: 0 } } });
 
     sheet.getColumn(1).width = 6;   // Item
     sheet.getColumn(2).width = 46;  // Description
@@ -943,7 +987,8 @@ async function generatePmQuotationXlsxBase64(rows: any[], roundNo: number | stri
     const numFmtDash = '#,##0.00;-#,##0.00;"-"';
     const lineItems = rows.map((rr: any) => {
       const qty = 1;
-      const unitPrice = parseFloat(rr.price) || 0;
+      // ใช้ราคาของฝั่งที่เลือก — สูตรเดียวกับฝั่ง PDF เป๊ะ
+      const unitPrice = parseFloat(rr[PM.field]) || 0;
       const amount = qty * unitPrice;
       const bCode = (rr.branch_code || '').toString().trim();
       const bName = (rr.branch_name || '').toString().trim();
@@ -1006,12 +1051,14 @@ async function generatePmQuotationXlsxBase64(rows: any[], roundNo: number | stri
     sheet.mergeCells(r, 5, r, 6); setCell(r, 5, 'Managing Director', { size: 10, align: 'center' }); r++;
     sheet.mergeCells(r, 5, r, 6); setCell(r, 5, '089-743-7111', { size: 10, align: 'center' });
 
+    // เขียนลงเล่มที่ผู้เรียกส่งมา = ยังไม่จบ คืนเล่มกลับไปให้เขาใส่ชีตต่อ
+    if (book) return { success: true, workbook };
     const buffer: ArrayBuffer = await workbook.xlsx.writeBuffer();
     const bytes = new Uint8Array(buffer);
     let binary2 = '';
     for (let i = 0; i < bytes.length; i++) binary2 += String.fromCharCode(bytes[i]);
     const base64 = btoa(binary2);
-    return { success: true, base64, filename: docNo + '.xlsx' };
+    return { success: true, base64, filename: docNo + PM.suffix + '.xlsx' };
   } catch (error) {
     return { success: false, message: 'สร้างไฟล์ Excel ใบเสนอราคา PM ล้มเหลว: ' + String(error) };
   }
@@ -3182,7 +3229,10 @@ Deno.serve(async (req: Request) => {
           job_code: v.job_code || null, branch_code: v.branch_code || null, branch_name: v.branch_name || null,
           contractor: v.contractor_name || null, technician: v.technician_name || null,
           cycle_year: v.cycle_year || null, quarter: v.quarter || null, visit_date: v.visit_date || null,
-          price: (v.price !== undefined && v.price !== null) ? v.price : null, due_date: v.due_date || null,
+          price: (v.price !== undefined && v.price !== null) ? v.price : null,
+          // ราคาผู้รับเหมาจากระบบ PM — ยังไม่ได้ตั้งราคาก็เก็บ null ไว้ตรง ๆ ไม่เอาราคา CJ มาใส่แทน
+          price_contractor: (v.price_contractor !== undefined && v.price_contractor !== null) ? v.price_contractor : null,
+          due_date: v.due_date || null,
           work_done: v.work_done || null, remark: v.remark || null, synced_to_sheet: false,
         }));
         const { error: insertErr } = await supabase.from('pm_billing_documents').insert(rowsToInsert);
@@ -3232,8 +3282,10 @@ Deno.serve(async (req: Request) => {
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่แก้ไขข้อมูลได้' });
         const clean: any = {};
         Object.keys(fields || {}).forEach((key) => {
-          if (key === 'price') {
-            clean.price = (fields.price === '' || fields.price === null || fields.price === undefined) ? null : parseFloat(fields.price);
+          if (key === 'price' || key === 'price_contractor') {
+            // ช่องราคาทั้งสองฝั่งใช้กติกาเดียวกัน — ว่าง = ยังไม่ได้ตั้งราคา (null) ไม่ใช่ 0
+            const v = fields[key];
+            clean[key] = (v === '' || v === null || v === undefined) ? null : parseFloat(v);
           } else if (['contractor', 'technician', 'remark', 'desc_override'].includes(key)) {
             clean[key] = fields[key] === '' ? null : fields[key];
           }
@@ -3265,6 +3317,7 @@ Deno.serve(async (req: Request) => {
           branch_code: (fields.branch_code || '').toString().trim() || null,
           branch_name: (fields.branch_name || '').toString().trim() || null,
           price: (fields.price === '' || fields.price === null || fields.price === undefined) ? null : parseFloat(fields.price),
+          price_contractor: (fields.price_contractor === '' || fields.price_contractor === null || fields.price_contractor === undefined) ? null : parseFloat(fields.price_contractor),
           remark: (fields.remark || '').toString().trim() || null,
           desc_override: descOverride, is_manual: true, synced_to_sheet: false,
         };
@@ -3289,8 +3342,10 @@ Deno.serve(async (req: Request) => {
       }
 
       // ดาวน์โหลด "ใบเสนอราคา" PDF ของรอบบิล PM รอบใดรอบหนึ่ง (ตามแบบฟอร์ม Excel ต้นฉบับ) — เฉพาะแอดมิน เพราะเป็นเอกสารที่จะส่งให้ลูกค้าโดยตรง
+      // priceMode: 'cj' (ค่าเริ่มต้น เท่าเดิมทุกอย่าง) | 'con' | 'both'
+      // contractor: ชื่อผู้รับเหมาที่ต้องการแยกออกมา — ไม่ส่งมา/ว่าง = ทุกราย
       case 'downloadPmBillingRoundPdf': {
-        const [username, token, roundNo] = args;
+        const [username, token, roundNo, priceMode, contractor] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ดาวน์โหลดใบเสนอราคาได้' });
@@ -3309,13 +3364,35 @@ Deno.serve(async (req: Request) => {
         });
         const docNo = computePmDocNo(roundNo, roundMinCreated);
 
-        const pdfResult = await generatePmQuotationPdfBase64(data, roundNo, docNo);
+        const rowsPdf = pmFilterContractor(data, contractor);
+        if (rowsPdf.length === 0) return jsonResponse({ success: false, message: 'ไม่มีรายการของผู้รับเหมา "' + contractor + '" ในรอบบิลนี้' });
+        const conTag = (contractor && String(contractor).trim()) ? ('-' + String(contractor).trim()) : '';
+
+        if (priceMode === 'both') {
+          const a = await generatePmQuotationPdfBase64(rowsPdf, roundNo, docNo, 'cj');
+          if (!a.success) return jsonResponse(a);
+          const b = await generatePmQuotationPdfBase64(rowsPdf, roundNo, docNo, 'con');
+          if (!b.success) return jsonResponse(b);
+          const base64 = await pmMergePdfs([a.bytes, b.bytes]);
+          return jsonResponse({ success: true, base64, filename: docNo + conTag + '-สองราคา.pdf',
+            noPriceCj: pmNoPriceCount(rowsPdf, 'price'), noPriceCon: pmNoPriceCount(rowsPdf, 'price_contractor') });
+        }
+
+        const PMm = pmPriceMode(priceMode);
+        const pdfResult = await generatePmQuotationPdfBase64(rowsPdf, roundNo, docNo, priceMode);
+        if (pdfResult && pdfResult.success) {
+          pdfResult.filename = docNo + conTag + PMm.suffix + '.pdf';
+          pdfResult.noPrice = pmNoPriceCount(rowsPdf, PMm.field);
+          pdfResult.priceLabel = PMm.label;
+          delete pdfResult.bytes;
+        }
         return jsonResponse(pdfResult);
       }
 
       // ดาวน์โหลด "ใบเสนอราคา" เป็นไฟล์ .xlsx (Excel จริง แก้ไขต่อได้) ของรอบบิล PM รอบใดรอบหนึ่ง — เฉพาะแอดมิน เหมือนกับ downloadPmBillingRoundPdf ทุกอย่าง ต่างแค่รูปแบบไฟล์
+      // พารามิเตอร์เหมือนฝั่ง PDF ทุกอย่าง — โหมด 'both' ได้ไฟล์เดียวสองชีต
       case 'downloadPmBillingRoundExcel': {
-        const [username, token, roundNo] = args;
+        const [username, token, roundNo, priceMode, contractor] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ดาวน์โหลดใบเสนอราคาได้' });
@@ -3334,7 +3411,32 @@ Deno.serve(async (req: Request) => {
         });
         const docNo2 = computePmDocNo(roundNo, roundMinCreated2);
 
-        const xlsxResult = await generatePmQuotationXlsxBase64(data, roundNo, docNo2);
+        const rowsXls = pmFilterContractor(data, contractor);
+        if (rowsXls.length === 0) return jsonResponse({ success: false, message: 'ไม่มีรายการของผู้รับเหมา "' + contractor + '" ในรอบบิลนี้' });
+        const conTag2 = (contractor && String(contractor).trim()) ? ('-' + String(contractor).trim()) : '';
+
+        if (priceMode === 'both') {
+          const ExcelJS = await loadExcelJS();
+          const book = new ExcelJS.Workbook();
+          const a = await generatePmQuotationXlsxBase64(rowsXls, roundNo, docNo2, 'cj', book);
+          if (!a.success) return jsonResponse(a);
+          const b = await generatePmQuotationXlsxBase64(rowsXls, roundNo, docNo2, 'con', book);
+          if (!b.success) return jsonResponse(b);
+          const buf: ArrayBuffer = await book.xlsx.writeBuffer();
+          const bts = new Uint8Array(buf);
+          let bin = '';
+          for (let i = 0; i < bts.length; i++) bin += String.fromCharCode(bts[i]);
+          return jsonResponse({ success: true, base64: btoa(bin), filename: docNo2 + conTag2 + '-สองราคา.xlsx',
+            noPriceCj: pmNoPriceCount(rowsXls, 'price'), noPriceCon: pmNoPriceCount(rowsXls, 'price_contractor') });
+        }
+
+        const PMx = pmPriceMode(priceMode);
+        const xlsxResult = await generatePmQuotationXlsxBase64(rowsXls, roundNo, docNo2, priceMode);
+        if (xlsxResult && xlsxResult.success) {
+          xlsxResult.filename = docNo2 + conTag2 + PMx.suffix + '.xlsx';
+          xlsxResult.noPrice = pmNoPriceCount(rowsXls, PMx.field);
+          xlsxResult.priceLabel = PMx.label;
+        }
         return jsonResponse(xlsxResult);
       }
 
@@ -3345,7 +3447,7 @@ Deno.serve(async (req: Request) => {
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เมนู PM สำหรับแอดมินเท่านั้น' });
         const { data, error } = await supabase.from('pm_billing_documents')
-          .select('round_no,round_period,created_at,price')
+          .select('round_no,round_period,created_at,price,price_contractor')
           .not('round_no', 'is', null);
         if (error) return jsonResponse({ success: false, message: error.message });
 
@@ -3356,12 +3458,13 @@ Deno.serve(async (req: Request) => {
           if (!roundMinCreated[key] || r.created_at < roundMinCreated[key]) roundMinCreated[key] = r.created_at;
         });
 
-        const groups: Record<string, { round_no: any; round_period: string; item_count: number; total_amount: number; created_at: string }> = {};
+        const groups: Record<string, { round_no: any; round_period: string; item_count: number; total_amount: number; total_amount_contractor: number; created_at: string }> = {};
         (data || []).forEach((r: any) => {
           const key = String(r.round_no);
-          if (!groups[key]) groups[key] = { round_no: r.round_no, round_period: r.round_period || '', item_count: 0, total_amount: 0, created_at: roundMinCreated[key] || r.created_at || '' };
+          if (!groups[key]) groups[key] = { round_no: r.round_no, round_period: r.round_period || '', item_count: 0, total_amount: 0, total_amount_contractor: 0, created_at: roundMinCreated[key] || r.created_at || '' };
           groups[key].item_count += 1;
           groups[key].total_amount += parseFloat(r.price) || 0;
+          groups[key].total_amount_contractor += parseFloat(r.price_contractor) || 0;
         });
 
         const list = Object.values(groups).map((g) => ({
@@ -3369,6 +3472,7 @@ Deno.serve(async (req: Request) => {
           round_period: g.round_period,
           item_count: g.item_count,
           total_amount: g.total_amount,
+          total_amount_contractor: g.total_amount_contractor,
           created_at: g.created_at,
           doc_no: computePmDocNo(g.round_no, roundMinCreated),
         }));
