@@ -2028,6 +2028,54 @@
         </div>
     </div>
 
+    <!-- ==================== v1.0.95 — คืนงาน: ตัดงานออกจากระบบวางบิล (แอดมินเท่านั้น) ==================== -->
+    <div id="removeJobModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-xl max-h-[88vh] flex flex-col">
+            <div class="flex items-center justify-between p-5 border-b border-slate-200">
+                <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-arrow-rotate-left text-rose-500 mr-2"></i> คืนงาน — ตัดออกจากระบบวางบิล</h3>
+                <button type="button" onclick="closeRemoveJobModal()" class="text-slate-400 hover:text-slate-700 text-xl leading-none"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="p-5 overflow-y-auto space-y-4 text-sm">
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <p class="text-xs font-semibold text-slate-500">เลขงาน</p>
+                        <p id="removeJobId" class="font-bold text-slate-800 tabular-nums">-</p>
+                    </div>
+                    <div>
+                        <p class="text-xs font-semibold text-slate-500">เลขทรัพย์สิน</p>
+                        <p id="removeJobAsset" class="font-bold text-slate-800 tabular-nums">-</p>
+                    </div>
+                </div>
+
+                <div id="removeJobImpact" class="text-xs rounded-lg border border-slate-200 bg-slate-50 p-3" style="min-height:76px;">กำลังตรวจว่าการคืนงานนี้กระทบอะไรบ้าง...</div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">เหตุผลที่คืนงาน <span class="text-rose-500">*</span></label>
+                    <textarea id="removeJobReason" rows="2" maxlength="300" placeholder="เช่น ดึงผิดเลขงาน · ข้อมูลผิดทั้งชุด · งานซ้ำ · ไม่เก็บเงินงานนี้"
+                        class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-rose-500 focus:ring-2 focus:ring-rose-100 outline-none text-sm"></textarea>
+                    <p class="text-[11px] text-slate-400 mt-1">ถ้าส่งบิลไปแล้ว ผู้รับเหมาจะเห็นเหตุผลนี้</p>
+                </div>
+
+                <div class="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900 space-y-1">
+                    <p class="font-semibold"><i class="fa-solid fa-triangle-exclamation mr-1"></i> กดแล้วเกิดอะไรขึ้น</p>
+                    <p>· ตัด <b>ทุกแถว</b> ของเลขทรัพย์สินนี้ในรอบบิลนี้ออกจากตารางวางบิล</p>
+                    <p>· งานนี้จะ <b>ไม่ถูกดึงเข้ารอบบิลอีก</b> (ตัดออกจากระบบวางบิลถาวร)</p>
+                    <p>· เก็บสำเนาไว้ครบทุกแถว ถ้ากดผิดแจ้งแอดมินให้กู้คืนได้</p>
+                    <p>· สถานะของงานจะเปลี่ยนเป็น <b>"คืนงานแล้ว (ตัดออกจากบิล)"</b></p>
+                </div>
+
+                <div id="removeJobHistory" class="text-xs"></div>
+                <p id="removeJobError" class="hidden text-xs text-red-500 font-semibold"></p>
+            </div>
+            <div class="flex items-center justify-end gap-2 p-5 border-t border-slate-200 bg-slate-50 rounded-b-xl">
+                <button type="button" onclick="closeRemoveJobModal()" class="bg-white text-slate-600 border border-slate-300 font-semibold py-2 px-4 rounded-lg hover:bg-slate-100 text-sm">ยกเลิก</button>
+                <button type="button" id="removeJobSubmitBtn" onclick="submitRemoveJob()" class="bg-rose-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-rose-700 text-sm">
+                    <i class="fa-solid fa-arrow-rotate-left mr-1"></i> ยืนยันคืนงาน
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- ==================== v1.0.94 — ปิดระบบชั่วคราว ให้เข้าได้เฉพาะแอดมิน (แอดมินเท่านั้น) ==================== -->
     <div id="maintenanceModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-xl shadow-2xl w-full max-w-xl max-h-[88vh] flex flex-col">
@@ -2695,6 +2743,123 @@
             document.getElementById('systemCheckModal').classList.add('hidden');
         }
 
+        // ==================== คืนงาน — ตัดออกจากระบบวางบิล (v1.0.95) ====================
+        let removeJobCtx = null;   // { jobId, assetId, roundNo } ของงานที่กำลังเปิดดูอยู่
+
+        function openRemoveJobModalFromBtn(btn) {
+            if (!btn) return;
+            openRemoveJobModal(btn.getAttribute('data-job'), btn.getAttribute('data-asset'), btn.getAttribute('data-round'));
+        }
+        function openRemoveJobModal(jobId, assetId, roundNo) {
+            if (!currentSession || currentSession.role !== 'admin') { showWarningPopup('เฉพาะแอดมินเท่านั้นที่คืนงานได้'); return; }
+            removeJobCtx = { jobId: jobId || '', assetId: assetId || '', roundNo: roundNo || '' };
+            document.getElementById('removeJobId').textContent = removeJobCtx.jobId || '-';
+            document.getElementById('removeJobAsset').textContent = removeJobCtx.assetId || '-';
+            document.getElementById('removeJobReason').value = '';
+            document.getElementById('removeJobImpact').textContent = 'กำลังตรวจว่าการคืนงานนี้กระทบอะไรบ้าง...';
+            document.getElementById('removeJobHistory').innerHTML = '';
+            setRemoveJobError_('');
+            setRemoveJobSubmitEnabled_(false);
+            document.getElementById('removeJobModal').classList.remove('hidden');
+
+            runServerCall('previewRemoveBillingJob',
+                [currentSession.username, currentSession.token, removeJobCtx.jobId, removeJobCtx.assetId, removeJobCtx.roundNo],
+                function (res) {
+                    // ปิดหน้าต่างไปแล้ว หรือเปลี่ยนไปดูงานอื่นแล้ว = ทิ้งคำตอบนี้ ไม่เขียนทับของใหม่
+                    if (!removeJobCtx || removeJobCtx.jobId !== (res && res.jobId !== undefined ? res.jobId : removeJobCtx.jobId)) return;
+                    if (document.getElementById('removeJobModal').classList.contains('hidden')) return;
+                    if (!res || !res.success) {
+                        document.getElementById('removeJobImpact').textContent = '';
+                        setRemoveJobError_((res && res.message) || 'ตรวจผลกระทบไม่สำเร็จ');
+                        return;
+                    }
+                    renderRemoveJobImpact_(res);
+                    renderRemoveJobHistory_(res.history || []);
+                    if (res.ready === false) {
+                        setRemoveJobError_('ฐานข้อมูลยังไม่มีตารางสำหรับการคืนงาน — ให้รันไฟล์ SQL v1.0.95 ก่อน');
+                        setRemoveJobSubmitEnabled_(false);
+                    } else if (res.blocked) {
+                        setRemoveJobError_(res.blockedReason || 'งานนี้คืนไม่ได้');
+                        setRemoveJobSubmitEnabled_(false);
+                    } else {
+                        setRemoveJobSubmitEnabled_(true);
+                    }
+                },
+                function (err) {
+                    document.getElementById('removeJobImpact').textContent = '';
+                    setRemoveJobError_('เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : ''));
+                });
+        }
+        function setRemoveJobError_(msg) {
+            const el = document.getElementById('removeJobError');
+            if (!msg) { el.classList.add('hidden'); el.textContent = ''; return; }
+            el.textContent = msg;
+            el.classList.remove('hidden');
+        }
+        function setRemoveJobSubmitEnabled_(on) {
+            const b = document.getElementById('removeJobSubmitBtn');
+            b.disabled = !on;
+            b.classList.toggle('opacity-50', !on);
+            b.classList.toggle('cursor-not-allowed', !on);
+        }
+        function renderRemoveJobImpact_(res) {
+            const money = function (n) { return (Number(n) || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+            let html = '<p><b>จะตัดออก ' + (res.rows || 0) + ' แถว</b>'
+                + (res.roundNo ? ' · รอบบิลที่ ' + escapeAttr(res.roundNo) : '')
+                + (res.contractor ? ' · ผู้รับเหมา: ' + escapeAttr(res.contractor) : '') + '</p>';
+            html += '<p class="mt-1">ยอดฝั่งผู้รับเหมาที่หายไปจากบิล: <b>' + money(res.sumContractor) + '</b> บาท'
+                + ' · ยอดฝั่ง CJ: <b>' + money(res.sumCj) + '</b> บาท</p>';
+            html += res.sentRows > 0
+                ? '<p class="mt-1 text-amber-700 font-semibold">ส่งบิลให้ผู้รับเหมาไปแล้ว ' + res.sentRows + ' แถว — เขาจะเห็นหมายเหตุว่าบริษัทคืนงานนี้</p>'
+                : '<p class="mt-1 text-slate-500">ยังไม่ได้ส่งให้ผู้รับเหมา</p>';
+            const parts = res.parts || [];
+            if (parts.length) {
+                html += '<p class="mt-1 text-slate-500 break-words">อะไหล่: ' + parts.slice(0, 8).map(function (x) {
+                    return escapeAttr(x.partCode || x.detail || '-') + (x.qty ? ' ×' + x.qty : '');
+                }).join(' · ') + (parts.length > 8 ? ' และอีก ' + (parts.length - 8) + ' รายการ' : '') + '</p>';
+            }
+            document.getElementById('removeJobImpact').innerHTML = html;
+        }
+        function renderRemoveJobHistory_(list) {
+            const el = document.getElementById('removeJobHistory');
+            if (!list.length) { el.innerHTML = ''; return; }
+            el.innerHTML = '<p class="font-semibold text-slate-600 mb-1">เคยคืนงานเลขนี้มาแล้ว</p>'
+                + list.map(function (h) {
+                    const t = h.removed_at ? String(h.removed_at).slice(0, 16).replace('T', ' ') : '';
+                    return '<p class="text-slate-500">· ' + t + ' — ' + escapeAttr(h.removed_by || '') + ' (' + (h.rows_removed || 0) + ' แถว): ' + escapeAttr(h.reason || '') + '</p>';
+                }).join('');
+        }
+        function closeRemoveJobModal() {
+            document.getElementById('removeJobModal').classList.add('hidden');
+            removeJobCtx = null;
+        }
+        function submitRemoveJob() {
+            if (!removeJobCtx) return;
+            const reason = document.getElementById('removeJobReason').value.trim();
+            if (!reason) { setRemoveJobError_('กรุณาระบุเหตุผลที่คืนงาน'); return; }
+            if (!confirm('ยืนยันคืนงาน ' + removeJobCtx.jobId + '?\n\n· ทุกแถวของเลขทรัพย์สินนี้จะถูกตัดออกจากตารางวางบิล\n· งานนี้จะไม่ถูกดึงเข้ารอบบิลอีก\n\nเก็บสำเนาไว้ให้ กู้คืนได้ถ้ากดผิด')) return;
+
+            setRemoveJobSubmitEnabled_(false);
+            setRemoveJobError_('');
+            const ctx = removeJobCtx;
+            runServerCall('removeBillingJob',
+                [currentSession.username, currentSession.token, ctx.jobId, ctx.assetId, ctx.roundNo, reason],
+                function (res) {
+                    if (!res || !res.success) {
+                        setRemoveJobError_((res && res.message) || 'คืนงานไม่สำเร็จ');
+                        setRemoveJobSubmitEnabled_(true);
+                        return;
+                    }
+                    closeRemoveJobModal();
+                    showAlert('success', res.message || 'คืนงานเรียบร้อย');
+                    loadBillingDocuments();
+                },
+                function (err) {
+                    setRemoveJobError_('เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : ''));
+                    setRemoveJobSubmitEnabled_(true);
+                });
+        }
+
         // ==================== ปิดระบบชั่วคราว ให้เข้าได้เฉพาะแอดมิน (v1.0.94) ====================
         function openMaintenanceLock() {
             if (!currentSession || currentSession.role !== 'admin') { showWarningPopup('เฉพาะแอดมินเท่านั้นที่ใช้เมนูนี้ได้'); return; }
@@ -3212,7 +3377,7 @@
             // v1.0.77 — มีหน้าต่างย่อย (โมดัล) เปิดอยู่ = หยุดรีเฟรชพื้นหลังทั้งหมด
             // กันการวาด DOM ระหว่างที่ผู้ใช้กำลังพิมพ์ โดยเฉพาะภาษาไทยที่พิมพ์แบบต่อเนื่อง
             // ถ้าวาดหน้าจอกลางคัน ตัวอักษรที่กำลังประกอบจะหลุด = อาการ "บางครั้งพิมพ์ไม่ได้"
-            const anyDialogOpen = ['billingReviewModal', 'reopenReasonModal', 'assetChangeModal', 'addProductModal', 'billingPreviewModal', 'syncTablesModal', 'systemCheckModal', 'telegramSetupModal', 'maintenanceModal']
+            const anyDialogOpen = ['billingReviewModal', 'reopenReasonModal', 'assetChangeModal', 'addProductModal', 'billingPreviewModal', 'syncTablesModal', 'systemCheckModal', 'telegramSetupModal', 'maintenanceModal', 'removeJobModal']
                 .some(function (mid) { const m = document.getElementById(mid); return m && !m.classList.contains('hidden'); });
             if (anyDialogOpen) return;
 
@@ -6321,7 +6486,7 @@
         // ตอนนี้โชว์แค่ "รายการล่าสุด (ปัจจุบัน)" พอ · อยากย้อนดูค่อยกด "ดูประวัติทั้งหมด"
         let lastReviewThreadList = [];
         function renderReviewCommentItem(c) {
-            const actionLabel = { rejected: 'ตีกลับ', approved: 'ยืนยัน', resent: 'แก้แล้วส่งกลับ', reopened: 'บริษัทย้อนกลับมาแก้', asset_changed: 'บริษัทแก้เลขทรัพย์สิน' };
+            const actionLabel = { rejected: 'ตีกลับ', approved: 'ยืนยัน', resent: 'แก้แล้วส่งกลับ', reopened: 'บริษัทย้อนกลับมาแก้', asset_changed: 'บริษัทแก้เลขทรัพย์สิน', job_removed: 'บริษัทคืนงานออกจากรอบบิล' };
             const mine = c.author_role === 'admin';
             const tone = c.action === 'rejected' ? 'border-red-200 bg-red-50'
                 : c.action === 'approved' ? 'border-emerald-200 bg-emerald-50'
@@ -6941,7 +7106,10 @@
                     cellsHtml += `<td class="p-1.5"><div class="flex gap-1.5 items-center">
                         <button type="button" onclick="openAddProductModal('${row.id}', '${String(row.customer_case || '').replace(/'/g,"\\'")}', '${String(row.asset_id || '').replace(/'/g,"\\'")}')" class="inline-flex items-center justify-center w-9 h-9 rounded-lg text-lg bg-blood-50 text-blood-600 hover:bg-blood-100 transition-colors" title="เพิ่มอะไหล่อีกชิ้นให้เลขทรัพย์สินของแถวนี้"><i class="fa-solid fa-plus"></i></button>
                         <button type="button" onclick="saveBillingRow('${row.id}')" class="inline-flex items-center justify-center w-9 h-9 rounded-lg text-lg bg-blood-100 text-blood-700 hover:bg-blood-200 transition-colors" title="บันทึก"><i class="fa-solid fa-floppy-disk"></i></button>
-                        <button type="button" onclick="deleteBillingRow('${row.id}')" class="inline-flex items-center justify-center w-9 h-9 rounded-lg text-lg bg-red-50 text-red-500 hover:bg-red-100 transition-colors" title="ลบ"><i class="fa-solid fa-trash"></i></button>
+                        <button type="button" onclick="deleteBillingRow('${row.id}')" class="inline-flex items-center justify-center w-9 h-9 rounded-lg text-lg bg-red-50 text-red-500 hover:bg-red-100 transition-colors" title="ลบเฉพาะแถวนี้"><i class="fa-solid fa-trash"></i></button>
+                        ${!row.completed_at
+                            ? `<button type="button" onclick="openRemoveJobModalFromBtn(this)" data-job="${escapeAttr(row.customer_case)}" data-asset="${escapeAttr(row.asset_id)}" data-round="${escapeAttr(row.round_no)}" class="inline-flex items-center justify-center w-9 h-9 rounded-lg text-lg bg-rose-50 text-rose-600 hover:bg-rose-100 transition-colors" title="คืนงาน — ตัดงานนี้ออกจากระบบวางบิลทั้งงาน (ทุกแถวของเลขทรัพย์สินนี้)"><i class="fa-solid fa-arrow-rotate-left"></i></button>`
+                            : ''}
                         ${row.contractor_review_status === 'rejected' && !row.completed_at
                             ? `<button type="button" onclick="openBillingReviewModal('${row.id}')" class="inline-flex items-center justify-center w-9 h-9 rounded-lg text-lg bg-indigo-100 text-indigo-700 hover:bg-indigo-200 transition-colors animate-pulse" title="ผู้รับเหมาตีกลับแถวนี้ — แก้แล้วกดส่งกลับ"><i class="fa-solid fa-rotate-left"></i></button>`
                             : ''}
@@ -7669,12 +7837,16 @@
                 'bg-violet-50 text-violet-800 ring-violet-200', 'bg-violet-500', 'bg-violet-100 text-violet-700'],
             ['ยืนยันรูปแล้ว', 'แอดมินยืนยันรูปแล้ว ยังไม่ได้ส่งบิล',
                 'bg-sky-50 text-sky-800 ring-sky-200', 'bg-sky-500', 'bg-sky-100 text-sky-700'],
+            ['อยู่ในรอบบิล รอส่ง', 'ดึงเข้ารอบบิลแล้ว รอแอดมินกดส่งให้ผู้รับเหมา',
+                'bg-indigo-50 text-indigo-800 ring-indigo-200', 'bg-indigo-500', 'bg-indigo-100 text-indigo-700'],
             ['ส่งงานแล้ว', 'ส่งบิลให้ผู้รับเหมาแล้ว รอเขาตรวจ',
                 'bg-blue-50 text-blue-800 ring-blue-200', 'bg-blue-500', 'bg-blue-100 text-blue-700'],
             ['ยืนยันงานแล้ว', 'ผู้รับเหมายืนยันรอบบิลครบแล้ว รอครบฝั่งรูป',
                 'bg-teal-50 text-teal-800 ring-teal-200', 'bg-teal-500', 'bg-teal-100 text-teal-700'],
             ['เสร็จสิ้น', 'ยืนยันรูป + ยืนยันรอบบิล ครบทั้งสองอย่าง',
                 'bg-emerald-50 text-emerald-800 ring-emerald-200', 'bg-emerald-500', 'bg-emerald-100 text-emerald-700'],
+            ['คืนงานแล้ว (ตัดออกจากบิล)', 'แอดมินกดคืนงาน ตัดออกจากระบบวางบิล จะไม่ถูกดึงเข้ารอบอีก',
+                'bg-rose-50 text-rose-800 ring-rose-200', 'bg-rose-500', 'bg-rose-100 text-rose-700'],
         ];
 
         // เติมตัวเลือกใน dropdown และแถวชิปตัวนับ จากรายการเดียวข้างบน

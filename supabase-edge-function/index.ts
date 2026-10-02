@@ -3230,9 +3230,12 @@ Deno.serve(async (req: Request) => {
         // contractorPending = ยังมีแถวที่รอผู้รับเหมาตรวจ/ถูกตีกลับอยู่
         // contractorAny     = มีแถวที่เข้าระบบตรวจรับใหม่อย่างน้อย 1 แถว
         // สองตัวนี้ใช้ตัดสินสถานะ "ยืนยันงานแล้ว" = เข้าระบบใหม่ + ไม่เหลือแถวค้างเลย
-        billingMap[b.customer_case] = { sent: false, completed: false, contractorAny: false, contractorPending: false };
+        // v1.0.95 — hasRows = เลขงานนี้ถูกดึงเข้ารอบบิลแล้ว (ไม่ว่าจะส่งหรือยัง)
+        // ใช้แยกสถานะ "อยู่ในรอบบิล รอส่ง" ออกจาก "ส่งแบบฟอร์มรูปแล้ว"
+        billingMap[b.customer_case] = { hasRows: false, sent: false, completed: false, contractorAny: false, contractorPending: false };
       }
       const m = billingMap[b.customer_case];
+      m.hasRows = true;
       if (b.sent_to_contractor) m.sent = true;
       if (b.completed_at) m.completed = true;
       const rv = b.contractor_review_status;
@@ -3270,6 +3273,16 @@ Deno.serve(async (req: Request) => {
     });
     const closeRowNeedsPhoto = (row: any) => closeRowNeedsContractorPhoto(row)
       || billablePairs.has(jobAssetKey(row && row.job_id, row && row.asset_id));
+
+    // v1.0.95 — เลขงานที่ถูกกด "คืนงาน" ออกจากตารางวางบิล
+    // ต้องมีสถานะของตัวเอง ไม่งั้นพอแถวบิลถูกตัดออก งานจะตกกลับไปขึ้นว่า "ส่งแบบฟอร์มรูปแล้ว"
+    // = ดูเหมือนรอผู้รับเหมาส่งรูปอยู่ตลอดกาล ทั้งที่จงใจตัดออกจากระบบไปแล้ว
+    // ยังไม่ได้รัน SQL v1.0.95 = ยังไม่มีตาราง ให้ถือว่าไม่มีงานที่ถูกคืน แล้วไปต่อ
+    const removedJobs = new Set<string>();
+    {
+      const rm = await supabase.from('billing_removed_jobs').select('job_id');
+      if (!rm.error) (rm.data || []).forEach((r: any) => { if (r.job_id) removedJobs.add(String(r.job_id)); });
+    }
 
     // ประตูรูปเริ่มมีผลเมื่อไหร่ — งานที่ปิดก่อนหน้านั้นไม่เคยมีฟอร์มรูปให้ส่ง
     // จึงต้องไม่เอา alarm ฝั่งรูปไปจับ ไม่งั้นงานเก่าทั้งระบบจะกลายเป็นสีแดงทันทีที่ deploy
@@ -3317,6 +3330,8 @@ Deno.serve(async (req: Request) => {
         //   เสร็จสิ้น                    ยืนยันรูปแล้ว + ผู้รับเหมายืนยันรอบบิลแล้ว (ตัดบิลแล้ว)
         //   ยืนยันงานแล้ว                ผู้รับเหมายืนยันบิลครบทุกแถว แต่ยังขาดฝั่งรูป
         //   ส่งงานแล้ว                   แอดมินกดส่งบิลไปหาผู้รับเหมาแล้ว รอเขาตรวจ
+        //   อยู่ในรอบบิล รอส่ง            ดึงเข้ารอบบิลแล้ว แต่แอดมินยังไม่กดส่ง (v1.0.95)
+        //   คืนงานแล้ว (ตัดออกจากบิล)     แอดมินกดคืนงาน ตัดออกจากระบบวางบิล (v1.0.95)
         //   ยืนยันรูปแล้ว                แอดมินยืนยันรูปแล้ว แต่ยังไม่ได้ส่งบิล
         //   ผรม. ส่งงานมาแล้วรอตรวจสอบ   ผู้รับเหมาส่งรูปมาแล้ว รอแอดมินตรวจ
         //   ส่งแบบฟอร์มรูปแล้ว            ปิดงานแล้ว รอผู้รับเหมาใส่รูป (รวมกรณีถูกตีกลับ = ย้อนกลับมาขั้นนี้)
@@ -3327,6 +3342,11 @@ Deno.serve(async (req: Request) => {
         if (billingInfo && billingInfo.completed) status = 'เสร็จสิ้น';
         else if (billingInfo && billingInfo.contractorAny && !billingInfo.contractorPending) status = 'ยืนยันงานแล้ว';
         else if (billingInfo && billingInfo.sent) status = 'ส่งงานแล้ว';
+        // v1.0.95 — ก่อนหน้านี้งานกลุ่มนี้ตกไปรวมอยู่ในถัง "ส่งแบบฟอร์มรูปแล้ว"
+        // ซึ่งอ่านแล้วเข้าใจว่า "รอผู้รับเหมาส่งรูป" ทั้งที่คนที่ต้องลงมือต่อคือแอดมินเอง
+        // (ตรวจข้อมูลจริง 2 ต.ค. 2569: 284 จาก 314 งานในถังนั้นเป็นกรณีนี้)
+        else if (billingInfo && billingInfo.hasRows) status = 'อยู่ในรอบบิล รอส่ง';
+        else if (removedJobs.has(o.main_id)) status = 'คืนงานแล้ว (ตัดออกจากบิล)';
         else if (photoStatus === 'approved') status = 'ยืนยันรูปแล้ว';
         else if (photoStatus === 'pending') status = 'ผรม. ส่งงานมาแล้วรอตรวจสอบ';
         // ปิดงานแล้ว = ฟอร์มรูปถูกส่งให้ผู้รับเหมาทันที (ตั้งแต่ v1.0.68)
@@ -4840,6 +4860,98 @@ Deno.serve(async (req: Request) => {
           + safe(startDate) + '_ถึง_' + safe(endDate) + '.pdf';
         result.rowCount = rows.length;
         return jsonResponse(result);
+      }
+
+      // ==================== คืนงาน — ตัดงานออกจากระบบวางบิล (v1.0.95) ====================
+      // ต่างจากปุ่ม "ลบ" ที่มีอยู่เดิม 2 เรื่อง
+      //   1. ลบ = แถวเดียว · คืนงาน = ทุกแถวของเลขงาน+เลขทรัพย์สินนั้นในรอบนั้น
+      //   2. ลบ = ไม่เก็บอะไรไว้เลยและไม่บอกใคร · คืนงาน = เก็บสำเนาเต็ม + เหตุผล + แจ้งผู้รับเหมา
+      // ตัวทำงานจริงอยู่ในฐานข้อมูล (remove_billing_job ใน SQL v1.0.95) เพราะต้องทำใน transaction เดียว
+      case 'previewRemoveBillingJob': {
+        const [username, token, jobIdRaw, assetRaw, roundRaw] = args;
+        const gate = await adminGate(username, token);
+        if (!gate.ok) return jsonResponse({ success: false, message: gate.message });
+        const jobId = String(jobIdRaw || '').trim();
+        const assetId = String(assetRaw || '').trim();
+        const roundNo = (roundRaw === null || roundRaw === undefined || roundRaw === '') ? null : Number(roundRaw);
+        if (!jobId) return jsonResponse({ success: false, message: 'ไม่ได้ระบุเลขงาน' });
+
+        let q = supabase.from('billing_documents')
+          .select('id,part_code,part_detail,qty,unit_price,unit_price_contractor,sent_to_contractor,completed_at,contractor,round_no,contractor_review_status')
+          .eq('customer_case', jobId).eq('asset_id', assetId);
+        if (roundNo !== null && !isNaN(roundNo)) q = q.eq('round_no', roundNo);
+        const { data, error } = await q;
+        if (error) return jsonResponse({ success: false, message: error.message });
+        const rows = data || [];
+        if (rows.length === 0) {
+          return jsonResponse({ success: false, message: 'ไม่พบแถวของเลขงานนี้ในตารางวางบิล (อาจถูกคืนไปแล้ว ลองโหลดหน้าใหม่)' });
+        }
+        const sent = rows.filter((r: any) => r.sent_to_contractor === true).length;
+        const done = rows.filter((r: any) => !!r.completed_at).length;
+        // ยอดเงินฝั่งผู้รับเหมา = ตัวเลขที่ "หายไปจากบิล" จริง ๆ ถ้ากดคืนงาน
+        const sumContractor = rows.reduce((t: number, r: any) =>
+          t + (Number(r.qty) || 0) * (Number(r.unit_price_contractor) || 0), 0);
+        const sumCj = rows.reduce((t: number, r: any) =>
+          t + (Number(r.qty) || 0) * (Number(r.unit_price) || 0), 0);
+
+        // ประวัติการคืนงานของเลขงานนี้ — ไม่มีตาราง = ยังไม่ได้รัน SQL v1.0.95
+        let history: any[] = [];
+        let ready = true;
+        const h = await supabase.from('billing_removed_jobs')
+          .select('id,job_id,asset_id,round_no,reason,removed_by,removed_at,rows_removed,was_sent')
+          .eq('job_id', jobId).order('removed_at', { ascending: false }).limit(20);
+        if (h.error) {
+          if (/relation|does not exist|schema cache|could not find/i.test(h.error.message || '')) ready = false;
+          else return jsonResponse({ success: false, message: h.error.message });
+        } else history = h.data || [];
+
+        return jsonResponse({
+          success: true, ready, jobId, assetId, roundNo,
+          rows: rows.length, sentRows: sent, doneRows: done,
+          contractor: rows[0].contractor || '',
+          sumContractor, sumCj,
+          parts: rows.map((r: any) => ({ partCode: r.part_code || '', detail: r.part_detail || '', qty: r.qty })),
+          blocked: done > 0,
+          blockedReason: done > 0
+            ? ('งานนี้ตัดบิลไปแล้ว ' + done + ' แถว คืนงานไม่ได้ — ถ้าจำเป็นต้องแก้ ให้กด "ย้อนสถานะ" ก่อน แล้วค่อยคืนงาน')
+            : '',
+          history,
+        });
+      }
+
+      case 'removeBillingJob': {
+        const [username, token, jobIdRaw, assetRaw, roundRaw, reasonRaw] = args;
+        // ใช้ verifySession ตรง ๆ เพราะต้องเอาชื่อผู้กดไปบันทึกประวัติ
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่ (ถ้ายังขึ้นข้อความนี้ แปลว่าแอปเป็นเวอร์ชันเก่า ต้องอัปเดตแอปก่อน)' });
+        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่คืนงานได้' });
+        const jobId = String(jobIdRaw || '').trim();
+        const assetId = String(assetRaw || '').trim();
+        const roundNo = (roundRaw === null || roundRaw === undefined || roundRaw === '') ? null : Number(roundRaw);
+        const reason = String(reasonRaw || '').trim();
+        if (!jobId) return jsonResponse({ success: false, message: 'ไม่ได้ระบุเลขงาน' });
+        if (!reason) return jsonResponse({ success: false, message: 'กรุณาระบุเหตุผลที่คืนงาน' });
+
+        const { data, error } = await supabase.rpc('remove_billing_job', {
+          p_job_id: jobId, p_asset_id: assetId,
+          p_round_no: (roundNo !== null && !isNaN(roundNo)) ? roundNo : null,
+          p_reason: reason, p_by: session.displayName || username,
+        });
+        if (error) {
+          const msg = String(error.message || '');
+          if (msg.indexOf('CP9X:') !== -1) return jsonResponse({ success: false, message: msg.slice(msg.indexOf('CP9X:') + 5).trim() });
+          if (/remove_billing_job|could not find the function|schema cache/i.test(msg)) {
+            return jsonResponse({ success: false, message: 'ฐานข้อมูลยังไม่มีฟังก์ชันคืนงาน — ให้แอดมินรันไฟล์ SQL v1.0.95 ก่อน' });
+          }
+          return jsonResponse({ success: false, message: 'คืนงานไม่สำเร็จ: ' + msg });
+        }
+        const sum: any = data || {};
+        const parts: string[] = ['ตัดออก ' + (sum.rows_removed || 0) + ' แถว'];
+        if (sum.comments) parts.push('แจ้งผู้รับเหมา ' + sum.comments + ' แถว');
+        return jsonResponse({
+          success: true, summary: sum,
+          message: 'คืนงาน ' + jobId + ' แล้ว (' + parts.join(' · ') + ') — งานนี้จะไม่ถูกดึงเข้ารอบบิลอีก',
+        });
       }
 
       case 'deleteBillingDocumentRow': {
