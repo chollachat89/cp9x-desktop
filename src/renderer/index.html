@@ -24,43 +24,6 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;800;900&display=swap" rel="stylesheet">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        blood: {
-                            50:  '#f0fdf4',
-                            100: '#dcfce7',
-                            200: '#bbf7d0',
-                            300: '#86efac',
-                            400: '#4ade80',
-                            500: '#22c55e',
-                            600: '#16a34a',
-                            700: '#15803d',
-                            800: '#166534',
-                            900: '#14532d'
-                        }
-                    },
-                    // ย่อสเกลตัวอักษรทั้งแอปที่ต้นทางทีเดียว แทนการไล่แก้คลาสทีละจุดเป็นพัน ๆ ที่
-                    // ทุกคลาส text-xs / text-sm / text-base ฯลฯ ที่ใช้อยู่เดิมทั้งไฟล์จะเล็กลงพร้อมกันทันที
-                    // และยังเล็กลงในสัดส่วนเดียวกันหมด ลำดับความสำคัญของหัวข้อ-เนื้อหาจึงไม่เพี้ยน
-                    // (ถ้าอยากปรับใหญ่/เล็กกว่านี้ทั้งแอป แก้แค่ตัวเลขในบล็อกนี้บล็อกเดียวพอ)
-                    fontSize: {
-                        'xs':   ['10.5px', { lineHeight: '15px' }],
-                        'sm':   ['12px',   { lineHeight: '17px' }],
-                        'base': ['13.5px', { lineHeight: '20px' }],
-                        'lg':   ['15px',   { lineHeight: '22px' }],
-                        'xl':   ['17px',   { lineHeight: '24px' }],
-                        '2xl':  ['19px',   { lineHeight: '27px' }],
-                        '3xl':  ['23px',   { lineHeight: '30px' }],
-                        '4xl':  ['28px',   { lineHeight: '34px' }]
-                    }
-                }
-            }
-        }
-    </script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
@@ -290,6 +253,14 @@
 
     <!-- CP9X Desktop: ชั้นธีมใหม่ (ทับ Tailwind — แก้ไฟล์ theme.css ได้อิสระ) -->
     <link rel="stylesheet" href="./theme.css">
+
+    <!-- v1.0.97 — Tailwind แบบไฟล์สร้างล่วงหน้า (แทน cdn.tailwindcss.com)
+         ของเดิมโหลดสคริปต์ 400KB จากเน็ตทุกครั้งที่เปิดแอป แล้วสร้าง CSS สด ๆ + คอยสแกนหน้าจอใหม่ทุกครั้งที่ตารางวาดใหม่
+         ตอนนี้เป็นไฟล์ 40KB ในเครื่อง เปิดแอปเร็วขึ้น และหน้าจอไม่เสียทรงตอนเน็ตหลุด
+         ⚠ วางไว้ท้ายสุดของ <head> โดยตั้งใจ — ตำแหน่งเดียวกับที่ CDN เดิมแปะ <style> ของมัน (document.head.append)
+           ย้ายขึ้นไปไว้ก่อน theme.css จะทำให้ลำดับการทับสไตล์เปลี่ยน แล้วหน้าตาบางจุดจะเพี้ยน
+         ⚠ ใช้คลาสใหม่ที่ไม่เคยมีในไฟล์ ต้องรัน "npm run css" ก่อน commit (ดู tailwind.config.js) -->
+    <link rel="stylesheet" href="./tailwind.css">
 </head>
 <body class="text-slate-800 min-h-screen flex flex-col items-center">
 
@@ -691,9 +662,6 @@
                                 </div>
                                 <p class="text-xs text-slate-400 mt-1">ค่าเริ่มต้นคือเวลาปัจจุบัน ใช้คำนวณระยะเวลาดำเนินการในรายงาน/แดชบอร์ด</p>
                             </div>
-                            <!-- v1.0.68 — รายการอะไหล่ย้ายเข้าไปอยู่ในบล็อกของแต่ละเลขทรัพย์สินด้านล่าง
-                                 ช่องเดิมเก็บไว้แบบซ่อน เพราะ getPartsAsText()/clearPartsRows() ยังอ้างถึง -->
-                            <div id="cl_partsContainer" class="hidden"></div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">ดำเนินการ</label>
                                 <textarea id="cl_actionTaken" rows="1" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm resize-none"></textarea>
@@ -3273,7 +3241,6 @@
 
         window.addEventListener('DOMContentLoaded', function () {
             restoreSidebarPrefs();
-            addPartRow();
             addAssetBlock();   // v1.0.68 — บล็อกเลขทรัพย์สินเริ่มต้น 1 บล็อก
             // v1.0.70 — เติมตัวเลือกสถานะกับชิปตัวนับตั้งแต่เปิดแอป
             // ถ้ารอให้ตารางวาดก่อน คนที่เข้าแท็บรายงานแล้วกดกรองทันทีจะเจอ dropdown ว่างเปล่า
@@ -3568,11 +3535,6 @@
 
         function clearOpenJobNumberStatus() {
             const statusEl = document.getElementById('op_mainIdStatus');
-            if (statusEl) { statusEl.textContent = ''; statusEl.className = 'text-xs mt-1 text-slate-400'; }
-        }
-
-        function clearCloseJobNumberStatus() {
-            const statusEl = document.getElementById('cl_kissflowStatus');
             if (statusEl) { statusEl.textContent = ''; statusEl.className = 'text-xs mt-1 text-slate-400'; }
         }
 
@@ -3872,40 +3834,8 @@
                 }, 20000);
             }
         }
+        // ตัวนับกลางสำหรับสร้าง id ที่ไม่ซ้ำให้แถวอะไหล่ในบล็อกเลขทรัพย์สิน
         let partRowCount = 0;
-
-        function addPartRow(value) {
-            partRowCount++;
-            const rowId = 'partRow_' + partRowCount;
-            const container = document.getElementById('cl_partsContainer');
-            const div = document.createElement('div');
-            div.id = rowId;
-            div.className = 'flex gap-2';
-            div.innerHTML = `
-                <input type="text" class="cl_partItem flex-1 px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm" placeholder="เช่น Filter Drier 3/8 = 1" value="${(value || '').replace(/"/g,'&quot;')}">
-                <button type="button" onclick="removePartRow('${rowId}')" class="text-red-400 hover:text-red-600 px-2"><i class="fa-solid fa-trash"></i></button>
-            `;
-            container.appendChild(div);
-        }
-
-        function removePartRow(rowId) {
-            const row = document.getElementById(rowId);
-            if (row) row.remove();
-            // ต้องมีอย่างน้อย 1 แถวเสมอ
-            if (document.getElementById('cl_partsContainer').children.length === 0) addPartRow();
-        }
-
-        function getPartsAsText() {
-            const items = Array.from(document.querySelectorAll('.cl_partItem'))
-                .map(input => input.value.trim())
-                .filter(v => v !== '');
-            return items.map((item, idx) => (idx + 1) + '. ' + item).join('\n');
-        }
-
-        function clearPartsRows() {
-            document.getElementById('cl_partsContainer').innerHTML = '';
-            partRowCount = 0;
-        }
 
         // ==================== บล็อกเลขทรัพย์สิน + อะไหล่ (v1.0.68) ====================
         // 1 เลขงานปิดได้หลายเลขทรัพย์สินในการบันทึกครั้งเดียว
@@ -7826,27 +7756,29 @@
         //
         // เรียงตามลำดับที่งานเดินจริง เพื่อให้ทั้ง dropdown และแถวชิปอ่านแล้วเห็นเส้นทางของงาน
         // [ชื่อสถานะ, คำอธิบายใน dropdown, คลาสป้าย, คลาสจุดสี, คลาสชิป]
+        //
+        // v1.0.97 — ยุบ "ยืนยันงานแล้ว" ทิ้ง (ผู้รับเหมายืนยันบิลครบ + รูปผ่าน = ตัดบิลทันที = "เสร็จสิ้น"
+        // ถ้ารูปยังไม่ผ่าน งานจะขึ้นขั้นของรูปแทน เพราะนั่นคือสิ่งที่รออยู่จริง)
+        // 2 สถานะท้ายแถวสีเขียว/ฟ้า = จบงานแล้วทั้งคู่ ต่างกันแค่ "มีเก็บเงินผู้รับเหมาไหม"
         const JOB_STATUS_DEFS = [
             ['รอดำเนินการ', 'ยังไม่ปิดงาน',
                 'bg-slate-50 text-slate-700 ring-slate-200', 'bg-slate-400', 'bg-red-100 text-red-700'],
             ['พักงาน', 'หยุดรอชั่วคราว',
                 'bg-orange-50 text-orange-800 ring-orange-200', 'bg-orange-500', 'bg-orange-100 text-orange-700'],
-            ['ส่งแบบฟอร์มรูปแล้ว', 'ปิดงานแล้ว รอผู้รับเหมาใส่รูป (รวมที่ถูกตีกลับ)',
+            ['ส่งแบบฟอร์มรูปแล้ว', 'รอผู้รับเหมาส่งรูป (รวมที่ถูกตีกลับ)',
                 'bg-amber-50 text-amber-800 ring-amber-200', 'bg-amber-500', 'bg-amber-100 text-amber-700'],
-            ['ผรม. ส่งงานมาแล้วรอตรวจสอบ', 'ผู้รับเหมาส่งรูปแล้ว รอแอดมินตรวจ',
+            ['ผรม. ส่งงานมาแล้วรอตรวจสอบ', 'ผู้รับเหมาส่งรูปแล้ว รอแอดมินตรวจรูป',
                 'bg-violet-50 text-violet-800 ring-violet-200', 'bg-violet-500', 'bg-violet-100 text-violet-700'],
-            ['ยืนยันรูปแล้ว', 'แอดมินยืนยันรูปแล้ว ยังไม่ได้ส่งบิล',
+            ['ยืนยันรูปแล้ว', 'รูปผ่านแล้ว รอดึงเข้ารอบบิล',
                 'bg-sky-50 text-sky-800 ring-sky-200', 'bg-sky-500', 'bg-sky-100 text-sky-700'],
-            ['ปิดงานแล้ว (ไม่ต้องส่งรูป)', 'เคลมประกัน 3 เดือน / ใบเสนอราคา ล้วน ๆ ไม่เก็บเงินใคร ไม่ต้องส่งรูป = จบแล้ว',
-                'bg-cyan-50 text-cyan-800 ring-cyan-200', 'bg-cyan-500', 'bg-cyan-100 text-cyan-700'],
-            ['อยู่ในรอบบิล รอส่ง', 'ดึงเข้ารอบบิลแล้ว รอแอดมินกดส่งให้ผู้รับเหมา',
+            ['อยู่ในรอบบิล รอส่ง', 'อยู่ในรอบบิลแล้ว พร้อมให้แอดมินกดส่งให้ผู้รับเหมา',
                 'bg-indigo-50 text-indigo-800 ring-indigo-200', 'bg-indigo-500', 'bg-indigo-100 text-indigo-700'],
-            ['ส่งงานแล้ว', 'ส่งบิลให้ผู้รับเหมาแล้ว รอเขาตรวจ',
+            ['ส่งงานแล้ว', 'ส่งบิลแล้ว รอผู้รับเหมาตรวจ/ยืนยันบิล',
                 'bg-blue-50 text-blue-800 ring-blue-200', 'bg-blue-500', 'bg-blue-100 text-blue-700'],
-            ['ยืนยันงานแล้ว', 'ผู้รับเหมายืนยันรอบบิลครบแล้ว รอครบฝั่งรูป',
-                'bg-teal-50 text-teal-800 ring-teal-200', 'bg-teal-500', 'bg-teal-100 text-teal-700'],
-            ['เสร็จสิ้น', 'ยืนยันรูป + ยืนยันรอบบิล ครบทั้งสองอย่าง',
+            ['เสร็จสิ้น', 'จบงาน — ตัดบิลแล้ว (รูปผ่าน + บิลครบ)',
                 'bg-emerald-50 text-emerald-800 ring-emerald-200', 'bg-emerald-500', 'bg-emerald-100 text-emerald-700'],
+            ['ปิดงานแล้ว (ไม่ต้องส่งรูป)', 'จบงาน — เคลมประกัน 3 เดือน / ใบเสนอราคา ไม่เก็บเงินผู้รับเหมา ไม่ต้องส่งรูป',
+                'bg-cyan-50 text-cyan-800 ring-cyan-200', 'bg-cyan-500', 'bg-cyan-100 text-cyan-700'],
             ['คืนงานแล้ว (ตัดออกจากบิล)', 'แอดมินกดคืนงาน ตัดออกจากระบบวางบิล จะไม่ถูกดึงเข้ารอบอีก',
                 'bg-rose-50 text-rose-800 ring-rose-200', 'bg-rose-500', 'bg-rose-100 text-rose-700'],
         ];
@@ -9497,7 +9429,7 @@
                                 form.reset();
                                 if (mode === 'open') { document.getElementById('rawTextOpen').value = ''; document.getElementById('op_branchStatus').textContent = ''; setDefaultOpenDateTime(); }
                                 if (mode === 'close') {
-                                    document.getElementById('rawTextClose').value = ''; clearPartsRows(); addPartRow();
+                                    document.getElementById('rawTextClose').value = '';
                                     // v1.0.68 — ล้างบล็อกเลขทรัพย์สินทั้งหมด เหลือบล็อกว่าง 1 บล็อกรองานถัดไป
                                     // ถ้าไม่ล้าง เลขทรัพย์สินของงานที่เพิ่งบันทึกจะค้างอยู่ แล้วติดไปกับงานถัดไป
                                     clearAssetBlocks(); addAssetBlock();
@@ -9589,10 +9521,13 @@
         function showAlert(type, message) {
             const box = document.getElementById('alertBox');
             const colorMap = { open: 'blood', close: 'blood', pause: 'blood', billing: 'blood', openlist: 'blood', closelist: 'blood', statusreport: 'blood' };
+            // ⚠ ต้องเขียนชื่อคลาสเต็ม ๆ ห้ามประกอบจากชิ้นส่วน (เช่น 'bg-' + สี + '-100')
+            // ไฟล์ tailwind.css สร้างจากการอ่านชื่อคลาสในโค้ด ชื่อที่ประกอบตอนรันจะไม่ถูกสร้าง = ไม่มีสี
+            const successCls = { blood: 'bg-blood-100 text-blood-800 border-blood-300', blue: 'bg-blue-100 text-blue-800 border-blue-300' };
             const c = colorMap[currentMode] || 'blue';
             box.innerHTML = `<i class="fa-solid ${type === 'success' ? 'fa-check-circle' : 'fa-triangle-exclamation'} mr-2"></i> ${message}`;
             box.className = `mx-6 mt-6 p-4 rounded-xl text-center text-sm font-medium border transition-all duration-300 block ${
-                type === 'success' ? `bg-${c}-100 text-${c}-800 border-${c}-300` : 'bg-red-100 text-red-800 border-red-300'
+                type === 'success' ? successCls[c] : 'bg-red-100 text-red-800 border-red-300'
             }`;
 
             // ทุกจุดในระบบที่ "ทำต่อไม่ได้" (validation, เงื่อนไขทางธุรกิจ, ปุ่มที่กดไม่ได้ ฯลฯ) เรียก showAlert('error', ...)

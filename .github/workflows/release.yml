@@ -56,6 +56,21 @@ jobs:
           if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; \
           else npm install --no-audit --no-fund; fi
 
+      # v1.0.97 — หน้าจอใช้ไฟล์ tailwind.css ที่สร้างล่วงหน้า (แทน cdn.tailwindcss.com)
+      # ถ้าแก้หน้าจอใช้คลาสใหม่แต่ลืมรัน npm run css ก่อน commit คลาสนั้นจะไม่มีผล (ไม่มีสี/ไม่มีระยะ)
+      # ขั้นนี้สร้างใหม่ทุกครั้งก่อน build ตัวติดตั้งจึงถูกเสมอ
+      # ถ้าไม่ตรงกับที่ commit มา จะขึ้นคำเตือน เพราะเว็บบนไอแพด (Cloudflare) ใช้ไฟล์ที่ commit ไว้ตรง ๆ
+      # = ต้องรัน npm run css แล้ว commit ตามไปด้วย ไม่งั้นเว็บจะหน้าตาเพี้ยนตรงคลาสใหม่
+      - name: สร้าง tailwind.css ใหม่ก่อน build
+        shell: bash
+        run: |
+          cp src/renderer/tailwind.css "$RUNNER_TEMP/tw-committed.css"
+          npx --yes tailwindcss@3.4.17 -c tailwind.config.js -i tailwind.input.css -o src/renderer/tailwind.css --minify
+          if ! cmp -s "$RUNNER_TEMP/tw-committed.css" src/renderer/tailwind.css; then
+            echo "::warning::tailwind.css ที่ commit มาไม่ตรงกับโค้ดหน้าจอ (ลืมรัน npm run css) — ตัวติดตั้งรอบนี้ใช้ไฟล์ที่สร้างใหม่แล้ว ถูกต้อง"
+            echo "::warning::แต่เว็บบนไอแพดยังใช้ไฟล์เก่า ให้รัน npm run css แล้ว commit + push ตามไปด้วย"
+          fi
+
       # Build เฉยๆ ไม่ให้ electron-builder ยิง GitHub API เอง (--publish never)
       # เหตุผล: electron-builder เคยพัง 404 ตอนพยายามเช็ค release เดิมผ่าน releases.atom ของ GitHub
       # (เป็นปัญหารู้กันในชุมชน electron-builder) จึงแยกขั้นตอน publish ออกมาทำเองด้วย action

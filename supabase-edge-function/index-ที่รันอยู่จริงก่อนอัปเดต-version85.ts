@@ -1,14 +1,3 @@
-// =====================================================================
-//  โค้ด Edge Function ที่ "รันอยู่จริง" บนระบบจริง ณ 2 ต.ค. 2569
-//  app-api version 84  (ดึงออกมาเก็บไว้ ไม่ได้แก้อะไร)
-//
-//  ใช้ตอนไหน: ถ้า deploy v1.0.94 แล้วมีปัญหา ให้คัดลอกไฟล์นี้
-//  วางทับใน Supabase -> Edge Functions -> app-api แล้วกด Deploy
-//  ระบบจะกลับไปเหมือนก่อนอัปเดตทันที
-//
-//  ⚠ ถ้าถอย Edge แล้ว ต้องลบค่าด่านปิดระบบออกด้วย ไม่งั้นผู้รับเหมาจะเข้าไม่ได้โดยไม่มีใครรู้สาเหตุ
-//     delete from app_secrets where key = 'login_lock';
-// =====================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 // ไลบรารีสร้าง PDF/Excel มีขนาดใหญ่มาก ถ้า import ไว้ด้านบนสุด Edge Function จะต้องโหลดทุกไลบรารี
@@ -96,6 +85,298 @@ function excludeBillingTypes(q: any, types: string[]) {
   return q;
 }
 
+// ==================== กั้นราคา CJ ไม่ให้ออกไปฝั่งผู้รับเหมา (v1.0.87) ====================
+// ทุก query ของตารางวางบิลใช้ select('*') แล้วไปเลือกแสดงทีหลังที่หน้าแอป
+// หน้าแอปทำถูกอยู่แล้ว (ผู้รับเหมาเห็นเฉพาะราคาของตัวเอง) แต่ "ข้อมูลดิบ" ที่ส่งออกไป
+// ยังมี unit_price / total_price = ราคาที่ CR เก็บกับ CJ ติดไปครบทุกแถว
+// ใครเปิดดูจากเครื่องผู้รับเหมาก็เห็นได้ทันที ต่อให้ตารางไม่โชว์สักคอลัมน์
+//
+// กติกาใหม่: ราคา CJ ต้องไม่ออกจากเซิร์ฟเวอร์ไปหาคนที่ไม่ใช่แอดมิน ตั้งแต่ต้นทาง
+// ไม่ใช่ไปซ่อนเอาที่หน้าจอ — การซ่อนที่หน้าจอกันได้แค่สายตา ไม่ได้กันข้อมูล
+const CJ_ONLY_FIELDS = ['unit_price', 'total_price'];
+
+// ==================== ปิดระบบชั่วคราว ให้เข้าได้เฉพาะแอดมิน (v1.0.94) ====================
+// ใช้ตอนอัปเดตระบบ: ปิดไม่ให้ผู้รับเหมาเข้ามาแก้ข้อมูลระหว่างที่ฐานข้อมูลกับเซิร์ฟเวอร์ยังไม่ตรงกัน
+// ถ้าปล่อยให้เข้าได้ระหว่างอัปเดต จะเจอได้ทั้ง "กดแล้วขึ้น error ภาษาอังกฤษ" และที่แย่กว่านั้นคือ
+// บันทึกข้อมูลลงไปในตารางที่ยังไม่ได้ย้ายโครงสร้าง แล้วต้องมาตามแก้ทีหลัง
+//
+// ค่าเก็บใน app_secrets คีย์ login_lock:
+//   ว่าง / 'off'        = เปิดใช้งานปกติ ทุกคนเข้าได้
+//   'on'                = ล็อก เข้าได้เฉพาะ role = 'admin'
+//   'on|ข้อความ'        = ล็อก พร้อมข้อความที่จะไปขึ้นบนหน้าล็อกอินของคนที่ถูกกั้น
+//
+// ⚠ ใครที่ถือ role = 'admin' ในฐานข้อมูลจะเข้าได้หมด ซึ่งรวมผู้ตรวจสอบ 3 คนกับ TUCK CR ด้วย
+//    เพราะ 2 กลุ่มนั้นเก็บเป็นธง is_checker / is_final_approver บน role = 'admin' ไม่ใช่ role แยก
+const LOGIN_LOCK_DEFAULT_MSG = 'ระบบปิดปรับปรุงชั่วคราว ช่วงนี้เข้าใช้งานได้เฉพาะแอดมิน — กรุณารอประกาศจากแอดมิน แล้วลองเข้าใหม่อีกครั้ง';
+
+// อ่านค่าล็อกทุกคำขอจะเพิ่มการคุยกับฐานข้อมูล 1 รอบต่อ 1 คำขอ จึงพักค่าไว้ 15 วินาที
+// (เครื่องเดียวกันรับคำขอต่อ ๆ กันได้หลายรอบ ตัวแปรนี้จึงอยู่ข้ามคำขอได้จริง)
+// 15 วินาทีคือเพดานความช้าที่ยอมได้ตอนกดล็อก/ปลดล็อก ซึ่งรับได้เพราะตอนล็อกเราตัด session ทิ้งทันทีอยู่แล้ว
+let loginLockCache: { on: boolean; note: string; at: number } | null = null;
+function invalidateLoginLockCache(): void { loginLockCache = null; }
+
+function stripCjPricesForContractor(rows: any[]): any[] {
+  return (rows || []).map((r: any) => {
+    const copy: any = {};
+    Object.keys(r).forEach((k) => { if (CJ_ONLY_FIELDS.indexOf(k) === -1) copy[k] = r[k]; });
+    return copy;
+  });
+}
+
+// ==================== งานที่ไม่ต้องส่งให้ผู้รับเหมาเลย (v1.0.74) ====================
+// 'เคลมประกัน 3 เดือน' กับ 'ใบเสนอราคา' ถูกกรองออกจากทุกอย่างของฝั่งผู้รับเหมา
+// (ตาราง ค้นหา ยอดรวม เอกสาร) เขาจึงไม่มีวันเห็นแถวพวกนี้ และกดยืนยันให้ไม่ได้
+//
+// ค่าสถานะที่ 5 ของ contractor_review_status — ไม่ต้องรอใครตรวจ
+// ตั้งค่านี้ตอนส่งบิล แทนที่จะตั้ง 'pending' เหมือนแถวอื่น เพราะ 'pending' แปลว่า
+// "รอผู้รับเหมา" ซึ่งเป็นการรอคนที่ไม่เคยเห็นบิลใบนั้น = คิวที่ไม่มีวันลด
+const REVIEW_NOT_REQUIRED = 'not_required';
+
+function billingRowNeedsContractorReview(row: any): boolean {
+  return BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR.indexOf(normalizeBillingType(row && row.billing_type)) === -1;
+}
+
+// ---- ฝั่งบิลของกลุ่ม (เลขงาน + รอบบิล) นี้ ครบหรือยัง ----
+// แยกมาไว้ที่เดียว เพราะกติกานี้ถูกใช้ 2 ทาง (เช็คทีละงานตอนผู้รับเหมากดยืนยัน / กวาดยกชุดตอนส่งบิล)
+// ถ้าเขียนซ้ำสองที่ วันหนึ่งจะแก้ไม่ครบ แล้วงานจะค้างเงียบ ๆ โดยไม่มี error ให้เห็น
+//
+// ⚠ v1.0.74 — เดิมมีบรรทัด "ไม่มีแถวที่ต้องให้ผู้รับเหมาตรวจ -> ไม่ตัดบิล"
+// ทำให้งานที่เป็นเคลมประกัน/ใบเสนอราคาล้วน ๆ ไม่มีวันเสร็จสิ้น เพราะรอคำยืนยัน
+// จากคนที่ไม่เคยเห็นบิลใบนั้น = กองค้างอยู่ฝั่งเราตลอดกาล (ขึ้นสถานะ "ส่งงานแล้ว" ค้างไว้)
+// ตอนนี้ "ไม่มีแถวที่ต้องให้เขาตรวจ" = ฝั่งบิลผ่านทันที เหลือรอแค่ฝั่งรูปอย่างเดียว
+function billingGroupBillSideReady(rowsInGroup: any[]): { ready: boolean; openIds: string[] } {
+  // แถวเก่าก่อน v1.0.69 (status เป็น null) ไม่นับ เพราะเดินตามเส้นทางเดิม
+  // คือตัดบิลที่ขั้นอนุมัติรูปของ TUCK CR ไม่ใช่ที่นี่
+  const inNewFlow = (rowsInGroup || []).filter((r: any) =>
+    r.sent_to_contractor === true &&
+    r.contractor_review_status !== null && r.contractor_review_status !== undefined);
+  if (inNewFlow.length === 0) return { ready: false, openIds: [] };
+  const mustReview = inNewFlow.filter(billingRowNeedsContractorReview);
+  if (!mustReview.every((r: any) => r.contractor_review_status === 'approved')) return { ready: false, openIds: [] };
+  return { ready: true, openIds: inNewFlow.filter((r: any) => !r.completed_at).map((r: any) => r.id) };
+}
+
+// ==================== รายการอะไหล่แบบมีโครงสร้าง (v1.0.68) ====================
+// เดิมหน้าปิดงานเก็บอะไหล่เป็นข้อความก้อนเดียวในคอลัมน์ parts เช่น
+//     1. P829-ตะแกรง FCU--ขนาด 10 นิ้ว = 10
+// ข้อความล้วนเก็บ "ประเภทเก็บเงินของอะไหล่แต่ละชิ้น" ไม่ได้ จึงเพิ่มคอลัมน์ parts_json
+// ส่วนนี้คือชุดฟังก์ชันที่แปลงไปมาระหว่างสองรูปแบบ และต้องรองรับแถวเก่าที่ยังไม่มี parts_json
+
+// ==================== กติกาเวลา (alarm) v1.0.71 ====================
+// แต่ละช่วงมี 2 เส้น: เส้นเตือน (เหลือง) กับเส้นเกินกำหนด (แดง)
+// เกินกำหนดแล้วไม่หายไปไหน ค้างเป็นประวัติของงานนั้นตลอด เพราะคำนวณจากเวลาจริงที่บันทึกไว้
+//
+// ⚠ ตัวเลขพวกนี้คือข้อตกลงกับทีม ไม่ใช่ค่าที่เดาเอง แก้ที่นี่ที่เดียวแล้วมีผลทั้งระบบ
+const SLA_RULES: Record<string, { label: string; warnH: number; limitH: number; repeatEveryMin?: number }> = {
+  close:       { label: 'เปิดงาน → ปิดงาน',              warnH: 6,   limitH: 12 },
+  photoSubmit: { label: 'ปิดงาน → ผู้รับเหมาส่งรูป',      warnH: 12,  limitH: 24 },
+  photoReview: { label: 'ส่งรูป → แอดมินตรวจ',            warnH: 12,  limitH: 24 },
+  // ตีกลับแล้วต้องรีบส่งกลับ เพราะงานค้างอยู่กลางทางและทุกคนรออยู่
+  resend:      { label: 'ตีกลับ → ผู้รับเหมาส่งใหม่',     warnH: 0.5, limitH: 1, repeatEveryMin: 30 },
+};
+
+// ชั่วโมงที่ "พักงาน" ทับกับช่วงเวลาที่กำลังนับอยู่
+// ต้องคิดเฉพาะส่วนที่ทับกันจริง ไม่ใช่เอาชั่วโมงพักทั้งหมดของเลขงานมาลบ
+// (พักงานที่เกิดหลังปิดงานไปแล้ว ไม่ควรไปลดเวลาของช่วง "เปิดงาน → ปิดงาน")
+function pausedHoursBetween(periods: any[], startMs: number, endMs: number): number {
+  if (!isFinite(startMs) || !isFinite(endMs) || endMs <= startMs) return 0;
+  let hours = 0;
+  (periods || []).forEach((p: any) => {
+    const s = p.paused_at ? new Date(p.paused_at).getTime() : NaN;
+    // ยังไม่กลับมาทำ = พักถึงตอนนี้
+    const e = p.resumed_at ? new Date(p.resumed_at).getTime() : Date.now();
+    if (!isFinite(s) || !isFinite(e)) return;
+    const from = Math.max(s, startMs);
+    const to = Math.min(e, endMs);
+    if (to > from) hours += (to - from) / 3600000;
+  });
+  return hours;
+}
+
+// ประเมิน 1 ช่วงเวลา — endMs เป็น null คือช่วงนี้ยังเดินอยู่ (นับถึงตอนนี้)
+function evalSlaStage(key: string, startIso: any, endIso: any, periods: any[]): any | null {
+  const rule = SLA_RULES[key];
+  if (!rule || !startIso) return null;
+  const startMs = new Date(startIso).getTime();
+  if (!isFinite(startMs)) return null;
+  const endMs = endIso ? new Date(endIso).getTime() : NaN;
+  const finished = isFinite(endMs);
+  const stopMs = finished ? endMs : Date.now();
+  if (stopMs < startMs) return null;   // ข้อมูลเวลาเพี้ยน อย่าไปเดาแทน
+  const gross = (stopMs - startMs) / 3600000;
+  const used = Math.max(0, gross - pausedHoursBetween(periods, startMs, stopMs));
+  const state = used >= rule.limitH ? 'overdue' : (used >= rule.warnH ? 'warning' : 'ok');
+  return {
+    key, label: rule.label, finished,
+    // เวลาเริ่มของช่วงนี้ — ตัวแจ้งเตือน Telegram ใช้จับว่า "ช่วงเดิม" หรือ "ช่วงที่เพิ่งเริ่มใหม่"
+    // เช่น รูปถูกตีกลับซ้ำรอบสอง เวลาเริ่มจะเปลี่ยน = รีเซ็ตการนับเตือนซ้ำ ไม่เอาของรอบเก่ามาต่อ
+    startedAt: new Date(startMs).toISOString(),
+    warnHours: rule.warnH, limitHours: rule.limitH,
+    usedHours: Math.round(used * 100) / 100,
+    pausedHours: Math.round((gross - used) * 100) / 100,
+    overdueHours: used > rule.limitH ? Math.round((used - rule.limitH) * 100) / 100 : 0,
+    state,
+    // ช่วงที่ต้องเตือนซ้ำ (ตีกลับ) — บอกว่าถึงรอบเตือนที่เท่าไหร่แล้ว
+    // ใช้แสดงแทนการเด้ง popup ซ้ำ ๆ ซึ่งจะกวนจนคนปิดทิ้งแล้วไม่เห็นของจริง
+    reminders: rule.repeatEveryMin ? Math.floor((used * 60) / rule.repeatEveryMin) : 0,
+  };
+}
+
+// ==================== แจ้งเตือน SLA ผ่าน Telegram (v1.0.75) ====================
+// ลำดับความรุนแรงของระดับเวลา ใช้เทียบว่า "แย่ลงกว่าครั้งก่อนไหม" ก่อนจะยิงแจ้งซ้ำ
+const SLA_LEVEL_RANK: Record<string, number> = { ok: 0, warning: 1, overdue: 2 };
+
+// ชั่วโมง (ทศนิยม) -> ข้อความสั้น ๆ เช่น "5 ชม. 30 นาที" (กติกาเดียวกับหน้าแอป แต่เขียนฝั่งเซิร์ฟเวอร์)
+function slaFmtHours(h: number): string {
+  if (h === null || h === undefined || !isFinite(h) || h < 0) return '-';
+  const totalMin = Math.round(h * 60);
+  const d = Math.floor(totalMin / 1440);
+  const hh = Math.floor((totalMin % 1440) / 60);
+  const mm = totalMin % 60;
+  const parts: string[] = [];
+  if (d > 0) parts.push(d + ' วัน');
+  if (hh > 0) parts.push(hh + ' ชม.');
+  if (mm > 0) parts.push(mm + ' นาที');
+  return parts.length ? parts.join(' ') : '0 นาที';
+}
+
+// 1 บรรทัดต่อ 1 งานที่ต้องเตือน — อ่านแล้วรู้ทันทีว่างานไหน ค้างขั้นไหน เกินไปเท่าไหร่
+function telegramSlaLine(row: any, st: any): string {
+  const emoji = st.state === 'overdue' ? '🔴' : '🟡';
+  const who = row.contractor ? (' · ' + row.contractor) : '';
+  const asset = row.asset_id ? (' · ทรัพย์สิน ' + row.asset_id) : '';
+  let detail: string;
+  if (st.key === 'resend') {
+    // ช่วงตีกลับ เตือนซ้ำเรื่อย ๆ จึงบอกว่าเป็นรอบเตือนที่เท่าไหร่แล้ว
+    detail = 'ตีกลับ → ผู้รับเหมาส่งใหม่ · เตือนซ้ำครั้งที่ ' + st.reminders + ' (ค้างมา ' + slaFmtHours(st.usedHours) + ')';
+  } else if (st.state === 'overdue') {
+    detail = st.label + ' · เกินกำหนดมาแล้ว ' + slaFmtHours(st.overdueHours) + ' (ใช้ไป ' + slaFmtHours(st.usedHours) + ' / ครบที่ ' + st.limitHours + ' ชม.)';
+  } else {
+    detail = st.label + ' · ใกล้ครบกำหนด (ใช้ไป ' + slaFmtHours(st.usedHours) + ' / เตือนที่ ' + st.warnHours + ' ชม.)';
+  }
+  return emoji + ' ' + (row.main_id || '(ไม่มีเลขงาน)') + who + asset + '\n   ' + detail;
+}
+
+// ยิงข้อความเข้า Telegram — คืน { ok, error } ไม่โยน error ออกไป
+// (ตัวเรียกต้องเดินต่อได้แม้ Telegram ล่ม การแจ้งเตือนพังไม่ควรทำให้ทั้งงานพัง)
+async function sendTelegramMessage(botToken: string, chatId: string, text: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // ไม่ใช้ parse_mode = ส่งเป็นข้อความล้วน ไม่ต้องกังวลเรื่อง escape อักขระพิเศษ
+      body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      return { ok: false, error: 'HTTP ' + res.status + ' ' + body.slice(0, 200) };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+// แกะรหัสอะไหล่กับจำนวนออกจากข้อความ 1 บรรทัด
+// ใช้ตอนที่หน้าแอปส่งมาแต่ข้อความ (เช่น ผู้ใช้พิมพ์เอง ไม่ได้เลือกจากลิสต์)
+function parsePartLineText(raw: any): { partCode: string; qty: number } {
+  const text = (raw === null || raw === undefined) ? '' : String(raw).trim();
+  if (!text) return { partCode: '', qty: 0 };
+  // จำนวนอยู่หลังเครื่องหมาย = ตัวสุดท้ายเสมอ
+  // ใช้ตัวสุดท้ายเพราะชื่ออะไหล่บางตัวมี = อยู่ข้างในด้วย เช่น "วาล์ว 1/2=3/8 = 2"
+  //
+  // อ่านเฉพาะ "ตัวเลขชุดแรก" ที่อยู่ถัดจาก = ไม่ใช่กวาดตัวเลขทั้งท่อนมาต่อกัน
+  // ถ้ากวาดทั้งท่อน "= 1/2 นิ้ว" จะกลายเป็นจำนวน 12 (เพราะลบ / ทิ้งแล้วเลขติดกัน)
+  // = จำนวนผิดแบบเงียบ ๆ แล้วไหลไปเป็นราคารวมในบิลทันที
+  // ส่วน "= 10 ชิ้น" ยังได้ 10 เหมือนเดิม เพราะหยุดอ่านตรงตัวอักษรตัวแรกที่ไม่ใช่ตัวเลข
+  let qty = 0;
+  const eq = text.lastIndexOf('=');
+  if (eq !== -1) {
+    const qm = text.slice(eq + 1).match(/^\s*(\d+(?:\.\d+)?)/);
+    if (qm) {
+      const q = parseFloat(qm[1]);
+      if (isFinite(q) && q > 0) qty = q;
+    }
+  }
+  // รหัสอะไหล่คือกลุ่มตัวอักษรตามด้วยตัวเลขที่อยู่หน้าสุด เช่น P829 หรือ NP001 (อะไหล่นอกระบบ)
+  const head = (eq === -1) ? text : text.slice(0, eq);
+  const m = head.match(/^\s*([A-Za-z]{1,4}\s*\d[A-Za-z0-9]*)/);
+  return { partCode: m ? m[1].replace(/\s+/g, '').toUpperCase() : '', qty };
+}
+
+// จัดรูปรายการอะไหล่ให้อยู่ในมาตรฐานเดียวกันก่อนบันทึก
+// allowBillingType = false จะบังคับทุกชิ้นเป็น 'normal' ใช้ตอนคนที่ปิดงานไม่ใช่แอดมิน
+function normalizePartsJson(raw: any, allowBillingType: boolean): any[] {
+  const list = Array.isArray(raw) ? raw : [];
+  const out: any[] = [];
+  list.forEach((it: any) => {
+    const text = (it && typeof it === 'object')
+      ? ((it.text === null || it.text === undefined) ? '' : String(it.text).trim())
+      : String(it === null || it === undefined ? '' : it).trim();
+    if (!text) return;
+    const parsed = parsePartLineText(text);
+    // จำนวนที่หน้าแอปกรอกมาในช่องของมันเองมาก่อนเสมอ ค่อยถอยไปใช้ค่าที่แกะจากข้อความ
+    // ต้องมากกว่า 0 เท่านั้น เพราะจำนวน 0 หรือติดลบจะกลายเป็นราคารวม 0 บาทในบิล
+    const qtyRaw = (it && typeof it === 'object' && it.qty !== undefined && it.qty !== null && it.qty !== '')
+      ? parseFloat(it.qty) : NaN;
+    out.push({
+      no: out.length + 1,
+      text,
+      partCode: (it && typeof it === 'object' && it.partCode)
+        ? String(it.partCode).trim().toUpperCase() : parsed.partCode,
+      qty: (isFinite(qtyRaw) && qtyRaw > 0) ? qtyRaw : parsed.qty,
+      billingType: allowBillingType ? normalizeBillingType(it && it.billingType) : 'normal',
+    });
+  });
+  return out;
+}
+
+// อ่านรายการอะไหล่ออกจากแถว close_issues แถวไหนก็ได้ รวมถึงแถวเก่าที่ปิดงานก่อน v1.0.68
+// แถวเก่าไม่มี parts_json จึงถอยไปแกะจากข้อความในคอลัมน์ parts แทน
+// (ได้ประเภทเก็บเงินเป็น normal ทั้งหมด ซึ่งตรงกับพฤติกรรมเดิมของระบบก่อนหน้านี้)
+function partsJsonFromCloseRow(row: any): any[] {
+  if (row && Array.isArray(row.parts_json) && row.parts_json.length > 0) {
+    return normalizePartsJson(row.parts_json, true);
+  }
+  const text = (row && row.parts) ? String(row.parts) : '';
+  const lines = text.split('\n')
+    .map((l: string) => l.replace(/^\s*\d+[.)]\s*/, '').trim())
+    .filter((l: string) => l !== '' && l !== '-');
+  return normalizePartsJson(lines.map((t: string) => ({ text: t })), true);
+}
+
+// แปลงกลับเป็นข้อความสำหรับคอลัมน์ parts (ยังใช้ส่งขึ้น Google Sheet และแสดงในรายงาน)
+// ถ้าข้อความไม่มีจำนวนติดมาเลย ให้เติม " = จำนวน" ต่อท้ายให้ด้วย
+// เพราะข้อความก้อนนี้คือสิ่งที่ไปโผล่บน Google Sheet / ใบจ๊อบ / ฟอร์มรูปของผู้รับเหมา
+// ถ้าปล่อยว่าง คนอ่านเอกสารจะไม่เห็นจำนวน ทั้งที่ในบิลมีจำนวนอยู่ = เอกสารสองใบไม่ตรงกัน
+// เติมเฉพาะกรณีที่ "ไม่มีเลข" เท่านั้น ไม่ไปเขียนทับเลขที่คนพิมพ์มาเอง (กันข้อความท้ายบรรทัดหาย)
+function partsTextFromJson(list: any[]): string {
+  return (list || []).map((p: any, i: number) => {
+    let text = String(p.text || '');
+    const qty = parseFloat(p.qty);
+    if (isFinite(qty) && qty > 0 && parsePartLineText(text).qty === 0) text = text + ' = ' + qty;
+    return (i + 1) + '. ' + text;
+  }).join('\n');
+}
+
+// เลขทรัพย์สินชิ้นนี้มีอะไหล่ที่ต้องเก็บเงินฝั่งผู้รับเหมาอยู่บ้างไหม
+// ถ้าไม่มีเลย ผู้รับเหมาไม่ต้องส่งฟอร์มแนบรูปกลับ (เหมือนกฎเดิมของระบบ)
+// ไม่มีข้อมูลอะไหล่เลย = ถือว่าต้องส่ง เพราะเดาไม่ได้ ปล่อยให้คนตัดสินดีกว่าตัดทิ้งเงียบ ๆ
+function closeRowNeedsContractorPhoto(row: any): boolean {
+  const parts = partsJsonFromCloseRow(row);
+  if (parts.length === 0) return true;
+  return parts.some((p: any) =>
+    BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR.indexOf(normalizeBillingType(p.billingType)) === -1);
+}
+
+// กุญแจจับคู่ "รายการปิดงาน" กับ "แถวในตารางวางบิล" — ต้องตัดช่องว่างให้เหมือนกันทั้งสองฝั่ง
+// ไม่งั้นเลขทรัพย์สินที่มีช่องว่างติดมาจะจับคู่ไม่ติด แล้วกฎเรื่องรูปจะเงียบไปเฉย ๆ
+function jobAssetKey(jobId: any, assetId: any): string {
+  const s1 = (jobId === null || jobId === undefined) ? '' : String(jobId).trim();
+  const s2 = (assetId === null || assetId === undefined) ? '' : String(assetId).trim();
+  return s1 + '||' + s2;
+}
+
 // ==================== เรียงลำดับ + ใส่เลขลำดับใหม่ก่อนออกเอกสาร ====================
 // ต้องใช้กติกาเดียวกับฝั่งหน้าแอป (renumberBillingRows ใน index.html) เป๊ะ ๆ
 // ไม่งั้นเลขลำดับใน PDF จะไม่ตรงกับที่เห็นในตารางและใน CSV
@@ -137,6 +418,9 @@ function filterRowsForSide(rows: any[], side: 'cj' | 'contractor'): any[] {
 // ดึงข้อมูลงาน PM ที่พร้อมวางบิลมาแสดงในเมนู "PM" — ทางเดียว (PM -> CP9X อ่านอย่างเดียว ไม่เขียนอะไรกลับไปที่ฝั่ง PM เลย)
 // ใช้ shared secret (x-api-key) แทน JWT เพราะเป็นการเรียกข้ามโปรเจกต์ - ต้องตรงกับค่าที่ตั้งไว้ใน Edge Function
 // "pm-billing-export" ฝั่งโปรเจกต์ PM เป๊ะๆ (ถ้าจะเปลี่ยน secret ต้องแก้ทั้ง 2 ฝั่งพร้อมกัน)
+// ชื่อถังเก็บไฟล์รูป/ฟอร์มที่ผู้รับเหมาส่งกลับ — ประกาศที่เดียว ใช้ทุกที่
+// เดิมพิมพ์ชื่อนี้ซ้ำหลายจุด ถ้าแก้ไม่ครบจะได้อาการ 'อัปโหลดขึ้นถังหนึ่ง แต่ไปอ่านอีกถังหนึ่ง'
+const JOB_FORM_BUCKET = 'job-form-submissions';
 const PM_EXPORT_URL = 'https://ucxzsfiktqswabxfnojr.supabase.co/functions/v1/pm-billing-export';
 const PM_EXPORT_SECRET = 'bec97b11ee0f19b59a176c30708ec9c978fe185b455af34bdea8f24df3ef67eb';
 
@@ -185,6 +469,58 @@ function parseReqDateString(str: string | null): Date | null {
   if (!day || !month || !year) return null;
   const d = new Date(year, month - 1, day);
   return isNaN(d.getTime()) ? null : d;
+}
+
+// ==================== ด่านกันวันที่เข้าแก้ไขผิด (v1.0.92) ====================
+// ที่มา: ตรวจข้อมูลจริง 30 ก.ย. - 2 ต.ค. 2569 พบงาน "ดึงเข้ารอบบิลไม่ได้" 11 งาน จาก 6 ทีม
+// และยังเกิดเพิ่มเรื่อย ๆ ทั้งหมดมาจากช่อง "วันที่เข้าแก้ไข" ผิด
+//   - พิมพ์ปีเป็น 2029 แทน 2026 (10 งาน) -> ระบบมองเป็นงานอนาคต ตัดออกจากรอบบิลทุกครั้ง
+//   - วางข้อความผิดช่อง เช่น "เลขทรัพย์สิน:111111111111" (1 งาน) -> แปลงไม่ได้ ข้ามไปเงียบ ๆ
+// ทั้งสองแบบ "ไม่มี error ให้เห็นเลย" งานหายจากรอบบิลไปเฉย ๆ จนกว่าจะมีคนสังเกต
+// และค่านี้ถูกลอกไปเป็น "วันที่เข้างาน" บนใบวางบิลด้วย = ผิดที่เดียว ผิดสองที่
+//
+// กติกาพื้นฐานตรงกับ parseFixDateString (ตัวที่ใช้ตอนดึงเข้ารอบบิล) ทุกข้อ
+// ผ่านด่านนี้ = ดึงเข้ารอบบิลได้แน่นอน  ไม่ผ่าน = บอกเหตุผลตรง ๆ ตั้งแต่ตอนกดบันทึก
+// แล้วเข้มเพิ่มอีก 3 ข้อที่ parseFixDateString ไม่ได้เช็ค:
+//   1) ต้องเป็นวันที่ที่มีจริงในปฏิทิน (31/02 — parseFixDateString จะปัดเป็น 3 มี.ค. เงียบ ๆ)
+//   2) ห้ามเป็นปี พ.ศ. (parseFixDateString ไม่แปลง พ.ศ. ให้ จะกลายเป็นปีอนาคตไกล)
+//   3) ห้ามเป็นวันในอนาคต — เข้าแก้ไขในวันที่ยังมาไม่ถึงไม่ได้ (เผื่อ 1 วันกันเรื่องเขตเวลา)
+//
+// ⚠ หน้าแอปมีตัวตรวจเดียวกันชื่อ checkFixDateValue — แก้กติกาที่นี่ ต้องแก้ที่นั่นด้วยเสมอ
+//
+// ไม่ได้ตั้งขอบเขต "เก่าเกินไป" ไว้ เพราะแอดมินอาจลงงานย้อนหลังจริง
+// และวันที่เก่าไม่ทำให้งานหาย (ยังดึงได้ด้วยการติ๊ก "รวมงานตกค้าง")
+function validateFixDate(raw: any): { ok: boolean; message: string } {
+  const s = (raw === null || raw === undefined) ? '' : String(raw).trim();
+  if (!s || s === '-') return { ok: false, message: 'กรุณากรอกวันที่เข้าแก้ไข' };
+  const parts = s.split(/[-\/]/).map((p) => p.trim());
+  if (parts.length !== 3 || !parts.every((p) => /^\d+$/.test(p))) {
+    return { ok: false, message: 'วันที่เข้าแก้ไข "' + s + '" ไม่ใช่รูปแบบวันที่ — ต้องเป็น วัน/เดือน/ปี เช่น 25/09/2026'
+      + ' (ถ้าวางข้อความมา ตรวจว่าข้อความไม่ได้หลุดไปลงผิดช่อง)' };
+  }
+  const day = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10);
+  let year = parseInt(parts[2], 10);
+  if (year < 100) year += 2000;
+  if (year > 2400) {
+    return { ok: false, message: 'วันที่เข้าแก้ไข "' + s + '" เป็นปี พ.ศ. — ระบบใช้ปี ค.ศ. กรุณาแก้เป็น '
+      + day + '/' + month + '/' + (year - 543) };
+  }
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return { ok: false, message: 'วันที่เข้าแก้ไข "' + s + '" ไม่ถูกต้อง — ต้องเป็น วัน/เดือน/ปี (วัน 1-31 · เดือน 1-12)' };
+  }
+  const d = new Date(Date.UTC(year, month - 1, day));
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) {
+    return { ok: false, message: 'วันที่เข้าแก้ไข "' + s + '" ไม่มีอยู่จริงในปฏิทิน' };
+  }
+  // วันนี้ตามเวลาไทย (UTC+7 ไม่มี daylight saving) — เซิร์ฟเวอร์รันเป็น UTC
+  const nowTh = new Date(Date.now() + 7 * 3600 * 1000);
+  const todayTh = Date.UTC(nowTh.getUTCFullYear(), nowTh.getUTCMonth(), nowTh.getUTCDate());
+  if (d.getTime() > todayTh + 24 * 3600 * 1000) {
+    return { ok: false, message: 'วันที่เข้าแก้ไข "' + s + '" อยู่ในอนาคต — น่าจะพิมพ์ปีผิด (ปีนี้คือ ' + nowTh.getUTCFullYear() + ')'
+      + ' ถ้าบันทึกไว้แบบนี้ งานจะไม่ถูกดึงเข้ารอบบิลจนกว่าจะถึงวันนั้น' };
+  }
+  return { ok: true, message: '' };
 }
 
 function parseFixDateString(str: string | null): Date | null {
@@ -859,7 +1195,9 @@ async function generatePmQuotationPdfBase64(rows: any[], roundNo: number | strin
     const bahtText = '(' + thaiBahtText(grandTotal) + ')';
     const bahtMaxWidth = summaryLabelX - MARGIN - 8;
     const bahtSize = font.widthOfTextAtSize(bahtText, 11) <= bahtMaxWidth ? 11 : 9;
-    page.drawText(bahtText, { x: MARGIN + 4, y: y + (bahtSize === 10 ? 0 : 1), size: bahtSize, font, color: BLACK });
+    // เดิมเขียน (bahtSize === 10 ? 0 : 1) แต่ bahtSize เป็น 11 หรือ 9 เท่านั้น เงื่อนไขจึงเป็นจริงไม่ได้เลย
+    // = ได้ค่า 1 ทุกครั้งอยู่แล้ว เขียนเป็น y + 1 ตรง ๆ ผลลัพธ์บน PDF เหมือนเดิมเป๊ะ (v1.0.94)
+    page.drawText(bahtText, { x: MARGIN + 4, y: y + 1, size: bahtSize, font, color: BLACK });
     page.drawText('Grand Total', { x: summaryLabelX, y, size: 11, font: boldFont, color: BLACK });
     pdfDrawCellText(page, boldFont, moneyOrDash(grandTotal), colX_amount, y, colW_amount, 11, BLACK, 'right', 6);
     y -= 20;
@@ -1106,6 +1444,9 @@ const ALL_BILLING_XLSX_COLUMNS: { key: string; header: string; width: number; nu
   { key: '_sent', header: 'สถานะส่งบิล', width: 14 },
   { key: '_completed', header: 'สถานะตัดบิล', width: 14 },
   { key: '_billingTypeLabel', header: 'ประเภทเก็บเงิน', width: 20 },
+  // v1.0.69 — สถานะตรวจรับของผู้รับเหมา ใส่ไว้ในไฟล์ Excel รวมด้วย
+  // แอดมินจะได้กรองใน Excel ได้เลยว่าเหลือแถวไหนที่ติดอยู่กี่แถว โดยไม่ต้องเปิดแอปไล่ดู
+  { key: '_contractorReview', header: 'ผรม. ตรวจบิล', width: 18 },
 ];
 
 async function generateAllBillingXlsxBase64(rows: any[]): Promise<any> {
@@ -1143,6 +1484,15 @@ async function generateAllBillingXlsxBase64(rows: any[]): Promise<any> {
         if (c.key === '_billingTypeLabel') { values[c.key] = billingTypeLabel(bType); return; }
         if (c.key === '_sent') { values[c.key] = r.sent_to_contractor ? 'ส่งบิลแล้ว' : 'ยังไม่ส่ง'; return; }
         if (c.key === '_completed') { values[c.key] = r.completed_at ? 'ตัดบิลแล้ว' : 'ยังไม่ตัดบิล'; return; }
+        if (c.key === '_contractorReview') {
+          const rv = r.contractor_review_status;
+          values[c.key] = rv === 'approved' ? 'ผรม. ยืนยันแล้ว'
+            : rv === 'rejected' ? ('ผรม. ตีกลับ' + (r.revision_no > 1 ? (' (รอบ ' + r.revision_no + ')') : ''))
+            : rv === 'pending' ? ('รอ ผรม. ตรวจ' + (r.revision_no > 1 ? (' (รอบ ' + r.revision_no + ')') : ''))
+            : rv === REVIEW_NOT_REQUIRED ? 'ไม่ต้องส่ง ผรม.'
+            : (r.sent_to_contractor ? 'ใช้ขั้นตอนเดิม' : '-');
+          return;
+        }
         const raw = r[c.key];
         if (c.numeric) {
           const n = parseFloat(raw);
@@ -1216,6 +1566,189 @@ async function generateAllBillingXlsxBase64(rows: any[]): Promise<any> {
     totalRow.eachCell((cell: any) => { cell.font = { name: 'Tahoma', size: 10, bold: true }; });
     totalRow.getCell('cj').numFmt = '#,##0.00';
     totalRow.getCell('ct').numFmt = '#,##0.00';
+
+    const buffer: ArrayBuffer = await workbook.xlsx.writeBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return { success: true, base64: btoa(binary) };
+  } catch (error) {
+    return { success: false, message: 'สร้างไฟล์ Excel ล้มเหลว: ' + String(error) };
+  }
+}
+
+// แปลงเวลาแบบ ISO (UTC) ที่เก็บใน DB ให้เป็นวันเวลาไทยอ่านออก เช่น "23/09/2026 14:05"
+// ใส่ลง Excel เป็นข้อความไปเลย ไม่ยัดเป็นชนิดวันที่ของ Excel
+// เพราะ Excel แต่ละเครื่องตั้งรูปแบบวันที่ไม่เหมือนกัน วันที่ 03/09 อาจกลายเป็น 9 มี.ค. ในเครื่องที่ตั้งเป็น US
+function formatBangkokDisplay(iso: any): string {
+  if (!iso) return '';
+  const t = Date.parse(iso.toString());
+  if (!isFinite(t)) return iso.toString();
+  const d = new Date(t + 7 * 60 * 60 * 1000);   // UTC+7
+  const p = (n: number) => String(n).padStart(2, '0');
+  return p(d.getUTCDate()) + '/' + p(d.getUTCMonth() + 1) + '/' + d.getUTCFullYear()
+    + ' ' + p(d.getUTCHours()) + ':' + p(d.getUTCMinutes());
+}
+
+// ==================== รายงาน "ตีกลับไปแล้ว ผู้รับเหมายังไม่ส่งกลับ" ====================
+//
+// ใช้ไล่ตามงานที่ค้างอยู่ฝั่งผู้รับเหมา — ตีกลับไปแล้วแต่เงียบหาย ไม่ส่งฟอร์มใหม่มาสักที
+//
+// ⚠ จุดสำคัญของตรรกะนี้: ผู้รับเหมาส่งฟอร์มใหม่ = "เพิ่มแถวใหม่" ไม่ใช่แก้แถวเดิม
+//    เลขงานหนึ่งจึงมีได้หลายแถว ทั้งที่ตีกลับไปแล้วและที่ส่งมาใหม่ภายหลัง
+//    ถ้ากรองแค่ status = 'rejected' ตรง ๆ จะได้งานที่เขาส่งกลับมาแล้วติดมาด้วยเพียบ
+//    ต้องดู "แถวล่าสุดของแต่ละเลขงาน" ว่ายังเป็น rejected อยู่ไหม จึงจะเป็นงานที่ค้างจริง
+function pickLatestRejectedSubmissions(allRows: any[]): any[] {
+  const latestByJob: Record<string, any> = {};
+  const countByJob: Record<string, number> = {};
+
+  (allRows || []).forEach((r: any) => {
+    const job = (r.customer_case || '').toString().trim();
+    if (!job) return;
+    countByJob[job] = (countByJob[job] || 0) + 1;
+    const cur = latestByJob[job];
+    // เทียบด้วย submitted_at เป็นหลัก ถ้าไม่มีค่อยใช้ id (แถวใหม่กว่ามี id มากกว่า)
+    if (!cur) { latestByJob[job] = r; return; }
+    const a = r.submitted_at || '';
+    const b = cur.submitted_at || '';
+    if (a > b || (a === b && Number(r.id) > Number(cur.id))) latestByJob[job] = r;
+  });
+
+  const nowMs = Date.now();
+  return Object.keys(latestByJob)
+    .map((job) => ({ job, row: latestByJob[job] }))
+    .filter(({ row }) => row.status === 'rejected')
+    .map(({ job, row }) => {
+      // วันที่ตีกลับ: ขั้นสุดท้ายตีกลับใช้ checker_at ส่วนขั้นที่ 1 ใช้ reviewed_at
+      const rejectedAt = row.checker_decision === 'rejected' ? (row.checker_at || row.reviewed_at) : (row.reviewed_at || row.checker_at);
+      const byWho = row.checker_decision === 'rejected' ? (row.checker_by || row.reviewed_by) : (row.reviewed_by || row.checker_by);
+      const step = row.checker_decision === 'rejected' ? 'ขั้นสุดท้าย (TUCK CR)' : 'ขั้นที่ 1 (ผู้ตรวจสอบ)';
+      let daysWaiting: number | null = null;
+      if (rejectedAt) {
+        const t = Date.parse(rejectedAt);
+        if (isFinite(t)) daysWaiting = Math.max(0, Math.floor((nowMs - t) / 86400000));
+      }
+      return {
+        customer_case: job,
+        contractor: row.contractor || '',
+        branch_name: row.branch_name || '',
+        rejected_at: rejectedAt || '',
+        rejected_by: byWho || '',
+        rejected_step: step,
+        remark: row.checker_remark || row.admin_remark || '',
+        days_waiting: daysWaiting,
+        submit_count: countByJob[job] || 1,
+        last_submitted_at: row.submitted_at || '',
+        file_name: row.file_name || '',
+        file_url: row.file_url || '',
+      };
+    })
+    // ค้างนานสุดอยู่บนสุด จะได้ตามงานที่ดองไว้นานที่สุดก่อน
+    .sort((a, b) => (b.days_waiting ?? -1) - (a.days_waiting ?? -1));
+}
+
+const REJECTED_PENDING_COLUMNS = [
+  { header: 'เลขที่งาน', key: 'customer_case', width: 20 },
+  { header: 'ผู้รับเหมา', key: 'contractor', width: 22 },
+  { header: 'สาขา', key: 'branch_name', width: 26 },
+  { header: 'ค้างมากี่วัน', key: 'days_waiting', width: 12, numeric: true },
+  { header: 'วันที่ตีกลับ', key: 'rejected_at', width: 20 },
+  { header: 'ตีกลับขั้นไหน', key: 'rejected_step', width: 22 },
+  { header: 'ผู้ตีกลับ', key: 'rejected_by', width: 20 },
+  { header: 'เหตุผลที่ตีกลับ', key: 'remark', width: 50 },
+  { header: 'ส่งมาแล้วกี่ครั้ง', key: 'submit_count', width: 14, numeric: true },
+  { header: 'ส่งครั้งล่าสุดเมื่อ', key: 'last_submitted_at', width: 20 },
+  { header: 'ไฟล์ล่าสุด', key: 'file_name', width: 32 },
+  { header: 'ลิงก์ไฟล์', key: 'file_url', width: 45 },
+];
+
+async function generateRejectedPendingXlsxBase64(items: any[]): Promise<any> {
+  try {
+    const ExcelJS = await loadExcelJS();
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('ตีกลับ-ยังไม่ส่งกลับ');
+
+    sheet.columns = REJECTED_PENDING_COLUMNS.map((c) => ({ header: c.header, key: c.key, width: c.width }));
+
+    const headerRow = sheet.getRow(1);
+    headerRow.height = 30;
+    headerRow.eachCell((cell: any) => {
+      cell.font = { name: 'Tahoma', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF15803D' } };
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'FF999999' } }, bottom: { style: 'thin', color: { argb: 'FF999999' } },
+        left: { style: 'thin', color: { argb: 'FF999999' } }, right: { style: 'thin', color: { argb: 'FF999999' } },
+      };
+    });
+
+    items.forEach((it: any) => {
+      const values: any = {};
+      REJECTED_PENDING_COLUMNS.forEach((c) => {
+        const raw = (it as any)[c.key];
+        if (c.numeric) {
+          const n = parseFloat(raw);
+          values[c.key] = isFinite(n) ? n : null;
+        } else if (c.key === 'rejected_at' || c.key === 'last_submitted_at') {
+          values[c.key] = formatBangkokDisplay(raw);   // เวลาไทย อ่านออกทันที ไม่ใช่ ISO ดิบ
+        } else {
+          values[c.key] = (raw === null || raw === undefined) ? '' : String(raw);
+        }
+      });
+      const row = sheet.addRow(values);
+
+      // ค้างนาน = แดง, เริ่มนาน = เหลือง ให้เห็นด้วยตาว่าต้องตามงานไหนก่อน
+      const d = typeof it.days_waiting === 'number' ? it.days_waiting : -1;
+      const fill = d >= 14 ? 'FFFEE2E2' : (d >= 7 ? 'FFFEF3C7' : null);
+
+      row.eachCell({ includeEmpty: true }, (cell: any) => {
+        cell.font = { name: 'Tahoma', size: 10 };
+        cell.alignment = { vertical: 'middle', wrapText: false };
+        cell.border = {
+          top: { style: 'hair', color: { argb: 'FFCCCCCC' } }, bottom: { style: 'hair', color: { argb: 'FFCCCCCC' } },
+          left: { style: 'hair', color: { argb: 'FFCCCCCC' } }, right: { style: 'hair', color: { argb: 'FFCCCCCC' } },
+        };
+        if (fill) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
+      });
+      // เหตุผลที่ตีกลับมักยาว ให้ตัดบรรทัดในช่องแทนการล้นออกไปทับช่องข้าง ๆ
+      row.getCell('remark').alignment = { vertical: 'top', wrapText: true };
+      // เลขงานต้องเป็นข้อความ ไม่งั้น Excel อาจตีความเป็นตัวเลข/วันที่
+      row.getCell('customer_case').numFmt = '@';
+    });
+
+    sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(items.length + 1, 2), column: REJECTED_PENDING_COLUMNS.length } };
+    sheet.views = [{ state: 'frozen', ySplit: 1 }];
+
+    // ---- แผ่นที่ 2: สรุปว่าค้างอยู่ที่ผู้รับเหมารายไหนบ้าง ----
+    const summary = workbook.addWorksheet('สรุปตามผู้รับเหมา');
+    summary.columns = [
+      { header: 'ผู้รับเหมา', key: 'contractor', width: 28 },
+      { header: 'จำนวนงานค้าง', key: 'jobs', width: 14 },
+      { header: 'ค้างนานสุด (วัน)', key: 'maxDays', width: 16 },
+    ];
+    summary.getRow(1).eachCell((cell: any) => {
+      cell.font = { name: 'Tahoma', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF15803D' } };
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    });
+    const byContractor: Record<string, any[]> = {};
+    items.forEach((it: any) => {
+      const key = it.contractor || '(ไม่ระบุผู้รับเหมา)';
+      (byContractor[key] = byContractor[key] || []).push(it);
+    });
+    Object.keys(byContractor)
+      .map((name) => ({
+        contractor: name,
+        jobs: byContractor[name].length,
+        maxDays: byContractor[name].reduce((a: number, x: any) => Math.max(a, typeof x.days_waiting === 'number' ? x.days_waiting : 0), 0),
+      }))
+      .sort((a, b) => b.jobs - a.jobs || b.maxDays - a.maxDays)
+      .forEach((r) => {
+        const row = summary.addRow(r);
+        row.eachCell((cell: any) => { cell.font = { name: 'Tahoma', size: 10 }; });
+      });
+    const totalRow = summary.addRow({ contractor: 'รวมทั้งหมด', jobs: items.length, maxDays: '' });
+    totalRow.eachCell((cell: any) => { cell.font = { name: 'Tahoma', size: 10, bold: true }; });
 
     const buffer: ArrayBuffer = await workbook.xlsx.writeBuffer();
     const bytes = new Uint8Array(buffer);
@@ -2012,13 +2545,31 @@ async function incrementalSyncToSheetTab(
     + (clearedCount > 0 ? ', ล้างแถวที่ถูกลบจากฐานข้อมูลแล้ว ' + clearedCount + ' แถว' : '');
 }
 
+// สรุปผล alarm เป็นข้อความบรรทัดเดียว สำหรับช่อง Alarm ใน Google Sheet
+// (ในแอปกางดูรายช่วงได้ แต่ในชีตต้องอยู่ในเซลล์เดียว จึงสรุปเฉพาะใจความ)
+function slaSheetText(r: any): string {
+  const stages: any[] = Array.isArray(r.sla_stages) ? r.sla_stages : [];
+  if (stages.length === 0) return '-';
+  const hh = (h: number) => (h < 1 ? Math.round(h * 60) + ' น.' : (Math.round(h * 10) / 10) + ' ชม.');
+  const late = stages.filter((x) => x.state === 'overdue');
+  if (late.length > 0) {
+    return 'เกินกำหนด: ' + late.map((x) => x.label + ' (เลย ' + hh(x.overdueHours) + ')').join(' · ');
+  }
+  const active = stages.find((x) => !x.finished);
+  if (active) {
+    return (active.state === 'warning' ? 'ใกล้ครบกำหนด: ' : 'ในกำหนด: ')
+      + active.label + ' ' + hh(active.usedHours) + '/' + hh(active.limitHours);
+  }
+  return 'ทันกำหนดทุกช่วง';
+}
+
 // แท็บพิเศษที่ไม่ได้มาจากตารางดิบตารางเดียว แต่เป็นรายงานที่รวมข้อมูลหลายตารางเข้าด้วยกัน (เหมือนหน้า "รายงานสถานะดำเนินการ" ในแอป)
 const STATUS_REPORT_SHEET = {
   sheetName: 'รายงานสถานะดำเนินการ',
   color: '#dbeafe',
   headers: ['เลขที่ใบแจ้งซ่อมบำรุง', 'สาขา', 'Service Type', 'งานบริการ', 'Service Issue', 'ประเภทสัญญา', 'ผู้รับเหมา', 'รายละเอียดปัญหาที่พบ',
     'วันที่ร้องขอ', 'วันที่เปิดงาน', 'เลขทรัพย์สิน', 'วันที่เข้าแก้ไข', 'วันที่ปิดงาน', 'ดำเนินการแก้ไขแล้ว',
-    'ระยะเวลาดำเนินการ (ชม.)', 'จำนวนครั้งที่พัก', 'รวมชั่วโมงที่พัก', 'ส่งมอบงานให้ผู้รับเหมาแล้ว', 'เสร็จสิ้น (ตัดบิลแล้ว)', 'สถานะ'],
+    'ระยะเวลาดำเนินการ (ชม.)', 'จำนวนครั้งที่พัก', 'รวมชั่วโมงที่พัก', 'ส่งมอบงานให้ผู้รับเหมาแล้ว', 'เสร็จสิ้น (ตัดบิลแล้ว)', 'Alarm (เวลา)', 'สถานะ'],
   // แท็บนี้คำนวณจากหลายตารางรวมกัน ไม่มี id ของตัวเอง - เดิมใช้ "เลขที่ใบแจ้งซ่อมบำรุง" เป็นคีย์เฉย ๆ (สมมติ 1 เลขงาน = 1 แถวเสมอ)
   // แต่ตอนนี้ 1 เลขงานอาจปิดงานได้หลายครั้ง (คนละเลขทรัพย์สิน) จึงออกได้หลายแถวต่อ 1 เลขงาน - ต้องรวมเลขทรัพย์สินเข้าไปในคีย์ด้วย กันคีย์ชนกัน
   keyOf: (r: any) => String(r.main_id) + '||' + String(r.asset_id || '-'),
@@ -2026,7 +2577,7 @@ const STATUS_REPORT_SHEET = {
     r.main_id, r.branch, r.service_type, r.service_work ?? '', r.service_issue ?? '', r.contract_type ?? '', r.contractor, r.details,
     r.req_date, r.opened_at, r.asset_id, r.fix_date, r.closed_at, r.action_taken,
     r.duration_hours, r.pause_count, r.pause_hours_total,
-    r.sent_to_contractor ? 'ใช่' : 'ยังไม่ส่ง', r.completed ? 'ใช่' : 'ยังไม่เสร็จ', r.status,
+    r.sent_to_contractor ? 'ใช่' : 'ยังไม่ส่ง', r.completed ? 'ใช่' : 'ยังไม่เสร็จ', slaSheetText(r), r.status,
   ],
 };
 
@@ -2055,12 +2606,44 @@ Deno.serve(async (req: Request) => {
     });
   }
 
+  // v1.0.94 — อ่านสถานะ "ปิดระบบชั่วคราว" จาก app_secrets
+  // fresh = true -> ข้ามที่พักค่า อ่านจากฐานข้อมูลสด ๆ
+  // ใช้ตอนแอดมินเปิดหน้าจัดการล็อก เพราะถ้าอ่านค่าเก่าจากที่พัก แอดมินจะเห็นสถานะที่ขัดกับสิ่งที่เพิ่งกด
+  // (กดล็อกสำเร็จ แล้วหน้าจอกลับบอกว่า "เปิดใช้งานปกติ" เพราะเครื่องที่รับคำขอรอบนี้ยังพักค่าเก่าไว้)
+  async function loadLoginLock(fresh = false): Promise<{ on: boolean; note: string }> {
+    const now = Date.now();
+    if (!fresh && loginLockCache && now - loginLockCache.at < 15000) return { on: loginLockCache.on, note: loginLockCache.note };
+    const { data, error } = await supabase.from('app_secrets').select('value').eq('key', 'login_lock').limit(1);
+    if (error) {
+      // อ่านค่าไม่ได้ = ถือว่า "ไม่ล็อก" ดีกว่า
+      // เพราะถ้าตีความเป็น "ล็อก" ฐานข้อมูลสะดุดแค่วินาทีเดียวจะเด้งคนทั้งบริษัทออกพร้อมกัน
+      // (มีค่าเก่าพักอยู่ก็ใช้ค่าเก่าไปก่อน ดีกว่าเดาใหม่)
+      return loginLockCache ? { on: loginLockCache.on, note: loginLockCache.note } : { on: false, note: '' };
+    }
+    const raw = (data && data.length ? String(data[0].value || '') : '').trim();
+    const lower = raw.toLowerCase();
+    const on = lower === 'on' || lower.startsWith('on|') || lower === 'admin_only' || lower.startsWith('admin_only|');
+    const bar = raw.indexOf('|');
+    const note = (on && bar !== -1) ? raw.slice(bar + 1).trim() : '';
+    loginLockCache = { on, note, at: now };
+    return { on, note };
+  }
+
   async function verifySession(username: string, token: string): Promise<any> {
     if (!username || !token) return { valid: false };
     const { data, error } = await supabase.from('contractors').select('*').eq('username', username).limit(1);
     if (error || !data || data.length === 0) return { valid: false };
     const user = data[0];
     if (!user.session_token || user.session_token !== token) return { valid: false };
+    // v1.0.94 — ล็อกระบบไว้ = คนที่ไม่ใช่แอดมินถือ session ต่อไม่ได้ ตัดทิ้งให้เลยตรงนี้
+    // เช็คเฉพาะตอนที่ไม่ใช่แอดมิน เพื่อให้แอดมินไม่ต้องจ่ายค่าอ่านค่าล็อกเพิ่มทุกคำขอ
+    if (user.role !== 'admin') {
+      const lock = await loadLoginLock();
+      if (lock.on) {
+        await supabase.from('contractors').update({ session_token: null }).eq('id', user.id);
+        return { valid: false, locked: true, message: lock.note || LOGIN_LOCK_DEFAULT_MSG };
+      }
+    }
     // ธง 2 ตัวนี้แยกจาก role เพราะทั้งผู้ตรวจสอบและผู้อนุมัติสุดท้ายยังต้องใช้ทุกเมนูได้เหมือนแอดมิน
     // ถ้าไปเปลี่ยน role เป็น 'checker' บัญชีนั้นจะหลุดสิทธิ์แอดมินทั้งหมดทันที
     //
@@ -2079,6 +2662,30 @@ Deno.serve(async (req: Request) => {
       isChecker: user.is_checker === true && !resolveIsFinalApprover(user),
       isFinalApprover: resolveIsFinalApprover(user),
     };
+  }
+
+  // ==================== ด่านตรวจล็อกอินของเมนูฝั่งแอดมิน (v1.0.88) ====================
+  // เดิมคำสั่งกลุ่ม เปิดงาน / ปิดงาน / พักงาน / รายงานสถานะ "ไม่ตรวจว่าล็อกอินหรือยัง" เลยสักตัว
+  // ด่านเดียวที่กั้นอยู่คือ publishable key ที่ฝังอยู่ในตัวแอป ซึ่งผู้รับเหมาทุกคนมีอยู่ในมือ
+  // = เอา key จากไฟล์แอปไปยิงตรง ก็อ่านงานของผู้รับเหมาทุกเจ้าได้ทั้ง 20,000 แถว
+  //   และสร้าง/แก้/พัก-ปลดพักงานได้ด้วย โดยไม่ต้องล็อกอินเลย
+  //
+  // เมนูกลุ่มนี้เป็นของแอดมิน 100% อยู่แล้ว (แท็บถูกซ่อนสำหรับผู้รับเหมาทั้งหมด)
+  // การใส่ด่านจึงไม่เปลี่ยนพฤติกรรมของใครเลย แค่เปลี่ยนจาก "ซ่อนแท็บ" เป็น "กั้นจริงที่เซิร์ฟเวอร์"
+  //
+  // ⚠ v1.0.94 — ฟังก์ชันนี้ต้องอยู่ "ข้างใน" Deno.serve เท่านั้น ห้ามย้ายออกไปไว้ระดับไฟล์
+  // เพราะมันเรียก verifySession ซึ่งประกาศอยู่ข้างในนี้ ถ้าย้ายออกไปข้างนอกจะมองไม่เห็นกัน
+  // แล้วคำสั่งแอดมินทั้ง 18 ตัวจะพังหมดด้วย ReferenceError: verifySession is not defined
+  // (ตัวตรวจ ตรวจขอบเขตฟังก์ชัน.js จับเรื่องนี้ไว้ให้แล้ว รันทุกครั้งก่อนปล่อยเวอร์ชัน)
+  async function adminGate(username: any, token: any): Promise<{ ok: boolean; message: string }> {
+    const session = await verifySession(username, token);
+    if (!session.valid) {
+      return { ok: false, message: 'กรุณาเข้าสู่ระบบใหม่ (ถ้ายังขึ้นข้อความนี้ แปลว่าแอปเป็นเวอร์ชันเก่า ต้องอัปเดตแอปก่อน)' };
+    }
+    if (session.role !== 'admin') {
+      return { ok: false, message: 'เฉพาะแอดมินเท่านั้นที่ใช้เมนูนี้ได้' };
+    }
+    return { ok: true, message: '' };
   }
 
   // คืน branch มาด้วย เพื่อให้ฟอร์มปิดงานเติมสาขาจากเลขงานให้อัตโนมัติ (กันปิดผิดสาขา)
@@ -2132,7 +2739,356 @@ Deno.serve(async (req: Request) => {
   // (ปัญหาเดิมคือปนกันจนแอดมินคุมไม่ได้ว่ารอบบิลนี้มีอะไรบ้าง)
   //
   // งานที่เคยออกบิลไปแล้วยังถูกกันซ้ำอัตโนมัติเหมือนเดิม (เช็คจาก billing_documents + claim_billing_jobs)
-  async function resolveBillingCandidatePairs(startDate: string | null, endDate: string | null, jobIds: string[] | null, includeBacklog?: boolean): Promise<{ candidatePairs: { jobId: string; assetId: string; isBacklog: boolean }[]; roundPeriod: string; error?: string }> {
+  // ==================== กฎ v1.0.68: ต้องยืนยันรูปก่อน ถึงจะวางบิลได้ ====================
+  //
+  // อ่าน "วันเวลาที่เริ่มใช้กฎ" จากตาราง app_secrets
+  //   คืน null = ยังไม่ได้ตั้ง หรือถูกตั้งเป็น 'off' แปลว่าไม่บังคับกฎนี้ ทำงานเหมือนก่อน v1.0.68
+  //
+  // ที่ต้องมีเส้นแบ่งเวลา เพราะถ้าบังคับกฎกับข้อมูลเก่าทั้งหมด งานที่ปิดไปแล้วทุกใบจะวางบิลไม่ได้
+  // ทันทีที่ deploy (ไม่เคยมีฟอร์มรูปให้ยืนยันตั้งแต่แรก) = งานค้างทั้งระบบ ดูเหมือนระบบพัง
+  // ค่าตั้งค่า Telegram อยู่ใน app_secrets — จึง "ไม่" ถูกคัดลอกไปโปรเจกต์ทดสอบ (ตั้งใจ)
+  // แปลว่าโปรเจกต์ทดสอบจะเงียบสนิท ไม่ยิงแจ้งเตือนจริงออกไปหาทีม เว้นแต่จะตั้งค่าเองในนั้น
+  //   telegram_bot_token    = โทเคนบอทจาก @BotFather
+  //   telegram_sla_chat_id  = id ของกลุ่ม/แชทที่จะให้บอทส่งเข้า
+  //   telegram_cron_secret  = รหัสลับให้ pg_cron เรียกได้โดยไม่ต้องล็อกอิน (ไม่ตั้ง = เรียกอัตโนมัติไม่ได้)
+  async function loadTelegramConfig(): Promise<{ botToken: string; chatId: string; cronSecret: string }> {
+    const { data } = await supabase.from('app_secrets').select('key,value')
+      .in('key', ['telegram_bot_token', 'telegram_sla_chat_id', 'telegram_cron_secret']);
+    const map: Record<string, string> = {};
+    (data || []).forEach((r: any) => { map[r.key] = (r.value === null || r.value === undefined) ? '' : String(r.value).trim(); });
+    return {
+      botToken: map['telegram_bot_token'] || '',
+      chatId: map['telegram_sla_chat_id'] || '',
+      cronSecret: map['telegram_cron_secret'] || '',
+    };
+  }
+
+  async function loadPhotoGateStartAt(): Promise<Date | null> {
+    const { data } = await supabase.from('app_secrets').select('value').eq('key', 'photo_form_gate_start_at').limit(1);
+    const raw = (data && data.length > 0) ? String(data[0].value || '').trim() : '';
+    if (!raw || raw.toLowerCase() === 'off') return null;
+    // ค่าที่ Postgres เก็บมาหน้าตาเป็น '2026-09-19 07:12:33.123456' (ไม่มีตัวบอกโซนเวลา)
+    // ต้องเติม T กับ Z ให้ครบก่อน ไม่งั้น new Date() ในบางเบราว์เซอร์จะอ่านไม่ออกแล้วได้ NaN
+    let iso = raw;
+    if (iso.indexOf('T') === -1) iso = iso.replace(' ', 'T');
+    if (!/([Zz]|[+-]\d{2}:?\d{2})$/.test(iso)) iso += 'Z';
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  // ---- คู่ (เลขงาน + เลขทรัพย์สิน) ไหนที่ "ยังไม่ผ่านการยืนยันรูป" ----
+  // closeRowMap คีย์เป็น 'เลขงาน||เลขทรัพย์สิน' ใช้ดูวันที่ปิดงานและประเภทอะไหล่ของคู่นั้น
+  //
+  // ⚠ v1.0.72 — ฟังก์ชันนี้ "ไม่คัดงานออก" อีกต่อไป แค่ติดป้ายบอกว่าคู่ไหนยังรอรูป
+  //
+  // ของเดิม (v1.0.68) กันไม่ให้ดึงเข้ารอบบิลเลยจนกว่าจะยืนยันรูป ซึ่งใช้งานจริงไม่ได้
+  // เพราะแอดมินต้อง "ดูรูปคู่กับตารางวางบิล" ตอนตรวจ แต่บิลยังไม่เกิดจนกว่าจะยืนยันรูปเสร็จ
+  // = ต้องยืนยันรูปทั้งที่ยังไม่เคยเห็นบิล ซึ่งกลับหัวกลับหางกับงานจริง
+  //
+  // ตอนนี้ย้ายด่านไปอยู่ที่ "ส่งบิลให้ผู้รับเหมา" (markBillingRowsAsSent) แทน
+  // ดึงเข้ารอบบิลและแก้ไขได้ทันทีที่ปิดงาน แต่ส่งออกไปไม่ได้จนกว่ารูปจะผ่าน
+  //
+  // มี 3 กรณีที่ถือว่าผ่านโดยไม่ต้องรอรูป
+  //   1. ปิดงานก่อนวันเริ่มใช้กฎ            = งานเก่า ไม่เคยมีฟอร์มให้ส่ง
+  //   2. อะไหล่ทุกชิ้นไม่เก็บเงินผู้รับเหมา = ระบบไม่เคยออกฟอร์มให้งานแบบนี้อยู่แล้ว
+  //   3. เลขงานนั้นมีฟอร์มที่แอดมินยืนยันรูปแล้ว
+  // ถ้าไม่ดักข้อ 2 ไว้ งานที่เป็นเคลมประกันล้วนจะส่งบิลไม่ได้ตลอดกาล เพราะรอฟอร์มที่ไม่มีวันมา
+  async function findPairsWaitingPhoto(
+    candidatePairs: { jobId: string; assetId: string; isBacklog: boolean }[],
+    closeRowMap: Record<string, any>,
+  ): Promise<{ jobId: string; assetId: string }[]> {
+    const gateStart = await loadPhotoGateStartAt();
+    if (!gateStart || candidatePairs.length === 0) return [];
+    const jobIds = Array.from(new Set(candidatePairs.map((p) => p.jobId)));
+    const approvedJobs = new Set<string>();
+    // แบ่งดึงก้อนละ 200 เลขงาน กัน URL ยาวเกินจน PostgREST ปฏิเสธคำขอ
+    for (let i = 0; i < jobIds.length; i += 200) {
+      const { data } = await supabase.from('job_form_submissions')
+        .select('customer_case').in('customer_case', jobIds.slice(i, i + 200)).eq('status', 'approved');
+      (data || []).forEach((r: any) => { if (r.customer_case) approvedJobs.add(r.customer_case); });
+    }
+    const waiting: { jobId: string; assetId: string }[] = [];
+    const needsPhoto = await buildNeedsPhotoFn(Object.keys(closeRowMap).map((k) => closeRowMap[k]));
+    candidatePairs.forEach((p) => {
+      const row = closeRowMap[p.jobId + '||' + p.assetId];
+      const closedAt = (row && row.created_at) ? new Date(row.created_at) : null;
+      if (!closedAt || isNaN(closedAt.getTime()) || closedAt < gateStart) return;
+      if (row && !needsPhoto(row)) return;
+      if (approvedJobs.has(p.jobId)) return;
+      waiting.push({ jobId: p.jobId, assetId: p.assetId });
+    });
+    return waiting;
+  }
+
+  // ==================== แปลงอะไหล่ที่บันทึกตอนปิดงาน เป็นแถวในตารางวางบิล (v1.0.68) ====================
+  // เดิม ตอนดึงงานเข้ารอบบิลจะได้ "แถวเปล่า" 1 แถวต่อ 1 เลขทรัพย์สิน แล้วแอดมินต้องมานั่งเพิ่มอะไหล่เอง
+  // ตอนนี้อะไหล่ถูกกรอกไว้ตั้งแต่ปิดงานแล้ว พร้อมประเภทเก็บเงินรายชิ้น จึงสร้างแถวให้ครบเลย
+  //
+  // คืนค่าเป็น array ของ "ส่วนที่เป็นข้อมูลอะไหล่" เอาไปรวมกับข้อมูลหัวแถว (เลขงาน/สาขา/รอบบิล) แล้ว insert
+  //
+  // ⚠ ต้องสร้างแถวให้ "ทุกบรรทัดที่กรอกตอนปิดงาน" ไม่ใช่เฉพาะบรรทัดที่แกะรหัสอะไหล่ออกได้
+  // บั๊กเดิมของ v1.0.68: กรอง .filter(p => p.partCode) ทิ้งตั้งแต่ต้น
+  //   - บรรทัดที่พิมพ์ชื่ออะไหล่ลอย ๆ ไม่มีรหัสนำหน้า จะหายไปเงียบ ๆ ทั้งบรรทัด
+  //   - ถ้าทั้งเลขทรัพย์สินไม่มีบรรทัดไหนมีรหัสเลย จะเหลือแถวเปล่า 1 แถว
+  //     = สิ่งที่พิมพ์ไว้ตอนปิดงานหายหมด แอดมินเปิดตารางวางบิลมาแล้วไม่เจออะไหล่ให้แก้
+  // ตอนนี้บรรทัดที่ไม่มีรหัสจะได้แถวของตัวเองเหมือนกัน เว้น part_code ว่างไว้ให้แอดมินเติม
+  // แต่ยังเก็บข้อความกับจำนวนที่กรอกไว้ครบ จะได้รู้ว่าต้องเติมรหัสของอะไหล่ตัวไหน
+  //
+  // คืน [{}] (แถวเปล่าแบบเดิม) เฉพาะกรณีที่ไม่มีรายการอะไหล่เลยจริง ๆ เท่านั้น
+  async function billingPartRowsFromCloseRow(closeRow: any): Promise<any[]> {
+    const usable = partsJsonFromCloseRow(closeRow);
+    if (usable.length === 0) return [{}];
+    const codes = Array.from(new Set(usable.map((p: any) => p.partCode).filter(Boolean))) as string[];
+    const partByCode: Record<string, any> = {};
+    for (let i = 0; i < codes.length; i += 100) {
+      const { data } = await supabase.from('parts').select('*').in('code_cj', codes.slice(i, i + 100));
+      (data || []).forEach((row: any) => {
+        const c = (row.code_cj || '').toString().trim().toUpperCase();
+        if (c && !partByCode[c]) partByCode[c] = row;
+      });
+    }
+    // .in() เทียบแบบตรงตัวพิมพ์ ส่วนรหัสในตาราง parts อาจเก็บพิมพ์เล็กปนอยู่
+    // รหัสที่ยังหาไม่เจอจึงตามหาซ้ำทีละตัวแบบไม่สนตัวพิมพ์ (เหมือนที่ addBillingLineItems ทำ)
+    for (const c of codes) {
+      if (partByCode[c]) continue;
+      const { data } = await supabase.from('parts').select('*').ilike('code_cj', c).limit(1);
+      if (data && data.length > 0) partByCode[c] = data[0];
+    }
+    return usable.map((p: any) => {
+      const part = p.partCode ? (partByCode[p.partCode] || null) : null;
+      // จำนวนที่กรอกตอนปิดงาน ไหลตรงมาเป็นจำนวนในตารางวางบิล (ไม่ต้องพิมพ์ซ้ำ)
+      // ได้ 0 = แถวเก่าก่อน v1.0.68 ที่แกะจำนวนจากข้อความไม่ได้ ปล่อยเป็น 0 ไว้อย่างนั้น
+      // ระบบจะไม่ยอมให้ส่งบิลจนกว่าแอดมินจะเติมจำนวนเอง (ดีกว่าเดาเป็น 1 แล้วเก็บเงินผิด)
+      const qty = (isFinite(p.qty) && p.qty > 0) ? p.qty : 0;
+      const unitPrice = part ? (parseFloat(part.unit_price) || 0) : 0;
+      const unitPriceContractor = part ? (parseFloat(part['Unit Custumer']) || 0) : 0;
+      return {
+        part_code: p.partCode,
+        // หาไม่เจอในตาราง parts (เช่น อะไหล่นอกระบบ NP) ให้ใช้ข้อความที่กรอกตอนปิดงานไปก่อน
+        // แอดมินแก้ราคาและรายละเอียดทีหลังในตารางวางบิลได้
+        part_detail: part ? [part.name, part.brand, part.model].filter(Boolean).join(' - ') : p.text,
+        warranty_months: part ? part.warranty_months : '-',
+        qty,
+        unit: part ? part.unit : '-',
+        unit_price: unitPrice, total_price: qty * unitPrice,
+        unit_price_contractor: unitPriceContractor, total_price_contractor: qty * unitPriceContractor,
+        quotation_ref: '-',
+        return_old_part: part ? part.return_old_part : '-',
+        company: part ? part.company : '-',
+        // ประเภทเก็บเงินที่คนปิดงานเลือกไว้ ไหลมาถึงตรงนี้ แอดมินแก้ทีหลังในตารางวางบิลได้
+        billing_type: normalizeBillingType(p.billingType),
+      };
+    });
+  }
+
+  // ==================== ผู้รับเหมาตรวจบิล / ตีกลับ / ยืนยันงาน (v1.0.69) ====================
+  // สถานะของแต่ละแถวอะไหล่ในตารางวางบิล
+  //   null       ยังไม่เข้ากระบวนการ (ยังไม่ส่งบิล หรือเป็นแถวเก่าก่อน v1.0.69 -> ใช้กติกาเดิม)
+  //   'pending'  ส่งให้ผู้รับเหมาแล้ว รอเขาตรวจ
+  //   'approved' ผู้รับเหมายืนยันแล้ว
+  //   'rejected' ผู้รับเหมาตีกลับ รอแอดมินแก้แล้วส่งกลับ
+
+  // บันทึกบทสนทนา (ตีกลับ/ยืนยัน/ส่งกลับ) ลงตารางประวัติ
+  // ⚠ ห้ามให้ความล้มเหลวตรงนี้ทำให้ทั้งคำสั่งพัง
+  // ถ้าฐานข้อมูลยังไม่ได้รัน SQL v1.0.69 ตาราง billing_row_comments จะยังไม่มี
+  // การตีกลับสำคัญกว่าการเก็บประวัติ ปล่อยให้ตีกลับสำเร็จแล้วเสียแค่ประวัติดีกว่ากดอะไรไม่ได้เลย
+  async function logBillingRowComments(rows: any[]): Promise<boolean> {
+    if (!rows || rows.length === 0) return true;
+    const { error } = await supabase.from('billing_row_comments').insert(rows);
+    return !error;
+  }
+
+  // ---- เงื่อนไขฝั่งรูป: เลขงานนี้ "ยืนยันรูปแล้ว" หรือไม่ต้องใช้รูป ----
+  // ต้องยกเว้นให้ตรงกับ findPairsWaitingPhoto / photoOkMapForJobs เป๊ะ ๆ ไม่งั้นงานที่ระบบยอมให้วางบิลโดยไม่ต้องมีรูป
+  // จะติดตรงนี้แทน แล้วค้างไม่มีวันเสร็จสิ้น
+  //   1. ปิดกฎรูปไว้ / ปิดงานก่อนวันเริ่มใช้กฎ = งานเก่า ไม่เคยมีฟอร์มให้ส่ง
+  //   2. อะไหล่ทุกชิ้นไม่เก็บเงินฝั่งผู้รับเหมา = ระบบไม่เคยออกฟอร์มรูปให้งานแบบนี้
+  //   3. มีฟอร์มที่ยืนยันรูปแล้ว
+  // เช็คหลายเลขงานพร้อมกันในไม่กี่คำขอ
+  // ⚠ ห้ามวนเรียกทีละเลขงาน — ตอนกดส่งบิลรอบใหญ่มีเป็นร้อยเลขงาน
+  // ยิงทีละตัวจะกลายเป็น 2 คำขอต่อเลขงาน ช้ามากและเสี่ยง Edge Function timeout กลางคัน
+  async function photoOkMapForJobs(jobIds: string[]): Promise<Record<string, boolean>> {
+    const out: Record<string, boolean> = {};
+    const ids = Array.from(new Set((jobIds || []).filter(Boolean))) as string[];
+    if (ids.length === 0) return out;
+    const gateStart = await loadPhotoGateStartAt();
+    // ปิดกฎรูปไว้ = ไม่มีเงื่อนไขเรื่องรูปเลย ผ่านหมดทุกเลขงาน
+    if (!gateStart) { ids.forEach((j) => { out[j] = true; }); return out; }
+
+    const approved = new Set<string>();
+    // แบ่งก้อนละ 200 กัน URL ยาวเกินจน PostgREST ปฏิเสธคำขอ
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data } = await supabase.from('job_form_submissions')
+        .select('customer_case').in('customer_case', ids.slice(i, i + 200)).eq('status', 'approved');
+      (data || []).forEach((r: any) => { if (r.customer_case) approved.add(r.customer_case); });
+    }
+    // เหลือเฉพาะเลขงานที่ยังไม่ผ่าน ค่อยไปดูว่าเข้าข่ายยกเว้นไหม
+    const rest = ids.filter((j) => !approved.has(j));
+    const closeByJob: Record<string, any[]> = {};
+    for (let i = 0; i < rest.length; i += 200) {
+      // asset_id ใช้จับคู่กับแถวในตารางวางบิล (v1.0.74)
+      const { data } = await supabase.from('close_issues')
+        .select('job_id,asset_id,created_at,parts,parts_json').in('job_id', rest.slice(i, i + 200));
+      (data || []).forEach((r: any) => { (closeByJob[r.job_id] = closeByJob[r.job_id] || []).push(r); });
+    }
+    const allCloseRows: any[] = [];
+    Object.keys(closeByJob).forEach((k) => { closeByJob[k].forEach((r: any) => allCloseRows.push(r)); });
+    const needsPhoto = await buildNeedsPhotoFn(allCloseRows);
+    ids.forEach((j) => {
+      if (approved.has(j)) { out[j] = true; return; }
+      const rows = closeByJob[j] || [];
+      if (rows.length === 0) { out[j] = true; return; }   // ไม่มีข้อมูลปิดงาน = ไม่มีเงื่อนไขรูปให้เช็ค
+      // ทุกครั้งที่ปิดงานต้อง "ไม่ต้องใช้รูป" ถึงจะยกเว้นทั้งเลขงานได้
+      out[j] = rows.every((r: any) => {
+        const closedAt = r.created_at ? new Date(r.created_at) : null;
+        if (!closedAt || isNaN(closedAt.getTime()) || closedAt < gateStart) return true;
+        return !needsPhoto(r);
+      });
+    });
+    return out;
+  }
+
+  // ==================== ตารางบิลก็เป็นตัวกำหนดว่าต้องส่งรูปไหม (v1.0.74) ====================
+  // ประเภทเก็บเงินถูกเลือกไว้ตั้งแต่ตอนปิดงาน (close_issues.parts_json)
+  // แต่แอดมินแก้ทีหลังในตารางวางบิลได้ และการแก้ตรงนั้น "ไม่" ย้อนกลับไปแก้ข้อมูลตอนปิดงาน
+  //
+  // ถ้าดูแค่ตอนปิดงานอย่างเดียว จะได้ช่องโหว่ตรง ๆ คือ
+  //   ปิดงานเป็น "เคลมประกัน 3 เดือน" -> ไม่มีฟอร์มรูป -> แอดมินแก้ในตารางบิลเป็น "เก็บเงินปกติ"
+  //   -> บิลวิ่งไปหาผู้รับเหมาให้ยืนยันยอด โดยไม่มีใครขอรูปเลยสักใบ
+  //   = เก็บเงินผู้รับเหมาโดยไม่มีหลักฐานหน้างาน ซึ่งเป็นสิ่งที่ด่านยืนยันรูปมีไว้กันพอดี
+  //
+  // กติการวม: ต้องส่งรูป ถ้า "ตอนปิดงานมีอะไหล่เก็บเงินผู้รับเหมา" หรือ "ในตารางบิลมี"
+  // คืนฟังก์ชันตัดสินกลับไป เอาไปใช้แทน closeRowNeedsContractorPhoto ได้ตรง ๆ ทุกที่
+  //
+  // ⚠ นับเฉพาะแถวบิลที่ "ยังไม่ตัดบิล" เท่านั้น
+  // บิลที่ปิดไปแล้วคือเก็บเงินจบไปแล้ว ย้อนไปขอรูปตอนนี้ไม่ได้ช่วยอะไร
+  // มีแต่จะทำให้งานเก่าทั้งกองเด้งกลับเข้าแท็บของผู้รับเหมาพร้อมกันทีเดียว
+  //
+  // ⚠ ถามตารางบิลเฉพาะรายการที่ตอนปิดงานบอกว่า "ไม่ต้องส่งรูป" เท่านั้น
+  // รายการที่ต้องส่งอยู่แล้วถามไปก็ไม่เปลี่ยนคำตอบ และปกติเป็นส่วนใหญ่ของตาราง
+  async function buildNeedsPhotoFn(closeRows: any[]): Promise<(row: any) => boolean> {
+    const jobsToAsk = Array.from(new Set((closeRows || [])
+      .filter((r: any) => r && !closeRowNeedsContractorPhoto(r))
+      .map((r: any) => r.job_id).filter(Boolean))) as string[];
+    const billable = new Set<string>();
+    // แบ่งก้อนละ 200 กัน URL ยาวเกินจน PostgREST ปฏิเสธคำขอ (กติกาเดียวกับที่อื่นในไฟล์นี้)
+    for (let i = 0; i < jobsToAsk.length; i += 200) {
+      const { data } = await supabase.from('billing_documents')
+        .select('customer_case,asset_id,billing_type,completed_at')
+        .in('customer_case', jobsToAsk.slice(i, i + 200)).is('completed_at', null);
+      (data || []).forEach((b: any) => {
+        if (billingRowNeedsContractorReview(b)) billable.add(jobAssetKey(b.customer_case, b.asset_id));
+      });
+    }
+    return (row: any) => closeRowNeedsContractorPhoto(row)
+      || billable.has(jobAssetKey(row && row.job_id, row && row.asset_id));
+  }
+
+  async function jobPhotoRequirementMet(jobId: string): Promise<boolean> {
+    const m = await photoOkMapForJobs([jobId]);
+    return m[jobId] === true;
+  }
+
+  // เลขงานนี้ในรอบบิลนี้ ครบเงื่อนไข "เสร็จสิ้น" แล้วหรือยัง — ครบแล้วตัดบิลให้เลย
+  //
+  // กติกา (v1.0.70): เสร็จสิ้น = ยืนยันรูปแล้ว **และ** ผู้รับเหมายืนยันรอบบิลครบแล้ว
+  // สองฝั่งนี้เดินคนละเส้น จึงต้องเรียกฟังก์ชันนี้จากทั้งสองที่
+  //   - ตอนผู้รับเหมากดยืนยันแถวสุดท้าย (อาจยืนยันรูปไปก่อนแล้ว)
+  //   - ตอนยืนยันรูป (ผู้รับเหมาอาจยืนยันบิลครบไปก่อนแล้ว)
+  // ถ้าเช็คแค่ที่เดียว งานที่ทำสองอย่างสลับลำดับกันจะค้างไม่มีวันปิด
+  //
+  // คืนจำนวนแถวที่เพิ่งถูกตัดบิล (0 = ยังไม่ครบ หรือตัดไปแล้วก่อนหน้า)
+  //
+  // นับเฉพาะแถวที่ผู้รับเหมา "ต้องตรวจจริง ๆ" เท่านั้น มิฉะนั้นงานจะค้างตลอดกาล
+  //   - ต้องส่งบิลไปแล้ว: แถวที่กรอก Part Code/จำนวนไม่ครบจะไม่เคยถูกส่ง
+  //     ถ้านับรวมด้วย แถวที่แอดมินยังกรอกไม่เสร็จ 1 แถวจะบล็อกทั้งเลขงานไว้
+  //   - ตัดประเภทที่ผู้รับเหมามองไม่เห็นออก (เคลมประกัน / ใบเสนอราคา)
+  //     แถวพวกนี้ไม่เคยโผล่ในตารางของเขา จึงรอคำยืนยันที่ไม่มีวันมา
+  async function completeBillingJobIfReady(customerCase: string, roundNo: any): Promise<number> {
+    let q = supabase.from('billing_documents')
+      .select('id,billing_type,contractor_review_status,sent_to_contractor,completed_at')
+      .eq('customer_case', customerCase);
+    q = (roundNo === null || roundNo === undefined) ? q.is('round_no', null) : q.eq('round_no', roundNo);
+    const { data, error } = await q;
+    if (error || !data || data.length === 0) return 0;
+    // นับเฉพาะแถวที่อยู่ใน "กระบวนการตรวจรับใหม่" เท่านั้น (contractor_review_status ไม่เป็น null)
+    //
+    // ⚠ เลขงานเดียวกันมีทั้งแถวเก่าและแถวใหม่ปนกันได้ เช่น ส่งบิลไปก่อนติดตั้ง v1.0.69
+    // แล้วแอดมินเพิ่งเพิ่มอะไหล่อีกชิ้นแล้วส่งตามทีหลัง
+    // ถ้านับรวมแถวเก่า (status = null) ด้วย แถวเก่าจะไม่มีวันเป็น approved
+    // เพราะฝั่งผู้รับเหมาไม่มีปุ่มให้กด = แถวใหม่ค้างตลอดกาลไปด้วย
+    // แถวเก่ายังถูกปิดโดยขั้น TUCK CR เหมือนเดิม ต่างคนต่างเดินตามเส้นทางของตัวเอง
+    // ปิดเฉพาะแถวที่อยู่ในกระบวนการใหม่ ไม่ไปแตะแถวอื่นของเลขงานเดียวกัน
+    // (กติกาเดียวกับของเดิมที่ปิดเฉพาะแถวที่ส่งบิลไปแล้วเท่านั้น
+    //  แถวที่ยังกรอกไม่ครบจนไม่เคยถูกส่ง ไม่ควรถูกปิดตามไปด้วย เพราะยังไม่เคยเก็บเงิน)
+    const { ready, openIds } = billingGroupBillSideReady(data);
+    if (!ready) return 0;
+    // ฝั่งบิลครบแล้ว เหลือเช็คฝั่งรูป — ขาดข้อใดข้อหนึ่งยังไม่ถือว่าเสร็จสิ้น
+    if (!(await jobPhotoRequirementMet(customerCase))) return 0;
+    if (openIds.length === 0) return 0;
+    const { data: closed } = await supabase.from('billing_documents')
+      .update({ completed_at: new Date().toISOString() })
+      .in('id', openIds).is('completed_at', null).select('id');
+    return (closed || []).length;
+  }
+
+  // ==================== กวาดปิดบิลที่ครบเงื่อนไขแล้ว ยกชุด (v1.0.74) ====================
+  // ทำเป็นชุดเดียว ไม่วนเรียก completeBillingJobIfReady ทีละเลขงาน
+  // เพราะตอนกดส่งบิลรอบใหญ่มีเป็นร้อยเลขงาน ยิงทีละตัวจะกลายเป็นหลายร้อยคำขอ
+  // ช้ามากและเสี่ยง Edge Function timeout กลางคัน (บทเรียนเดียวกับ photoOkMapForJobs)
+  //
+  // ใช้กติกาเดียวกับ completeBillingJobIfReady เป๊ะ ๆ เพราะเรียกฟังก์ชันตัดสินตัวเดียวกัน
+  // คืนจำนวนแถวที่เพิ่งปิด และรายชื่อเลขงานที่ปิดได้
+  async function sweepBillsReadyToClose(jobIds: string[]): Promise<{ closed: number; jobs: string[] }> {
+    const ids = Array.from(new Set((jobIds || []).filter(Boolean))) as string[];
+    if (ids.length === 0) return { closed: 0, jobs: [] };
+    const all: any[] = [];
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data, error } = await supabase.from('billing_documents')
+        .select('id,customer_case,round_no,billing_type,contractor_review_status,sent_to_contractor,completed_at')
+        .in('customer_case', ids.slice(i, i + 200));
+      // อ่านไม่ได้ (เช่นยังไม่ได้รัน SQL v1.0.69) = ไม่ต้องเดา ปล่อยไว้เฉย ๆ ดีกว่าปิดผิดแถว
+      if (error) return { closed: 0, jobs: [] };
+      (data || []).forEach((r: any) => all.push(r));
+    }
+    // จัดกลุ่มตาม เลขงาน + รอบบิล (หน่วยเดียวกับที่ completeBillingJobIfReady ใช้)
+    const groups: Record<string, any[]> = {};
+    all.forEach((r: any) => {
+      const key = String(r.customer_case) + '||' + String(r.round_no === null || r.round_no === undefined ? '' : r.round_no);
+      (groups[key] = groups[key] || []).push(r);
+    });
+    const openIdsByJob: Record<string, string[]> = {};
+    Object.keys(groups).forEach((k) => {
+      const rows = groups[k];
+      const { ready, openIds } = billingGroupBillSideReady(rows);
+      if (!ready || openIds.length === 0) return;
+      const job = String(rows[0].customer_case);
+      openIdsByJob[job] = (openIdsByJob[job] || []).concat(openIds);
+    });
+    const readyJobs = Object.keys(openIdsByJob);
+    if (readyJobs.length === 0) return { closed: 0, jobs: [] };
+    // ฝั่งรูปเช็คทีเดียวทุกเลขงาน
+    const photoOk = await photoOkMapForJobs(readyJobs);
+    const closeIds: string[] = [];
+    const closedJobs: string[] = [];
+    readyJobs.forEach((j) => {
+      if (photoOk[j] === false) return;
+      closedJobs.push(j);
+      openIdsByJob[j].forEach((id) => closeIds.push(id));
+    });
+    if (closeIds.length === 0) return { closed: 0, jobs: [] };
+    let closed = 0;
+    const nowIso = new Date().toISOString();
+    for (let i = 0; i < closeIds.length; i += 200) {
+      const { data } = await supabase.from('billing_documents')
+        .update({ completed_at: nowIso })
+        .in('id', closeIds.slice(i, i + 200)).is('completed_at', null).select('id');
+      closed += (data || []).length;
+    }
+    return { closed, jobs: closedJobs };
+  }
+
+  async function resolveBillingCandidatePairs(startDate: string | null, endDate: string | null, jobIds: string[] | null, includeBacklog?: boolean): Promise<{ candidatePairs: { jobId: string; assetId: string; isBacklog: boolean }[]; roundPeriod: string; error?: string; waitingPhoto?: { jobId: string; assetId: string }[] }> {
     if ((!jobIds || jobIds.length === 0) && (!startDate || !endDate)) {
       return { candidatePairs: [], roundPeriod: '', error: 'ต้องระบุช่วงวันที่ (ตั้งแต่วันที่ และ ถึงวันที่) หรือระบุเลขงานเจาะจง ก่อนถึงจะจับคู่ข้อมูลได้' };
     }
@@ -2141,28 +3097,33 @@ Deno.serve(async (req: Request) => {
       const roundPeriod = 'ระบุเลขงานเจาะจง (' + new Date().toISOString().slice(0, 10) + ')';
       if (wantedJobIds.length === 0) return { candidatePairs: [], roundPeriod };
       // ระบุเลขงานเจาะจง - เอาทุกครั้งที่ปิดงานของเลขงานนั้น ๆ มาเป็นตัวเลือกทั้งหมด (ไม่กรองวันที่)
-      const { data: closeData, error: closeErr } = await supabase.from('close_issues').select('job_id,asset_id').in('job_id', wantedJobIds);
+      const { data: closeData, error: closeErr } = await supabase.from('close_issues').select('job_id,asset_id,created_at,parts,parts_json').in('job_id', wantedJobIds);
       if (closeErr) return { candidatePairs: [], roundPeriod: '', error: 'ดึงข้อมูล close_issues ล้มเหลว: ' + closeErr.message };
       const seenPair = new Set<string>();
       const candidatePairs: { jobId: string; assetId: string; isBacklog: boolean }[] = [];
+      const closeRowMap: Record<string, any> = {};
       (closeData || []).forEach((r: any) => {
         if (!r.job_id) return;
         const assetId = r.asset_id || '-';
         const key = r.job_id + '||' + assetId;
         if (seenPair.has(key)) return;
         seenPair.add(key);
+        closeRowMap[key] = r;
         // โหมดระบุเลขงานเจาะจงไม่ได้ใช้ช่วงวันที่ จึงไม่มีแนวคิด "งานตกค้าง"
         candidatePairs.push({ jobId: r.job_id, assetId, isBacklog: false });
       });
-      return { candidatePairs, roundPeriod };
+      // v1.0.72 — ไม่คัดออกแล้ว ดึงเข้ารอบบิลได้ทุกงานที่ปิดแล้ว ป้ายรอรูปไว้เตือนเฉย ๆ
+      const waiting = await findPairsWaitingPhoto(candidatePairs, closeRowMap);
+      return { candidatePairs, roundPeriod, waitingPhoto: waiting };
     }
     const roundPeriod = startDate + ' ถึง ' + endDate + (includeBacklog ? ' (รวมงานตกค้างก่อนหน้า)' : '');
-    const { data: closeData, error: closeErr } = await supabase.from('close_issues').select('job_id,asset_id,fix_date').order('created_at', { ascending: true });
+    const { data: closeData, error: closeErr } = await supabase.from('close_issues').select('job_id,asset_id,fix_date,created_at,parts,parts_json').order('created_at', { ascending: true });
     if (closeErr) return { candidatePairs: [], roundPeriod: '', error: 'ดึงข้อมูล close_issues ล้มเหลว: ' + closeErr.message };
     const startD = new Date(startDate + 'T00:00:00');
     const endD = new Date(endDate + 'T23:59:59');
     const seenPair = new Set<string>();
     const candidatePairs: { jobId: string; assetId: string; isBacklog: boolean }[] = [];
+    const closeRowMap: Record<string, any> = {};
     (closeData || []).forEach((r: any) => {
       if (!r.job_id) return;
       const fx = parseFixDateString(r.fix_date);
@@ -2177,9 +3138,11 @@ Deno.serve(async (req: Request) => {
       const key = r.job_id + '||' + assetId;
       if (seenPair.has(key)) return;
       seenPair.add(key);
+      closeRowMap[key] = r;
       candidatePairs.push({ jobId: r.job_id, assetId, isBacklog });
     });
-    return { candidatePairs, roundPeriod };
+    const waiting = await findPairsWaitingPhoto(candidatePairs, closeRowMap);
+    return { candidatePairs, roundPeriod, waitingPhoto: waiting };
   }
 
   // ดึงรายการงาน PM ที่ "พร้อมวางบิล" จากระบบ PM (คนละโปรเจกต์ Supabase) มาทั้งหมด
@@ -2225,31 +3188,92 @@ Deno.serve(async (req: Request) => {
     let openQuery = supabase.from('open_issues').select('main_id,branch,service_type,service_work,service_issue,contract_type,contractor,details,req_date,created_at').order('created_at', { ascending: false });
     if (startDate) openQuery = openQuery.gte('created_at', startDate + 'T00:00:00');
     if (endDate) openQuery = openQuery.lte('created_at', endDate + 'T23:59:59');
-    const [openRes, closeRes, billingRes, pauseRes] = await Promise.all([
+    const [openRes, closeRes, billingRes, pauseRes, subRes] = await Promise.all([
       openQuery,
-      supabase.from('close_issues').select('job_id,asset_id,fix_date,created_at,action_taken').order('created_at', { ascending: true }),
-      supabase.from('billing_documents').select('customer_case,sent_to_contractor,completed_at'),
+      // parts_json ใช้ตัดสินว่าการปิดงานครั้งนี้ "ต้องให้ผู้รับเหมาส่งรูป" หรือไม่ (v1.0.74)
+      supabase.from('close_issues').select('job_id,asset_id,fix_date,created_at,action_taken,parts_json').order('created_at', { ascending: true }),
+      supabase.from('billing_documents').select('*'),
       supabase.from('pause_records').select('main_id,reason,note,status,paused_at,resumed_at,paused_by,resumed_by').order('paused_at', { ascending: true }),
+      // v1.0.70 — สถานะฝั่งรูป ใช้แยก "ส่งแบบฟอร์มรูปแล้ว / รอตรวจสอบ / ยืนยันรูปแล้ว"
+      // v1.0.71 — เพิ่ม reviewed_at เพราะใช้เป็นจุดเริ่มนับเวลาของช่วง "ตีกลับ → ส่งใหม่"
+      supabase.from('job_form_submissions').select('customer_case,status,submitted_at,reviewed_at').order('submitted_at', { ascending: true }),
     ]);
     if (openRes.error) throw new Error(openRes.error.message);
-    if (closeRes.error) throw new Error(closeRes.error.message);
+    // ยังไม่ได้รัน SQL v1.0.68 = ยังไม่มีคอลัมน์ parts_json — ถอยไปดึงแบบเดิม
+    // รายงานทั้งใบสำคัญกว่าสถานะที่ละเอียดขึ้นของงานไม่กี่แถว
+    let closeRows: any[] = [];
+    if (closeRes.error) {
+      if (!/column|schema cache/i.test(closeRes.error.message || '')) throw new Error(closeRes.error.message);
+      const retry = await supabase.from('close_issues')
+        .select('job_id,asset_id,fix_date,created_at,action_taken').order('created_at', { ascending: true });
+      if (retry.error) throw new Error(retry.error.message);
+      closeRows = retry.data || [];
+    } else {
+      closeRows = closeRes.data || [];
+    }
     if (billingRes.error) throw new Error(billingRes.error.message);
     if (pauseRes.error) throw new Error(pauseRes.error.message);
+    // ฟอร์มรูปพังไม่ควรทำให้ทั้งรายงานล่ม — ถือว่า "ยังไม่มีใครส่งรูป" แล้วไปต่อ
+    const submissionRows: any[] = subRes.error ? [] : (subRes.data || []);
     // เดิม closeMap เก็บได้แค่ "ครั้งล่าสุดที่ปิดงาน" ต่อ 1 เลขงาน (เขียนทับของเก่าทิ้ง) ทำให้ถ้าเลขงานเดียวกัน
     // ถูกปิดงานหลายครั้ง (คนละเลขทรัพย์สิน) รายงานจะเหลือแสดงแค่ครั้งเดียว จำนวนแถวในรายงานเลย "น้อยกว่า"
     // จำนวนแถวจริงใน close_issues ของ Supabase ทำให้ดูเหมือนข้อมูลไม่ตรงกัน
     // แก้เป็นเก็บเป็น "รายการทั้งหมด" ต่อเลขงานแทน แล้วออกรายงาน 1 แถวต่อ 1 ครั้งที่ปิดงานจริง (เลขงานที่ยังไม่เคยปิดเลย ยังคงออก 1 แถวตามปกติ)
     const closeListMap: Record<string, any[]> = {};
-    (closeRes.data || []).forEach((c: any) => {
+    closeRows.forEach((c: any) => {
       if (!closeListMap[c.job_id]) closeListMap[c.job_id] = [];
       closeListMap[c.job_id].push(c);
     });
     const billingMap: Record<string, any> = {};
     (billingRes.data || []).forEach((b: any) => {
-      if (!billingMap[b.customer_case]) billingMap[b.customer_case] = { sent: false, completed: false };
-      if (b.sent_to_contractor) billingMap[b.customer_case].sent = true;
-      if (b.completed_at) billingMap[b.customer_case].completed = true;
+      if (!billingMap[b.customer_case]) {
+        // contractorPending = ยังมีแถวที่รอผู้รับเหมาตรวจ/ถูกตีกลับอยู่
+        // contractorAny     = มีแถวที่เข้าระบบตรวจรับใหม่อย่างน้อย 1 แถว
+        // สองตัวนี้ใช้ตัดสินสถานะ "ยืนยันงานแล้ว" = เข้าระบบใหม่ + ไม่เหลือแถวค้างเลย
+        billingMap[b.customer_case] = { sent: false, completed: false, contractorAny: false, contractorPending: false };
+      }
+      const m = billingMap[b.customer_case];
+      if (b.sent_to_contractor) m.sent = true;
+      if (b.completed_at) m.completed = true;
+      const rv = b.contractor_review_status;
+      if (rv === 'pending' || rv === 'rejected' || rv === 'approved') {
+        m.contractorAny = true;
+        if (rv !== 'approved' && !b.completed_at) m.contractorPending = true;
+      } else if (rv === REVIEW_NOT_REQUIRED) {
+        // v1.0.74 — แถวที่ไม่ต้องให้ผู้รับเหมาตรวจ ถือว่า "จบฝั่งเขา" ตั้งแต่ส่งบิล
+        // นับเป็น contractorAny ไม่งั้นงานที่เป็นประเภทนี้ล้วน ๆ จะไม่มีทางขึ้น "ยืนยันงานแล้ว"
+        m.contractorAny = true;
+      }
     });
+    // สถานะรูปล่าสุดของแต่ละเลขงาน — ใช้ "ใบล่าสุด" ไม่ใช่ "ใบไหนก็ได้ที่อนุมัติ"
+    // เพราะรูปที่เคยยืนยันแล้วถูกตีกลับทีหลังได้ ถ้าดูใบเก่าจะยังขึ้นว่ายืนยันแล้วทั้งที่ตีกลับไปแล้ว
+    const photoStatusMap: Record<string, string> = {};
+    // v1.0.71 — เก็บใบแรกกับใบล่าสุดไว้ด้วย ใช้เป็นหมุดเวลาของ alarm
+    //   ใบแรก   = จุดจบของช่วง "ปิดงาน → ส่งรูป"
+    //   ใบล่าสุด = จุดเริ่มของช่วง "ส่งรูป → แอดมินตรวจ" หรือ "ตีกลับ → ส่งใหม่"
+    const firstSubMap: Record<string, any> = {};
+    const lastSubMap: Record<string, any> = {};
+    submissionRows.forEach((s: any) => {
+      if (!s.customer_case) return;
+      photoStatusMap[s.customer_case] = s.status || 'pending';   // เรียงตามเวลาแล้ว ตัวหลังทับตัวหน้า = ได้ใบล่าสุด
+      if (!firstSubMap[s.customer_case]) firstSubMap[s.customer_case] = s;
+      lastSubMap[s.customer_case] = s;
+    });
+    // v1.0.74 — คู่ (เลขงาน+เลขทรัพย์สิน) ที่ตารางบิลบอกว่าเก็บเงินฝั่งผู้รับเหมา และยังไม่ตัดบิล
+    // สร้างจากข้อมูลบิลที่โหลดมาแล้วข้างบน ไม่ต้องยิงคำขอเพิ่มอีกรอบ
+    // (กติกาเดียวกับ buildNeedsPhotoFn เป๊ะ ๆ — ถ้าแก้ที่นั่นต้องแก้ตรงนี้ด้วย)
+    const billablePairs = new Set<string>();
+    (billingRes.data || []).forEach((b: any) => {
+      if (!b.completed_at && billingRowNeedsContractorReview(b)) {
+        billablePairs.add(jobAssetKey(b.customer_case, b.asset_id));
+      }
+    });
+    const closeRowNeedsPhoto = (row: any) => closeRowNeedsContractorPhoto(row)
+      || billablePairs.has(jobAssetKey(row && row.job_id, row && row.asset_id));
+
+    // ประตูรูปเริ่มมีผลเมื่อไหร่ — งานที่ปิดก่อนหน้านั้นไม่เคยมีฟอร์มรูปให้ส่ง
+    // จึงต้องไม่เอา alarm ฝั่งรูปไปจับ ไม่งั้นงานเก่าทั้งระบบจะกลายเป็นสีแดงทันทีที่ deploy
+    const slaGateStart = await loadPhotoGateStartAt();
     // จัดกลุ่มประวัติพักงานตามเลขที่งาน เพื่อฝังเข้าไปในแต่ละแถวของรายงาน (ให้หน้า "ดูรายละเอียด" แสดงช่วงเวลาพักได้
     // และให้รู้ว่าเลขงานนี้ "กำลังพักอยู่ตอนนี้" หรือไม่ สำหรับคำนวณสถานะ "พักงาน")
     const pauseMap: Record<string, any[]> = {};
@@ -2287,12 +3311,73 @@ Deno.serve(async (req: Request) => {
             durationHours = Math.round(((closedMs - openedMs) / (1000 * 60 * 60)) * 100) / 100;
           }
         }
-        // ลำดับความสำคัญของสถานะ: เสร็จสิ้น > ส่งมอบงาน > ปิดงานแล้ว > พักงาน (ถ้ายังไม่ปิด) > รอดำเนินการ
+        // ==================== สถานะงาน (v1.0.70) ====================
+        // ไล่จากขั้นท้ายสุดลงมาขั้นแรก เจออันไหนก่อนใช้อันนั้น
+        //
+        //   เสร็จสิ้น                    ยืนยันรูปแล้ว + ผู้รับเหมายืนยันรอบบิลแล้ว (ตัดบิลแล้ว)
+        //   ยืนยันงานแล้ว                ผู้รับเหมายืนยันบิลครบทุกแถว แต่ยังขาดฝั่งรูป
+        //   ส่งงานแล้ว                   แอดมินกดส่งบิลไปหาผู้รับเหมาแล้ว รอเขาตรวจ
+        //   ยืนยันรูปแล้ว                แอดมินยืนยันรูปแล้ว แต่ยังไม่ได้ส่งบิล
+        //   ผรม. ส่งงานมาแล้วรอตรวจสอบ   ผู้รับเหมาส่งรูปมาแล้ว รอแอดมินตรวจ
+        //   ส่งแบบฟอร์มรูปแล้ว            ปิดงานแล้ว รอผู้รับเหมาใส่รูป (รวมกรณีถูกตีกลับ = ย้อนกลับมาขั้นนี้)
+        //   ปิดงานแล้ว (ไม่ต้องส่งรูป)     ปิดงานแล้ว แต่เป็นเคลมประกัน/ใบเสนอราคาล้วน ไม่มีฟอร์มรูปให้รอ (v1.0.74)
+        //   พักงาน / รอดำเนินการ         ยังไม่ปิดงาน
+        const photoStatus = photoStatusMap[o.main_id];
         let status = 'รอดำเนินการ';
         if (billingInfo && billingInfo.completed) status = 'เสร็จสิ้น';
-        else if (billingInfo && billingInfo.sent) status = 'ส่งมอบงาน';
-        else if (closeRec) status = 'ปิดงานแล้ว';
+        else if (billingInfo && billingInfo.contractorAny && !billingInfo.contractorPending) status = 'ยืนยันงานแล้ว';
+        else if (billingInfo && billingInfo.sent) status = 'ส่งงานแล้ว';
+        else if (photoStatus === 'approved') status = 'ยืนยันรูปแล้ว';
+        else if (photoStatus === 'pending') status = 'ผรม. ส่งงานมาแล้วรอตรวจสอบ';
+        // ปิดงานแล้ว = ฟอร์มรูปถูกส่งให้ผู้รับเหมาทันที (ตั้งแต่ v1.0.68)
+        // จึงใช้ชื่อสถานะว่า "ส่งแบบฟอร์มรูปแล้ว" ไม่ใช่ "ปิดงานแล้ว" ตามคำที่ใช้กันจริงในทีม
+        // รูปที่ถูกตีกลับ (photoStatus === 'rejected') ก็ตกมาที่ขั้นนี้ ตรงตามที่ออกแบบไว้
+        // v1.0.74 — ปิดงานครั้งนี้ไม่มีอะไหล่ที่เก็บเงินฝั่งผู้รับเหมาเลย (เคลมประกัน/ใบเสนอราคา ล้วน ๆ)
+        // ระบบไม่เคยออกฟอร์มรูปให้ จึงห้ามขึ้นว่า "ส่งแบบฟอร์มรูปแล้ว"
+        // ไม่งั้นจะดูเหมือนกองรอผู้รับเหมาอยู่ ทั้งที่คนที่ต้องลงมือต่อคือฝั่งเราเอง
+        else if (closeRec) status = closeRowNeedsPhoto(closeRec) ? 'ส่งแบบฟอร์มรูปแล้ว' : 'ปิดงานแล้ว (ไม่ต้องส่งรูป)';
         else if (isCurrentlyPaused) status = 'พักงาน';
+
+        // ==================== alarm ตามเวลา (v1.0.71) ====================
+        // นับด้วยนาฬิกาจริง 24 ชม. (รวมกลางคืนและวันหยุด) แต่ "หยุดนับตอนพักงาน"
+        // มีได้ช่วงเดียวที่กำลังเดินอยู่ ณ เวลาหนึ่ง ที่เหลือเป็นประวัติว่าช่วงนั้นทันหรือเลย
+        const slaStages: any[] = [];
+        const firstSub = firstSubMap[o.main_id] || null;
+        const lastSub = lastSubMap[o.main_id] || null;
+
+        // ช่วงที่ 1 — เปิดงาน → ปิดงาน (ทุกงานมีช่วงนี้เสมอ)
+        const stClose = evalSlaStage('close', o.created_at, closeRec ? closeRec.created_at : null, pausePeriods);
+        if (stClose) slaStages.push(stClose);
+
+        // ช่วงฝั่งรูป — จับเฉพาะงานที่ปิดหลังประตูรูปเริ่มมีผล และเป็นงานที่ต้องส่งรูปจริง
+        // ปิดกฎประตูรูปไว้ (loadPhotoGateStartAt คืน null) = ไม่มีภาระเรื่องรูป จึงไม่มี alarm เรื่องรูป
+        const closedAtMs = closeRec && closeRec.created_at ? new Date(closeRec.created_at).getTime() : NaN;
+        const photoInScope = !!closeRec && !!slaGateStart && isFinite(closedAtMs)
+          && closedAtMs >= slaGateStart.getTime() && closeRowNeedsPhoto(closeRec);
+        if (photoInScope) {
+          // ช่วงที่ 2 — ปิดงาน → ผู้รับเหมาส่งรูปใบแรก
+          const stSubmit = evalSlaStage('photoSubmit', closeRec.created_at, firstSub ? firstSub.submitted_at : null, pausePeriods);
+          if (stSubmit) slaStages.push(stSubmit);
+          if (lastSub) {
+            if (lastSub.status === 'rejected') {
+              // ช่วงที่ 4 — ตีกลับ → ส่งใหม่ (เตือนซ้ำทุก 30 นาที จนกว่าจะส่ง)
+              const stResend = evalSlaStage('resend', lastSub.reviewed_at, null, pausePeriods);
+              if (stResend) slaStages.push(stResend);
+            } else {
+              // ช่วงที่ 3 — ส่งรูป → แอดมินตรวจ (จบเมื่อตรวจแล้ว)
+              const stReview = evalSlaStage('photoReview', lastSub.submitted_at,
+                lastSub.status === 'approved' ? lastSub.reviewed_at : null, pausePeriods);
+              if (stReview) slaStages.push(stReview);
+            }
+          }
+        }
+
+        const activeStage = slaStages.find((x: any) => !x.finished) || null;
+        // สีที่ใช้แสดงในตาราง: ถ้ามีช่วงไหนเคยเลยกำหนด ให้เป็นแดงไว้ตลอด (เป็นประวัติ)
+        // ไม่งั้นพอทำงานต่อจนจบ ประวัติที่เคยช้าจะหายไปเงียบ ๆ แล้วไม่มีใครรู้ว่าเคยเลย
+        const everOverdue = slaStages.some((x: any) => x.state === 'overdue');
+        const slaLevel = everOverdue ? 'overdue'
+          : (slaStages.some((x: any) => x.state === 'warning') ? 'warning' : 'ok');
         rows.push({
           main_id: o.main_id, branch: o.branch, service_type: o.service_type, service_work: o.service_work, service_issue: o.service_issue, contract_type: o.contract_type, contractor: o.contractor,
           details: o.details, req_date: o.req_date, opened_at: o.created_at,
@@ -2304,6 +3389,10 @@ Deno.serve(async (req: Request) => {
           pause_periods: pausePeriodsOut,
           pause_count: pausePeriods.length,
           pause_hours_total: Math.round(pauseHoursTotal * 100) / 100,
+          // v1.0.71 — ข้อมูล alarm
+          sla_level: slaLevel,                 // ok / warning / overdue (แดงค้างไว้ถ้าเคยเลยกำหนด)
+          sla_active: activeStage,             // ช่วงที่กำลังเดินอยู่ตอนนี้ (null = ไม่มีอะไรต้องรอแล้ว)
+          sla_stages: slaStages,               // ทุกช่วงพร้อมผล ใช้กางดูในหน้ารายละเอียด
         });
       });
     });
@@ -2338,10 +3427,84 @@ Deno.serve(async (req: Request) => {
         const user = data[0];
         const hash = await hashPassword(password);
         if (hash !== user.password_hash) return jsonResponse({ success: false, message: 'รหัสผ่านไม่ถูกต้อง' });
+        // v1.0.94 — ปิดระบบชั่วคราว: รหัสผ่านถูกก็ยังเข้าไม่ได้ถ้าไม่ใช่แอดมิน
+        // ตรวจ "หลัง" รหัสผ่านโดยตั้งใจ เพื่อไม่ให้ใครเอาข้อความนี้ไปใช้เดาว่ามีชื่อผู้ใช้นี้อยู่จริงหรือไม่
+        {
+          const lock = await loadLoginLock();
+          if (lock.on && user.role !== 'admin') {
+            // ตัด session เดิมที่อาจค้างอยู่ในเครื่องเขาทิ้งไปด้วย = ถูกเด้งออกทันทีไม่ต้องรอหมดอายุ
+            if (user.session_token) await supabase.from('contractors').update({ session_token: null }).eq('id', user.id);
+            return jsonResponse({ success: false, locked: true, message: lock.note || LOGIN_LOCK_DEFAULT_MSG });
+          }
+        }
         const token = genToken();
         await supabase.from('contractors').update({ session_token: token, session_created_at: new Date().toISOString() }).eq('id', user.id);
         const finalApprover = resolveIsFinalApprover(user);
         return jsonResponse({ success: true, token, username: user.username, role: user.role, displayName: user.display_name, isChecker: user.is_checker === true && !finalApprover, isFinalApprover: finalApprover });
+      }
+
+      // ==================== ปิดระบบชั่วคราว ให้เข้าได้เฉพาะแอดมิน (v1.0.94) ====================
+      case 'getMaintenanceLock': {
+        const [username, token] = args;
+        const gate = await adminGate(username, token);
+        if (!gate.ok) return jsonResponse({ success: false, message: gate.message });
+        const lock = await loadLoginLock(true);   // อ่านสด ๆ ไม่เอาค่าจากที่พัก
+        const { data, error } = await supabase.from('contractors').select('username,display_name,role,session_token');
+        if (error) return jsonResponse({ success: false, message: error.message });
+        const all = data || [];
+        return jsonResponse({
+          success: true,
+          on: lock.on,
+          note: lock.note,
+          defaultNote: LOGIN_LOCK_DEFAULT_MSG,
+          totalUsers: all.length,
+          adminUsers: all.filter((u: any) => u.role === 'admin').length,
+          nonAdminUsers: all.filter((u: any) => u.role !== 'admin').length,
+          // รายชื่อคนที่ยังถือ session อยู่ — ให้แอดมินเห็นด้วยตาว่าเด้งออกครบหรือยัง
+          stillLoggedIn: all.filter((u: any) => !!u.session_token).map((u: any) => ({
+            username: u.username, displayName: u.display_name || '', role: u.role, isAdmin: u.role === 'admin',
+          })),
+        });
+      }
+
+      case 'setMaintenanceLock': {
+        const [username, token, onRaw, noteRaw, kickAdminsRaw] = args;
+        const gate = await adminGate(username, token);
+        if (!gate.ok) return jsonResponse({ success: false, message: gate.message });
+        const on = onRaw === true || String(onRaw) === 'true';
+        const kickAdmins = kickAdminsRaw === true || String(kickAdminsRaw) === 'true';
+        // '|' เป็นตัวคั่นในค่าที่เก็บ และขึ้นบรรทัดใหม่จะทำให้ค่าในตารางอ่านยาก จึงแทนด้วยช่องว่าง
+        const note = String(noteRaw || '').trim().replace(/[|\r\n]+/g, ' ').slice(0, 300);
+        const value = on ? (note ? 'on|' + note : 'on') : 'off';
+
+        const { error: upErr } = await supabase.from('app_secrets').upsert({ key: 'login_lock', value }, { onConflict: 'key' });
+        if (upErr) return jsonResponse({ success: false, message: 'บันทึกค่าไม่สำเร็จ: ' + upErr.message });
+        invalidateLoginLockCache();
+
+        let kicked = 0;
+        let kickError = '';
+        if (on) {
+          // ตอนล็อก: เด้งคนที่ถือ session อยู่ออก เพื่อไม่ให้ใครค้างอยู่ในแอปแล้วกดอะไรต่อได้
+          //
+          // ⚠ ห้ามตัด session ของคนที่กดปุ่มนี้เอง ไม่งั้นแอดมินจะเด้งตัวเองออกไปพร้อมกัน
+          //   แล้วกลับเข้ามาปลดล็อกต่อไม่ได้ (เข้าได้อยู่ แต่ต้องพิมพ์รหัสผ่านใหม่กลางงาน)
+          const { data: holders, error: listErr } = await supabase.from('contractors')
+            .select('id,username,role').not('session_token', 'is', null);
+          if (listErr) kickError = listErr.message;
+          else {
+            const targets = (holders || []).filter((u: any) =>
+              u.username !== username && (kickAdmins || u.role !== 'admin'));
+            for (const u of targets) {
+              const { error: kErr } = await supabase.from('contractors').update({ session_token: null }).eq('id', u.id);
+              if (kErr) kickError = kErr.message; else kicked++;
+            }
+          }
+        }
+
+        const parts: string[] = [on ? 'ล็อกระบบแล้ว เข้าได้เฉพาะแอดมิน' : 'ปลดล็อกแล้ว ทุกคนเข้าใช้งานได้ปกติ'];
+        if (on) parts.push('เด้งออก ' + kicked + ' คน' + (kickAdmins ? ' (รวมแอดมินคนอื่น)' : ' (ไม่รวมแอดมิน)'));
+        if (kickError) parts.push('⚠ เด้งออกไม่ครบ: ' + kickError);
+        return jsonResponse({ success: true, on, note, kicked, message: parts.join(' · ') });
       }
 
       case 'logoutUser': {
@@ -2362,21 +3525,50 @@ Deno.serve(async (req: Request) => {
       // ทะเบียนเลขทรัพย์สินของสาขา - ใช้ทำ dropdown ในหน้าปิดงาน กันกรอกเลขทรัพย์สินผิด
       // ส่งกลับทุกแถวของสาขานั้น รวมถึงเลขที่ซ้ำกันแต่คำอธิบายต่างกัน (ตั้งใจให้เห็นแยกบรรทัด)
       case 'getBranchAssets': {
-        const [branchCodeRaw] = args;
+        const [branchCodeRaw, username, token] = args;
+        const gate = await adminGate(username, token);
+        if (!gate.ok) return jsonResponse({ assets: [], error: gate.message });
         const branchCode = (branchCodeRaw || '').toString().trim();
         if (!branchCode) return jsonResponse({ assets: [] });
-        // รหัสสาขาในทะเบียนเก็บเป็นเลข 4 หลักมี 0 นำหน้า (เช่น '0064') แต่ผู้ใช้อาจพิมพ์ '64' มา
-        // จึงเติม 0 ให้ครบ 4 หลักก่อนค้น ไม่งั้นจะหาไม่เจอทั้งที่มีข้อมูลอยู่
-        const padded = branchCode.replace(/\D/g, '').padStart(4, '0');
-        const { data, error } = await supabase
-          .from('branch_assets')
-          .select('asset_no,description')
-          .eq('branch_code', padded)
-          .order('asset_no', { ascending: true })
-          .limit(500);
+        // ---- ค้นแบบตรงตัวก่อนเสมอ ----
+        //
+        // บั๊กเดิม: ตัดอักขระที่ไม่ใช่ตัวเลขทิ้งแล้วเติม 0 ให้ครบ 4 หลักทันที
+        // ใช้ได้กับสาขาที่รหัสเป็นตัวเลขล้วน แต่ในทะเบียนมีสาขาที่รหัสมีตัวอักษรปนอยู่ด้วย
+        // เช่น B004 (ฝ่ายบริหารทรัพย์สิน) · D002 (ศูนย์กระจายสินค้าบางประกง) · M04B/M04C/M04F (สีลม)
+        //
+        // 'B004' ถูกตัดเหลือ '004' แล้วเติมเป็น '0004' ซึ่งเป็นสาขา "ท่าเรือ" คนละสาขากันเลย
+        // ผลคือไม่ได้แค่ "หาไม่เจอ" แต่ได้ "รายการทรัพย์สินของสาขาอื่นมาแทน" โดยไม่มีอะไรเตือน
+        // แล้วคนปิดงานก็เลือกเลขทรัพย์สินผิดสาขาไปทั้งดุ้น
+        //
+        // แก้เป็น: ลองค้นด้วยค่าที่พิมพ์มาตรง ๆ ก่อน (ครอบคลุมรหัสที่มีตัวอักษร)
+        // ถ้าไม่เจอค่อยถอยไปใช้แบบเติม 0 (ยังรองรับคนพิมพ์ '64' แทน '0064' เหมือนเดิม)
+        const digitsOnly = branchCode.replace(/\D/g, '');
+        const padded = digitsOnly ? digitsOnly.padStart(4, '0') : '';
+
+        const lookupAssets = async (code: string) => {
+          return await supabase
+            .from('branch_assets')
+            .select('asset_no,description')
+            .eq('branch_code', code)
+            .order('asset_no', { ascending: true })
+            .limit(500);
+        };
+
+        // รอบแรก: ตรงตัว (ทั้งตามที่พิมพ์ และแบบพิมพ์ใหญ่ เผื่อพิมพ์ b004 มา)
+        let usedCode = branchCode;
+        let { data, error } = await lookupAssets(branchCode);
+        if (!error && (!data || data.length === 0) && branchCode !== branchCode.toUpperCase()) {
+          usedCode = branchCode.toUpperCase();
+          ({ data, error } = await lookupAssets(usedCode));
+        }
+        // รอบสอง: เติม 0 ให้ครบ 4 หลัก — เฉพาะตอนที่รอบแรกไม่เจอจริง ๆ
+        if (!error && (!data || data.length === 0) && padded && padded !== usedCode) {
+          usedCode = padded;
+          ({ data, error } = await lookupAssets(usedCode));
+        }
         if (error) return jsonResponse({ error: error.message, assets: [] });
         return jsonResponse({
-          branchCode: padded,
+          branchCode: usedCode,
           assets: (data || []).map((r: any) => ({ assetNo: r.asset_no, description: r.description || '' })),
         });
       }
@@ -2461,7 +3653,7 @@ Deno.serve(async (req: Request) => {
         // ต้องมีข้อมูลเปิดงานและปิดงานครบก่อน ไม่งั้นแถวบิลจะไม่มีสาขา/ผู้รับเหมา/วันที่
         const [openRes, closeRes, roundRes, branchesRes] = await Promise.all([
           supabase.from('open_issues').select('main_id,branch,service_work,service_type,req_date,contractor').eq('main_id', jobId).limit(1),
-          supabase.from('close_issues').select('job_id,branch,asset_id,fix_date').eq('job_id', jobId),
+          supabase.from('close_issues').select('job_id,branch,asset_id,fix_date,parts,parts_json').eq('job_id', jobId),
           supabase.from('billing_documents').select('round_period,contractor,seq').eq('round_no', roundNo),
           supabase.from('branches').select('branch_code,branch_name'),
         ]);
@@ -2496,16 +3688,18 @@ Deno.serve(async (req: Request) => {
 
         const rowsToInsert: any[] = [];
         let skipped = 0;
-        closeRows.forEach((c: any) => {
+        // ใช้ for..of ไม่ใช่ forEach เพราะข้างในต้อง await หาราคาอะไหล่จากตาราง parts
+        // (forEach ไม่รอ await ผลคือจะได้ rowsToInsert ว่างเปล่าแล้ว insert ไม่มีอะไรเลย)
+        for (const c of closeRows) {
           const assetId = (c.asset_id || '-').toString().trim() || '-';
-          if (existingAssets.has(assetId)) { skipped++; return; }
+          if (existingAssets.has(assetId)) { skipped++; continue; }
           existingAssets.add(assetId);
           maxSeq++;
           const rawBranchText = (c.branch || openRecord.branch || '').toString();
           const codeMatch = rawBranchText.match(/^\d+/);
           const branchCode = codeMatch ? codeMatch[0] : null;
           const branchName = branchCode ? (branchMap[branchCode] || rawBranchText) : (rawBranchText || null);
-          rowsToInsert.push({
+          const headFields = {
             seq: maxSeq, round_no: roundNo, round_period: roundPeriod, customer_case: jobId,
             branch_code: branchCode, branch_name: branchName,
             service_type: openRecord.service_work || openRecord.service_type || '-',
@@ -2514,8 +3708,12 @@ Deno.serve(async (req: Request) => {
             visit_date: c.fix_date || '-',
             contractor: openRecord.contractor || null,
             synced_to_sheet: false,
-          });
-        });
+          };
+          // v1.0.68 — กางอะไหล่ที่กรอกไว้ตอนปิดงานออกเป็นแถวละชิ้น พร้อมประเภทเก็บเงินของชิ้นนั้น
+          // เลขทรัพย์สินชิ้นเดียวจึงได้หลายแถว แต่ใช้ seq เดียวกัน (ตรงกับกติกาเดิมของเอกสาร)
+          const partRows = await billingPartRowsFromCloseRow(c);
+          partRows.forEach((pf: any) => { rowsToInsert.push(Object.assign({}, headFields, pf)); });
+        }
 
         if (rowsToInsert.length === 0) {
           return jsonResponse({ success: false, message: 'เลขงาน "' + jobId + '" มีอยู่ในตารางวางบิลครบทุกเลขทรัพย์สินแล้ว (' + skipped + ' รายการ) จึงไม่มีอะไรให้เพิ่ม' });
@@ -2532,6 +3730,11 @@ Deno.serve(async (req: Request) => {
       }
 
       case 'getContractorsList': {
+        // ตัวนี้ไม่บังคับเป็นแอดมิน เพราะหน้าแอปเรียกตอนเข้าระบบทั้งฝั่งแอดมินและฝั่งผู้รับเหมา
+        // แต่ต้องล็อกอินแล้วจริง ๆ ถึงจะได้รายชื่อไป
+        const [username, token] = args;
+        const listSession = await verifySession(username, token);
+        if (!listSession.valid) return jsonResponse({ error: 'กรุณาเข้าสู่ระบบใหม่ (ถ้ายังขึ้นข้อความนี้ แปลว่าแอปเป็นเวอร์ชันเก่า ต้องอัปเดตแอปก่อน)' });
         const { data, error } = await supabase.from('contractors').select('display_name').eq('role', 'contractor').order('display_name');
         if (error) return jsonResponse({ error: error.message });
         return jsonResponse((data || []).map((r: any) => r.display_name));
@@ -2539,17 +3742,23 @@ Deno.serve(async (req: Request) => {
 
       // ==================== Lookup อัตโนมัติ (ดูดข้อความ) ====================
       case 'checkOpenIssueExists': {
-        const [jobId] = args;
+        const [jobId, username, token] = args;
+        const gate = await adminGate(username, token);
+        if (!gate.ok) return jsonResponse({ error: gate.message });
         return jsonResponse(await checkOpenIssueExists(jobId));
       }
 
       case 'checkCloseIssueExists': {
-        const [jobId, assetId] = args;
+        const [jobId, assetId, username, token] = args;
+        const gate = await adminGate(username, token);
+        if (!gate.ok) return jsonResponse({ error: gate.message });
         return jsonResponse(await checkCloseIssueExists(jobId, assetId));
       }
 
       case 'lookupBranch': {
-        const [code] = args;
+        const [code, username, token] = args;
+        const gate = await adminGate(username, token);
+        if (!gate.ok) return jsonResponse({ error: gate.message });
         try {
           if (!code) return jsonResponse({ found: false });
           const match = code.toString().trim().match(/^\d+/);
@@ -2562,7 +3771,15 @@ Deno.serve(async (req: Request) => {
       }
 
       case 'lookupPart': {
-        const [code] = args;
+        // v1.0.87 — เดิมฟังก์ชันนี้ไม่ตรวจ session เลยสักนิด
+        // ใครยิงคำขอเข้ามาก็ได้ราคา CJ ของอะไหล่ทุกตัวในคลังกลับไป โดยไม่ต้องล็อกอินด้วยซ้ำ
+        // หน้าจอที่เรียกใช้จริงเป็นของแอดมินล้วน (ปิดงาน · แก้แถวตารางวางบิล · โมดัลเพิ่มสินค้า)
+        // จึงบังคับให้ต้องล็อกอิน และตัดราคา CJ ออกถ้าไม่ใช่แอดมิน
+        const [code, username, token] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) {
+          return jsonResponse({ found: false, error: 'กรุณาเข้าสู่ระบบใหม่ (ถ้ายังขึ้นข้อความนี้ แปลว่าแอปเป็นเวอร์ชันเก่า ต้องอัปเดตแอปก่อน)' });
+        }
         const c = (code || '').toString().trim();
         if (!c) return jsonResponse({ found: false });
         const { data, error } = await supabase.from('parts').select('*').ilike('code_cj', c).limit(1);
@@ -2571,7 +3788,9 @@ Deno.serve(async (req: Request) => {
         const p = data[0];
         return jsonResponse({
           found: true, name: p.name || '', brand: p.brand || '', model: p.model || '', unit: p.unit || '',
-          price: p.unit_price || 0, priceContractor: p['Unit Custumer'] || 0, warranty: p.warranty_months || '',
+          // ราคา CJ = ราคาที่ CR เก็บกับ CJ ห้ามหลุดไปฝั่งผู้รับเหมาเด็ดขาด
+          price: (session.role === 'admin') ? (p.unit_price || 0) : 0,
+          priceContractor: p['Unit Custumer'] || 0, warranty: p.warranty_months || '',
           returnOldPart: p.return_old_part || '', company: p.company || '',
         });
       }
@@ -2580,6 +3799,10 @@ Deno.serve(async (req: Request) => {
       case 'saveOpenIssue': {
         const [formData] = args;
         const f = formData || {};
+        // v1.0.88 — รับบัญชีผู้ใช้มาใน formData แบบเดียวกับ saveCloseIssue (ซึ่งทำถูกอยู่แล้ว)
+        // เดิมตัวนี้ไม่ตรวจอะไรเลย = สร้างงานเข้าระบบได้โดยไม่ต้องล็อกอิน
+        const openGate = await adminGate(f.username, f.token);
+        if (!openGate.ok) return jsonResponse({ success: false, message: openGate.message });
         if (!f.contractor) return jsonResponse({ success: false, message: 'กรุณาเลือกผู้รับเหมาก่อนบันทึกเปิดงาน' });
         const mainId = (f.mainId || '').toString().trim();
         if (!mainId) return jsonResponse({ success: false, message: 'กรุณากรอกเลขที่ใบแจ้งซ่อมบำรุง' });
@@ -2625,24 +3848,87 @@ Deno.serve(async (req: Request) => {
       }
 
       case 'saveCloseIssue': {
+        // v1.0.68 — กดบันทึกครั้งเดียว ปิดงานได้หลายเลขทรัพย์สินพร้อมกัน
+        // รูปแบบใหม่ที่หน้าแอปส่งมา:
+        //   { kissflowId, branch, fixDate, actionTaken, closeDate, closeTime, username, token,
+        //     assets: [ { assetId, parts: [ {text, partCode, qty, billingType} ] } ] }
+        // ยังรับรูปแบบเดิม (assetId เดี่ยว + parts เป็นข้อความ) ได้ด้วย เผื่อแอปเวอร์ชันเก่ายังส่งมาแบบนั้น
         const [formData] = args;
         const f = formData || {};
         const jobId = (f.kissflowId || '').toString().trim();
         if (!jobId) return jsonResponse({ success: false, message: 'กรุณากรอกเลขที่ใบแจ้งซ่อมบำรุง' });
+
+        // v1.0.92 — ด่านกันวันที่เข้าแก้ไขผิด (เหตุผลดูที่ validateFixDate)
+        // ตรวจที่เซิร์ฟเวอร์ด้วยเสมอ ไม่พึ่งหน้าแอปอย่างเดียว — แอปเวอร์ชันเก่าที่ยังไม่มีตัวตรวจ
+        // ก็จะได้ข้อความบอกเหตุผลกลับไป แทนที่จะบันทึกผ่านแล้วงานหายจากรอบบิลเงียบ ๆ
+        const fixDateCheck = validateFixDate(f.fixDate);
+        if (!fixDateCheck.ok) return jsonResponse({ success: false, message: fixDateCheck.message });
+
+        // ---- ใครเลือกประเภทเก็บเงินได้ ----
+        // เฉพาะแอดมิน คนอื่นปิดงานได้ตามปกติแต่ทุกชิ้นถูกบังคับเป็น "เก็บเงินปกติ"
+        // ต้องตัดสินที่ฝั่งเซิร์ฟเวอร์ การล็อกช่องบนหน้าจออย่างเดียวกันไม่ได้จริง
+        // เพราะยิงคำขอตรงเข้ามาเองได้ และประเภทเก็บเงินมีผลกับเงินโดยตรง
+        // (เช่น ตั้งเป็นเคลมประกัน = ตัดตัวเองออกจากบิลฝั่งผู้รับเหมาได้)
+        const closeSession = await verifySession((f.username || '').toString(), (f.token || '').toString());
+        const canChooseBillingType = closeSession.valid && closeSession.role === 'admin';
+
+        // ---- รวบรวมเลขทรัพย์สินทั้งหมดที่ส่งมา ----
+        // เลขทรัพย์สินบังคับ 12 หลักเสมอ (ไม่ยอมรับค่าว่างหรือ '-')
+        // เพราะระบบใช้คู่ (เลขงาน + เลขทรัพย์สิน) เป็นตัวกันปิดงานซ้ำ ถ้าปล่อยว่างจะกันซ้ำไม่ได้จริง
+        const rawBlocks: any[] = (Array.isArray(f.assets) && f.assets.length > 0)
+          ? f.assets
+          : [{ assetId: f.assetId, parts: f.parts }];
+        const assetBlocks: { assetId: string; partsJson: any[]; partsText: string }[] = [];
+        const seenAssetIds = new Set<string>();
+        for (const blk of rawBlocks) {
+          const assetId = ((blk && blk.assetId) || '').toString().trim();
+          if (!/^\d{12}$/.test(assetId)) {
+            return jsonResponse({ success: false, message: 'เลขทรัพย์สินต้องเป็นตัวเลข 12 หลักเท่านั้น (ได้รับ "' + assetId + '")' });
+          }
+          // กรอกเลขเดิมซ้ำในหน้าเดียวกัน ต้องบอกตั้งแต่ตอนนี้
+          // ถ้าปล่อยผ่านไปถึง DB จะติด unique index แล้วได้ข้อความที่อ่านไม่รู้เรื่อง
+          if (seenAssetIds.has(assetId)) {
+            return jsonResponse({ success: false, message: 'เลขทรัพย์สิน "' + assetId + '" ถูกกรอกซ้ำในการบันทึกครั้งเดียวกัน กรุณาลบรายการที่ซ้ำออกก่อน' });
+          }
+          seenAssetIds.add(assetId);
+          const partsInput = Array.isArray(blk.parts)
+            ? blk.parts
+            : String((blk && blk.parts) || '').split('\n')
+                .map((l: string) => l.replace(/^\s*\d+[.)]\s*/, '').trim())
+                .filter((l: string) => l !== '' && l !== '-')
+                .map((t: string) => ({ text: t }));
+          const partsJson = normalizePartsJson(partsInput, canChooseBillingType);
+          if (partsJson.length === 0) {
+            return jsonResponse({ success: false, message: 'เลขทรัพย์สิน "' + assetId + '" ยังไม่ได้กรอกรายการอะไหล่ที่เปลี่ยน (ถ้าไม่ได้เปลี่ยนอะไหล่ ให้ระบุว่า "ไม่มีการเปลี่ยนอะไหล่")' });
+          }
+          // ---- จำนวนต้องมากกว่า 0 ----
+          // จำนวนที่กรอกตรงนี้ไหลไปเป็นจำนวนในตารางวางบิลโดยตรง ปล่อยให้เป็น 0 ไม่ได้
+          // เพราะจะได้แถวบิลราคารวม 0 บาทที่ดูเหมือนปกติ แล้วไปติดตอนกดส่งบิลทีหลัง
+          // (ตรวจเฉพาะรูปแบบใหม่ที่หน้าแอปส่งช่องจำนวนมาให้ ไม่บังคับกับแอปเวอร์ชันเก่าที่ส่งมาแต่ข้อความ)
+          if (Array.isArray(blk.parts)) {
+            const badQty = partsJson.find((p: any) => !(isFinite(p.qty) && p.qty > 0));
+            if (badQty) {
+              return jsonResponse({
+                success: false,
+                message: 'เลขทรัพย์สิน "' + assetId + '" รายการที่ ' + badQty.no
+                  + ' ("' + badQty.text + '") ยังไม่ได้กรอกจำนวน หรือกรอกเป็น 0 กรุณาใส่จำนวนที่เปลี่ยนจริง',
+              });
+            }
+          }
+          assetBlocks.push({ assetId, partsJson, partsText: partsTextFromJson(partsJson) });
+        }
+        if (assetBlocks.length === 0) {
+          return jsonResponse({ success: false, message: 'ยังไม่ได้กรอกเลขทรัพย์สินสักรายการ' });
+        }
+
         // ตรวจครบทุกช่องซ้ำอีกชั้นที่ฝั่งเซิร์ฟเวอร์ (เหตุผลเดียวกับ saveOpenIssue)
+        // "รายการอะไหล่" ไม่อยู่ในรายการนี้แล้ว เพราะย้ายไปตรวจรายเลขทรัพย์สินข้างบนแทน
         const closeRequired: [string, string][] = [
-          ['branch', 'สาขา'], ['fixDate', 'วันที่เข้าแก้ไข'], ['parts', 'รายการอะไหล่ที่เปลี่ยน'],
-          ['actionTaken', 'ดำเนินการ'],
+          ['branch', 'สาขา'], ['fixDate', 'วันที่เข้าแก้ไข'], ['actionTaken', 'ดำเนินการ'],
         ];
         for (const [key, label] of closeRequired) {
           const v = (f[key] === null || f[key] === undefined) ? '' : String(f[key]).trim();
           if (!v || v === '-') return jsonResponse({ success: false, message: 'กรอกข้อมูลไม่ครบ: ขาดช่อง "' + label + '"' });
-        }
-        // เลขทรัพย์สินบังคับ 12 หลักเสมอ (ไม่ยอมรับค่าว่างหรือ '-' อีกต่อไป)
-        // เพราะระบบใช้คู่ (เลขงาน + เลขทรัพย์สิน) เป็นตัวกันปิดงานซ้ำ ถ้าปล่อยว่างจะกันซ้ำไม่ได้จริง
-        const assetRaw = (f.assetId || '').toString().trim();
-        if (!/^\d{12}$/.test(assetRaw)) {
-          return jsonResponse({ success: false, message: 'เลขทรัพย์สินต้องเป็นตัวเลข 12 หลักเท่านั้น (ได้รับ "' + assetRaw + '")' });
         }
         const openCheck = await checkOpenIssueExists(jobId);
         if (openCheck.error) return jsonResponse({ success: false, message: 'ตรวจสอบเลขงานล้มเหลว: ' + openCheck.error });
@@ -2684,39 +3970,67 @@ Deno.serve(async (req: Request) => {
         // (แบบฟอร์มเดียวกัน กรอกซ้ำได้เรื่อย ๆ แค่เปลี่ยนเลขทรัพย์สิน) ยังคงกันซ้ำถ้าเป็นทรัพย์สินชิ้นเดิม (หรือไม่กรอกเลขทรัพย์สินทั้งคู่)
         // ยังมีโอกาสชนกันได้ถ้ากดบันทึกพร้อมกันเป๊ะ ๆ จึงดักจับ error 23505 (unique_violation) จาก DB อีกชั้นด้านล่าง
         // (ต้องสร้าง UNIQUE INDEX บน close_issues (job_id, asset_id) ไว้ก่อน ดู allow-multi-close-per-job.sql)
-        const assetId = (f.assetId || '').toString().trim() || '-';
-        const closeDupCheck = await checkCloseIssueExists(jobId, assetId);
-        if (closeDupCheck.error) return jsonResponse({ success: false, message: 'ตรวจสอบสถานะปิดงานล้มเหลว: ' + closeDupCheck.error });
-        if (closeDupCheck.exists) {
-          const assetMsg = assetId === '-' ? '' : ('เลขทรัพย์สิน "' + assetId + '" ');
-          return jsonResponse({ success: false, message: 'เลขที่ใบแจ้งซ่อมบำรุง "' + jobId + '" ' + assetMsg + 'ถูกปิดงานไปแล้ว ห้ามปิดซ้ำ (ถ้าเป็นทรัพย์สินคนละชิ้น กรุณาระบุเลขทรัพย์สินให้ต่างกัน)' });
+        // เช็คทีละเลขทรัพย์สินก่อนบันทึก เพื่อบอกได้ชัดว่าตัวไหนซ้ำ
+        const alreadyClosed: string[] = [];
+        for (const blk of assetBlocks) {
+          const dup = await checkCloseIssueExists(jobId, blk.assetId);
+          if (dup.error) return jsonResponse({ success: false, message: 'ตรวจสอบสถานะปิดงานล้มเหลว: ' + dup.error });
+          if (dup.exists) alreadyClosed.push(blk.assetId);
+        }
+        if (alreadyClosed.length > 0) {
+          return jsonResponse({
+            success: false,
+            message: 'เลขที่ใบแจ้งซ่อมบำรุง "' + jobId + '" ถูกปิดงานไปแล้วสำหรับเลขทรัพย์สิน ' + alreadyClosed.join(', ')
+              + ' ห้ามปิดซ้ำ (ถ้าเป็นทรัพย์สินคนละชิ้น กรุณาระบุเลขทรัพย์สินให้ต่างกัน)',
+          });
         }
         const pauseCheck = await checkIssuePausedStatus(jobId);
         if (pauseCheck.error) return jsonResponse({ success: false, message: 'ตรวจสอบสถานะพักงานล้มเหลว: ' + pauseCheck.error });
         if (pauseCheck.paused) return jsonResponse({ success: false, message: 'เลขงาน "' + jobId + '" กำลังถูกพักงานอยู่ ไม่สามารถปิดงานได้ กรุณากด "กลับมาทำงาน" ในแท็บพักงานก่อน' });
-        const row: any = {
-          job_id: jobId, branch: f.branch || '-', fix_date: f.fixDate || '-', parts: f.parts || '-',
-          asset_id: assetId, action_taken: f.actionTaken || '-', synced_to_sheet: false,
-        };
+
         // เดิมระบบไม่เคยใช้ค่าวันเวลาที่ผู้ใช้เลือกในหน้าปิดงานเลย ทำให้เวลาปิดงานเป็น "เวลาที่กดบันทึก" เสมอ
         // (ย้อนหลังไม่ได้) ตอนนี้บันทึกตามที่ผู้ใช้เลือกจริง โดยตีความเป็นเวลาไทยเหมือนหน้าเปิดงาน
         const closedIso = bangkokIsoTimestamp(f.closeDate, f.closeTime);
-        if (closedIso) row.created_at = closedIso;
-        const { error } = await supabase.from('close_issues').insert(row);
+        const rowsToInsert = assetBlocks.map((blk) => {
+          const row: any = {
+            job_id: jobId, branch: f.branch || '-', fix_date: f.fixDate || '-',
+            parts: blk.partsText || '-', parts_json: blk.partsJson,
+            asset_id: blk.assetId, action_taken: f.actionTaken || '-', synced_to_sheet: false,
+          };
+          if (closedIso) row.created_at = closedIso;
+          return row;
+        });
+        // insert หลายแถวในคำสั่งเดียว = สำเร็จทั้งหมดหรือไม่สำเร็จเลย
+        // สำคัญมากตรงนี้ เพราะถ้าบันทึกได้ครึ่งเดียวแล้วพัง ผู้ใช้จะกดซ้ำแล้วติดว่า "ปิดงานไปแล้ว"
+        // ทั้งที่ยังมีทรัพย์สินอีกหลายชิ้นที่ยังไม่ได้บันทึก ตามแก้ยากมาก
+        const { error } = await supabase.from('close_issues').insert(rowsToInsert);
         if (error) {
           if ((error as any).code === '23505') {
-            const assetMsg = assetId === '-' ? '' : ('เลขทรัพย์สิน "' + assetId + '" ');
-            return jsonResponse({ success: false, message: 'เลขที่ใบแจ้งซ่อมบำรุง "' + jobId + '" ' + assetMsg + 'ถูกปิดงานไปแล้ว (มีคนบันทึกซ้ำในเวลาไล่เลี่ยกัน) ห้ามปิดซ้ำ' });
+            return jsonResponse({ success: false, message: 'เลขที่ใบแจ้งซ่อมบำรุง "' + jobId + '" มีเลขทรัพย์สินที่เพิ่งถูกปิดงานไปในเวลาไล่เลี่ยกัน ห้ามปิดซ้ำ — ยังไม่มีรายการใดถูกบันทึก กรุณาโหลดหน้าใหม่แล้วตรวจสอบอีกครั้ง' });
+          }
+          // ยังไม่ได้รันไฟล์ migration ของ v1.0.68 = ยังไม่มีคอลัมน์ parts_json
+          // ต้องบอกให้ชัด ไม่งั้นจะเห็นแต่ข้อความดิบจากฐานข้อมูลที่เดาสาเหตุไม่ออก
+          if (/parts_json/.test((error as any).message || '')) {
+            return jsonResponse({ success: false, message: 'ฐานข้อมูลยังไม่มีคอลัมน์ parts_json — ต้องรันไฟล์ v1.0.68-ปิดงานหลายทรัพย์สิน-ส่งฟอร์มรูปทันที.sql ใน Supabase ก่อน (รายละเอียด: ' + (error as any).message + ')' });
           }
           return jsonResponse({ success: false, message: 'บันทึกล้มเหลว: ' + error.message });
         }
         await invalidateAdminBadgeCountsCache();
-        return jsonResponse({ success: true, message: 'บันทึกข้อมูล ปิดงาน เรียบร้อย! (Sheet จะอัปเดตเป็นรอบ ๆ ภายในไม่กี่นาที)' });
+        const assetCountMsg = assetBlocks.length === 1 ? '' : (' รวม ' + assetBlocks.length + ' เลขทรัพย์สิน');
+        return jsonResponse({
+          success: true,
+          message: 'บันทึกข้อมูล ปิดงาน เรียบร้อย!' + assetCountMsg
+            + ' — ผู้รับเหมาเห็นฟอร์มแนบรูปแล้ว งานจะเข้าตารางวางบิลได้หลังแอดมินยืนยันรูป'
+            + ' (Sheet จะอัปเดตเป็นรอบ ๆ ภายในไม่กี่นาที)',
+        });
       }
 
       case 'getOpenIssuesList': {
         // เดิม limit(1000) ทำให้พอข้อมูลเกิน 1000 แถว รายการเก่า ๆ จะหายไปจากหน้าเว็ป (แต่ยังอยู่ครบใน Supabase จริง)
         // ทำให้ดูเหมือนข้อมูลไม่ตรงกัน แก้เป็น limit สูงขึ้นมากแทน (เหมือนที่ใช้กับ Sync ไป Sheet)
+        const [username, token] = args;
+        const gate = await adminGate(username, token);
+        if (!gate.ok) return jsonResponse({ error: gate.message });
         const { data, error } = await supabase.from('open_issues').select('*').order('created_at', { ascending: false }).limit(20000);
         if (error) return jsonResponse({ error: error.message });
         return jsonResponse(data);
@@ -2725,6 +4039,9 @@ Deno.serve(async (req: Request) => {
       case 'getCloseIssuesList': {
         // เดิม limit(1000) ทำให้พอข้อมูลเกิน 1000 แถว รายการเก่า ๆ จะหายไปจากหน้าเว็ป (แต่ยังอยู่ครบใน Supabase จริง)
         // ทำให้ดูเหมือนข้อมูลไม่ตรงกัน แก้เป็น limit สูงขึ้นมากแทน (เหมือนที่ใช้กับ Sync ไป Sheet)
+        const [username, token] = args;
+        const gate = await adminGate(username, token);
+        if (!gate.ok) return jsonResponse({ error: gate.message });
         const { data, error } = await supabase.from('close_issues').select('*').order('created_at', { ascending: false }).limit(20000);
         if (error) return jsonResponse({ error: error.message });
         return jsonResponse(data);
@@ -2732,7 +4049,9 @@ Deno.serve(async (req: Request) => {
 
       // ==================== รายงานสถานะ ====================
       case 'getJobStatusReport': {
-        const [startDate, endDate] = args;
+        const [startDate, endDate, username, token] = args;
+        const gate = await adminGate(username, token);
+        if (!gate.ok) return jsonResponse({ error: gate.message });
         const rows = await computeJobStatusReportRows(startDate, endDate);
         return jsonResponse(rows);
       }
@@ -2769,6 +4088,7 @@ Deno.serve(async (req: Request) => {
           }
           const { data: sData, error: sErr } = await sq;
           if (sErr) return jsonResponse({ error: sErr.message });
+          if (session.role !== 'admin') return jsonResponse(stripCjPricesForContractor(sData || []));
           return jsonResponse(sData || []);
         }
 
@@ -2798,6 +4118,21 @@ Deno.serve(async (req: Request) => {
         const { data, error } = await q;
         if (error) return jsonResponse({ error: error.message });
 
+        // v1.0.72 — ติดป้าย photo_ok ให้แถวที่ยังไม่ได้ส่งบิล (เฉพาะฝั่งแอดมิน)
+        // แอดมินต้องเห็นตั้งแต่ในตารางว่าแถวไหนติดเรื่องรูปอยู่ จะได้ไม่ต้องกดส่งแล้วค่อยรู้
+        // (ผู้รับเหมาไม่ต้องรู้ เพราะเห็นเฉพาะแถวที่ส่งมาแล้วอยู่แล้ว)
+        if (session.role === 'admin' && data && data.length > 0) {
+          const unsentJobs = Array.from(new Set(
+            data.filter((r: any) => r.sent_to_contractor !== true).map((r: any) => r.customer_case).filter(Boolean),
+          )) as string[];
+          if (unsentJobs.length > 0) {
+            const okMap = await photoOkMapForJobs(unsentJobs);
+            data.forEach((r: any) => {
+              if (r.sent_to_contractor !== true && r.customer_case) r.photo_ok = okMap[r.customer_case] !== false;
+            });
+          }
+        }
+
         // ---- ฝั่งผู้รับเหมา: ซ่อน "ทั้งรอบ" เมื่อแอดมินอนุมัติครบทุกงานในรอบแล้วเท่านั้น ----
         // พฤติกรรมเดิม: กรอง completed_at ทีละแถว พออนุมัติเลขงานเดียว งานนั้นหายจากตารางทันที
         // ผู้รับเหมาเห็นยอดรวมของรอบลดลงเรื่อย ๆ ทั้งที่รอบยังไม่จบ สับสนว่างานหายไปไหน
@@ -2811,12 +4146,565 @@ Deno.serve(async (req: Request) => {
             if (!r.completed_at) roundState[key] = true;
             else if (!(key in roundState)) roundState[key] = false;
           });
-          return jsonResponse(rows.filter((r: any) => {
+          return jsonResponse(stripCjPricesForContractor(rows.filter((r: any) => {
             const key = String(r.round_no === null || r.round_no === undefined ? '' : r.round_no);
             return roundState[key] === true;
-          }));
+          })));
         }
+        // โหมดเลือกดูรอบย้อนหลังไม่ผ่านบล็อกด้านบน จึงต้องกั้นราคา CJ ตรงนี้อีกทาง
+        if (session.role !== 'admin') return jsonResponse(stripCjPricesForContractor(data || []));
         return jsonResponse(data);
+      }
+
+      // ==================== ทำไมค้นเลขงานในตารางวางบิลแล้วไม่เจอ (v1.0.71) ====================
+      // ตารางวางบิลค้นได้เฉพาะงานที่ "ถูกดึงเข้ารอบบิลแล้ว" เท่านั้น
+      // งานที่ยังไม่ถูกดึงเข้ามาจะหาไม่เจอ ซึ่งเกิดได้จากหลายสาเหตุที่หน้าตาเหมือนกันเป๊ะ
+      // ("ไม่พบเลขงาน" เฉย ๆ) แต่แก้คนละทางกันหมด
+      //
+      // ฟังก์ชันนี้ไล่เช็คทีละขั้นแล้วบอกกลับไปตรง ๆ ว่าติดอยู่ขั้นไหนและต้องทำอะไรต่อ
+      // เป็นการอ่านอย่างเดียว ไม่แก้ไขอะไรในฐานข้อมูลเลย
+      // ==================== ตรวจความพร้อมของโปรเจกต์ (v1.0.73) ====================
+      // มีไว้เพราะบั๊กประเภท "ลืมตั้งค่าอะไรบางอย่างในโปรเจกต์" จะไม่โผล่ตอน deploy
+      // แต่ไปโผล่ตอนมีคนใช้งานจริงถึงขั้นนั้นพอดี แล้วขึ้นข้อความภาษาอังกฤษสั้น ๆ ที่ไม่บอกอะไรเลย
+      // (เช่น "Bucket not found" ที่ผู้รับเหมาเจอตอนกดส่งรูป — กว่าจะรู้ว่าขาดอะไรก็เสียเวลาไปมาก)
+      //
+      // ตรวจเฉพาะของที่ตรวจได้โดย "ไม่แตะต้องข้อมูล" เท่านั้น — อ่านอย่างเดียวล้วน ๆ
+      // ฟังก์ชันฐานข้อมูล (next_billing_round_no / claim_billing_jobs) ไม่ได้อยู่ในรายการนี้
+      // เพราะเรียกทีก็เดินเลขรอบบิลจริงทุกครั้ง ตรวจแล้วจะทำข้อมูลเพี้ยนเสียเอง
+      case 'checkSystemReadiness': {
+        const [username, token] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ ok: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (session.role !== 'admin') return jsonResponse({ ok: false, message: 'เฉพาะแอดมินเท่านั้นที่ตรวจได้' });
+
+        const checks: { name: string; ok: boolean; level: string; detail: string }[] = [];
+        const add = (name: string, ok: boolean, level: string, detail: string) => checks.push({ name, ok, level, detail });
+
+        // ---- ตาราง ----
+        // นับแบบ head:true = ไม่ดึงข้อมูลจริงสักแถว เอาแค่ว่าตารางมีอยู่และอ่านได้ไหม
+        const tables = [
+          'open_issues', 'close_issues', 'pause_records', 'billing_documents',
+          'job_form_submissions', 'branches', 'parts', 'users', 'app_secrets',
+          'billing_row_comments', 'pm_billing_documents',
+        ];
+        for (const t of tables) {
+          const { error } = await supabase.from(t).select('*', { count: 'exact', head: true });
+          add('ตาราง ' + t, !error, error ? 'error' : 'ok',
+            error ? ('อ่านไม่ได้: ' + error.message) : 'อ่านได้ปกติ');
+        }
+
+        // ---- คอลัมน์ที่เพิ่มมาในรอบหลัง ๆ ----
+        // ขาดคอลัมน์พวกนี้ = ยังไม่ได้รันไฟล์ SQL ของรอบนั้น ระบบจะพังเฉพาะบางปุ่ม
+        const columnChecks: { table: string; column: string; sqlFile: string }[] = [
+          { table: 'close_issues', column: 'parts_json', sqlFile: 'v1.0.68' },
+          { table: 'billing_documents', column: 'contractor_review_status', sqlFile: 'v1.0.69' },
+          { table: 'billing_documents', column: 'revision_no', sqlFile: 'v1.0.69' },
+          { table: 'job_form_submissions', column: 'finished_at', sqlFile: 'v1.0.57' },
+          { table: 'job_form_submissions', column: 'checker_by', sqlFile: 'v1.0.62' },
+        ];
+        for (const c of columnChecks) {
+          const { error } = await supabase.from(c.table).select(c.column, { count: 'exact', head: true });
+          add('คอลัมน์ ' + c.table + '.' + c.column, !error, error ? 'error' : 'ok',
+            error ? ('ยังไม่มีคอลัมน์นี้ — ให้รันไฟล์ SQL ' + c.sqlFile) : 'มีแล้ว');
+        }
+
+        // ---- ที่เก็บไฟล์รูป ----
+        // จุดที่พลาดมาแล้วจริง: สคริปต์ตั้งระบบทดสอบคัดลอกแต่ตารางในสคีมา public
+        // ส่วน Storage อยู่คนละสคีมา จึงไม่เคยถูกคัดลอกตามมา
+        {
+          const { data: buckets, error } = await supabase.storage.listBuckets();
+          if (error) {
+            add('ที่เก็บไฟล์ ' + JOB_FORM_BUCKET, false, 'error', 'อ่านรายการถังไม่ได้: ' + error.message);
+          } else {
+            const b = (buckets || []).find((x: any) => x.id === JOB_FORM_BUCKET || x.name === JOB_FORM_BUCKET);
+            if (!b) {
+              add('ที่เก็บไฟล์ ' + JOB_FORM_BUCKET, false, 'error',
+                'ยังไม่มีถังนี้ — ผู้รับเหมาจะส่งรูปไม่ได้ (ขึ้น Bucket not found) ให้รันไฟล์ SQL v1.0.73');
+            } else if (!b.public) {
+              // อาการนี้หายากกว่า เพราะอัปโหลดผ่าน แต่พอกดเปิดไฟล์แล้วเปิดไม่ขึ้น
+              add('ที่เก็บไฟล์ ' + JOB_FORM_BUCKET, false, 'warn',
+                'ถังนี้ไม่ได้ตั้งเป็นสาธารณะ — อัปโหลดได้แต่แอดมินจะเปิดไฟล์ไม่ขึ้น ให้รันไฟล์ SQL v1.0.73');
+            } else {
+              add('ที่เก็บไฟล์ ' + JOB_FORM_BUCKET, true, 'ok', 'มีถังและเป็นสาธารณะแล้ว');
+            }
+          }
+        }
+
+        // ---- ค่าตั้งค่าใน app_secrets ----
+        {
+          const { data: rows } = await supabase.from('app_secrets').select('key,value');
+          const map: Record<string, string> = {};
+          (rows || []).forEach((r: any) => { map[r.key] = r.value; });
+
+          const gate = map['photo_form_gate_start_at'];
+          add('กฎ "ต้องยืนยันรูปก่อนส่งบิล"', !!gate, gate ? 'ok' : 'warn',
+            !gate ? 'ยังไม่ได้ตั้งค่า — ให้รันไฟล์ SQL v1.0.68'
+              : (String(gate).toLowerCase() === 'off' ? 'ปิดกฎไว้ (ส่งบิลได้โดยไม่ต้องยืนยันรูป)'
+                : ('เริ่มมีผลตั้งแต่ ' + gate)));
+
+          // v1.0.94 — กันลืมปลดล็อกทิ้งไว้แล้วผู้รับเหมาเข้าไม่ได้ทั้งวันโดยไม่มีใครรู้สาเหตุ
+          const lockRaw = String(map['login_lock'] || '').trim().toLowerCase();
+          const locked = lockRaw === 'on' || lockRaw.startsWith('on|') || lockRaw === 'admin_only' || lockRaw.startsWith('admin_only|');
+          add('สถานะการเปิดใช้งาน', !locked, locked ? 'warn' : 'ok',
+            locked ? 'ระบบถูกล็อกไว้ ตอนนี้เข้าได้เฉพาะแอดมิน ผู้รับเหมาเข้าไม่ได้ — ถ้าอัปเดตเสร็จแล้วให้กด "ปลดล็อก"'
+              : 'เปิดใช้งานปกติ ทุกคนเข้าได้');
+
+          const hasGoogle = !!map['google_service_account_email'] && !!map['google_service_account_private_key'];
+          const hasSheet = !!map['google_sync_spreadsheet_id'];
+          // ⚠ ในโปรเจกต์ทดสอบ "ไม่มี" คือถูกต้องแล้ว ห้ามเอาของจริงมาใส่
+          // เพราะจะทำให้ระบบทดสอบเขียนทับ Google Sheet ตัวจริงของทีมโดยไม่มีอะไรเตือน
+          add('ซิงค์ Google Sheet', hasGoogle && hasSheet, (hasGoogle && hasSheet) ? 'ok' : 'warn',
+            (hasGoogle && hasSheet) ? 'ตั้งค่าครบ ซิงค์ได้'
+              : 'ยังไม่ได้ตั้งค่า — ซิงค์ไม่ได้ (ถ้านี่คือโปรเจกต์ทดสอบ ถูกต้องแล้ว ห้ามใส่ค่าของจริงลงไป)');
+        }
+
+        // ---- บิลค้างของงานที่ไม่ต้องส่งให้ผู้รับเหมา (v1.0.74) ----
+        // ก่อน v1.0.74 แถวพวกนี้ถูกตั้งเป็น 'pending' ทั้งที่ผู้รับเหมามองไม่เห็น
+        // จึงค้างรอคำยืนยันที่ไม่มีวันมา ต้องรันไฟล์ SQL v1.0.74 เพื่อเก็บกวาดของเก่า
+        {
+          const { count, error } = await supabase.from('billing_documents')
+            .select('id', { count: 'exact', head: true })
+            .eq('sent_to_contractor', true).is('completed_at', null)
+            .eq('contractor_review_status', 'pending')
+            .in('billing_type', BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
+          if (error) {
+            add('บิลค้างของงานที่ไม่ต้องส่ง ผรม.', true, 'ok', 'ข้ามการตรวจ (ยังไม่มีคอลัมน์ที่ใช้ตรวจ)');
+          } else if ((count || 0) > 0) {
+            add('บิลค้างของงานที่ไม่ต้องส่ง ผรม.', false, 'warn',
+              'มี ' + count + ' แถว (เคลมประกัน/ใบเสนอราคา) ค้างรอคำยืนยันจากผู้รับเหมาที่ไม่มีวันมา — ให้รันไฟล์ SQL v1.0.74');
+          } else {
+            add('บิลค้างของงานที่ไม่ต้องส่ง ผรม.', true, 'ok', 'ไม่มีแถวค้าง');
+          }
+        }
+
+        // ---- แจ้งเตือน SLA ผ่าน Telegram (v1.0.75) ----
+        {
+          const cfg = await loadTelegramConfig();
+          const hasBasic = !!cfg.botToken && !!cfg.chatId;
+          add('แจ้งเตือน SLA ทาง Telegram', hasBasic, hasBasic ? 'ok' : 'warn',
+            !hasBasic
+              ? 'ยังไม่ได้ตั้งค่า — ตั้ง telegram_bot_token และ telegram_sla_chat_id ใน app_secrets (ถ้านี่คือโปรเจกต์ทดสอบ ถูกต้องแล้ว ไม่ต้องใส่)'
+              : (cfg.cronSecret
+                  ? 'ตั้งค่าครบ และมีรหัสลับ cron — แจ้งเตือนอัตโนมัติได้'
+                  : 'ส่งได้ด้วยปุ่มทดสอบ แต่ยังไม่มี telegram_cron_secret จึงยังแจ้งอัตโนมัติทุก 15 นาทีไม่ได้ (ดูไฟล์ SQL v1.0.75)'));
+        }
+
+        // ---- ระบบ PM (คนละโปรเจกต์) ----
+        // ค่านี้ฝังไว้ในโค้ดและชี้ไปที่ระบบ PM ตัวจริงเสมอ แม้แต่ในชุดทดสอบ
+        // อ่านอย่างเดียว ไม่เขียนกลับ แต่ต้องรู้ไว้ว่าเลข PM ที่เห็นในชุดทดสอบคือของจริง
+        add('ระบบ PM (ดึงข้อมูลข้ามโปรเจกต์)', true, 'warn',
+          'ชี้ไปที่ระบบ PM ตัวจริงเสมอ (อ่านอย่างเดียว ไม่เขียนกลับ) — ข้อมูล PM ที่เห็นในชุดทดสอบคือข้อมูลจริง');
+
+        const errorCount = checks.filter((c) => c.level === 'error').length;
+        const warnCount = checks.filter((c) => c.level === 'warn').length;
+        return jsonResponse({
+          ok: errorCount === 0,
+          errorCount, warnCount, checks,
+          message: errorCount > 0
+            ? ('พบปัญหาที่ต้องแก้ ' + errorCount + ' จุด' + (warnCount > 0 ? (' และข้อควรรู้อีก ' + warnCount + ' จุด') : ''))
+            : (warnCount > 0 ? ('ใช้งานได้ปกติ · มีข้อควรรู้ ' + warnCount + ' จุด') : 'ครบทุกอย่าง พร้อมใช้งาน'),
+        });
+      }
+
+      // ==================== ยิงแจ้งเตือน SLA เข้า Telegram (v1.0.75) ====================
+      // เรียกได้ 2 ทาง
+      //   1. pg_cron ยิงมาทุก ๆ 15 นาที พร้อมรหัสลับใน args[0] (ทำงานแม้ไม่มีใครเปิดแอป
+      //      ซึ่งจำเป็น เพราะ SLA นับนาฬิกาจริง 24 ชม. รวมกลางคืนและวันหยุด)
+      //   2. แอดมินกดปุ่มทดสอบในแอป (ส่ง username/token มาแบบปกติ)
+      //
+      // กันสแปม: จำไว้ในตาราง sla_notifications ว่างานไหน/ช่วงไหน แจ้งไประดับอะไรแล้ว
+      //   - ช่วงทั่วไป: แจ้งตอนขึ้นเหลือง 1 ครั้ง แล้วตอนขึ้นแดงอีก 1 ครั้ง (ไม่ยิงซ้ำระดับเดิม)
+      //   - ช่วง "ตีกลับ → ส่งใหม่": ยิงซ้ำทุก 30 นาทีตามกติกาเดิม (ดูจากเลขรอบเตือนที่เพิ่มขึ้น)
+      //   - ถ้าเวลาเริ่มของช่วงเปลี่ยน (เช่นถูกตีกลับรอบใหม่) = รีเซ็ต เริ่มนับใหม่หมด
+      case 'runSlaNotifications': {
+        const [a0, a1] = args;
+        const cfg = await loadTelegramConfig();
+
+        // ---- ตรวจสิทธิ์: รหัสลับของ cron หรือ แอดมินที่ล็อกอินอยู่ ----
+        let authed = false;
+        if (cfg.cronSecret && a0 && String(a0) === cfg.cronSecret) authed = true;
+        else { const sess = await verifySession(a0, a1); authed = sess.valid && sess.role === 'admin'; }
+        if (!authed) return jsonResponse({ success: false, message: 'ไม่มีสิทธิ์เรียกฟังก์ชันนี้' }, 403);
+
+        // ยังไม่ได้ตั้งค่า = ไม่ทำอะไร (โปรเจกต์ทดสอบจะตกมาทางนี้เสมอ ถือว่าถูกต้อง)
+        if (!cfg.botToken || !cfg.chatId) {
+          return jsonResponse({ success: true, sent: 0, note: 'ยังไม่ได้ตั้งค่า Telegram (telegram_bot_token / telegram_sla_chat_id)' });
+        }
+
+        // ---- อ่านสถานะที่เคยแจ้งไปแล้ว ----
+        // ถ้ายังไม่มีตาราง = ยังไม่ได้รัน SQL v1.0.75 — หยุดไว้ ไม่ยิงทั้งที่ไม่มีตัวกันซ้ำ
+        // (ถ้ายิงเลยจะสแปมทุก 15 นาทีเพราะจำไม่ได้ว่าเคยแจ้งอะไรไปแล้ว)
+        const stateRes = await supabase.from('sla_notifications').select('*');
+        if (stateRes.error) {
+          if (/relation|does not exist|schema cache|table/i.test(stateRes.error.message || '')) {
+            return jsonResponse({ success: false, message: 'ยังไม่ได้รันไฟล์ SQL v1.0.75 (ไม่มีตาราง sla_notifications) — ยังไม่ยิงแจ้งเตือนเพื่อกันสแปม' });
+          }
+          return jsonResponse({ success: false, message: 'อ่านสถานะแจ้งเตือนล้มเหลว: ' + stateRes.error.message });
+        }
+        const stateKey = (mainId: any, assetId: any, stageKey: any) =>
+          String(mainId || '') + '||' + String(assetId || '') + '||' + String(stageKey || '');
+        const stateMap: Record<string, any> = {};
+        (stateRes.data || []).forEach((r: any) => { stateMap[stateKey(r.main_id, r.asset_id, r.stage_key)] = r; });
+
+        // ---- คำนวณสถานะงานทั้งหมด (ใช้ตัวเดียวกับรายงานสถานะ) ----
+        const rows = await computeJobStatusReportRows();
+
+        const alerts: { line: string; upsert: any }[] = [];
+        const nowIso = new Date().toISOString();
+        rows.forEach((row: any) => {
+          const stages: any[] = Array.isArray(row.sla_stages) ? row.sla_stages : [];
+          stages.forEach((st: any) => {
+            if (!st || st.finished) return;   // ช่วงที่จบแล้วไม่ต้องเตือน
+            const assetKeyPart = row.asset_id || '';
+            const k = stateKey(row.main_id, assetKeyPart, st.key);
+            const prev = stateMap[k];
+            // ช่วงถูกรีสตาร์ท (เวลาเริ่มไม่ตรงกับที่จำไว้) = เริ่มนับใหม่
+            const prevFresh = prev && String(prev.stage_started_at || '') === String(st.startedAt || '') ? prev : null;
+
+            let shouldSend = false;
+            if (st.key === 'resend') {
+              // เตือนซ้ำทุก 30 นาที: ยิงเมื่อ "รอบเตือน" เพิ่มขึ้นจากครั้งก่อน (และต้องมีอย่างน้อย 1 รอบ)
+              const prevRem = prevFresh ? (prevFresh.last_reminder || 0) : 0;
+              if ((st.reminders || 0) > prevRem) shouldSend = true;
+            } else {
+              // ช่วงทั่วไป: ยิงเมื่อระดับแย่ลงกว่าที่เคยแจ้ง (none→เหลือง, เหลือง→แดง)
+              const curRank = SLA_LEVEL_RANK[st.state] || 0;
+              const prevRank = prevFresh ? (SLA_LEVEL_RANK[prevFresh.last_level] || 0) : 0;
+              if (curRank >= 1 && curRank > prevRank) shouldSend = true;
+            }
+            if (!shouldSend) return;
+
+            alerts.push({
+              line: telegramSlaLine(row, st),
+              upsert: {
+                main_id: String(row.main_id || ''),
+                asset_id: String(assetKeyPart),
+                stage_key: st.key,
+                last_level: st.state,
+                last_reminder: st.reminders || 0,
+                stage_started_at: st.startedAt || null,
+                last_sent_at: nowIso,
+              },
+            });
+          });
+        });
+
+        if (alerts.length === 0) return jsonResponse({ success: true, sent: 0, note: 'ไม่มีงานที่ถึงเกณฑ์ต้องแจ้งรอบนี้' });
+
+        // ---- รวมเป็นข้อความก้อนเดียว (แบ่งก้อนถ้ายาวเกินลิมิต Telegram ~4096 ตัว) ----
+        // ยิงก้อนเดียวดีกว่ายิงทีละงาน — กันโดน Telegram จำกัดจำนวนข้อความต่อวินาที และอ่านรวมทีเดียวจบ
+        const overdue = alerts.filter((a) => a.line.startsWith('🔴')).length;
+        const warning = alerts.length - overdue;
+        const header = 'แจ้งเตือน SLA · เกินกำหนด ' + overdue + ' · ใกล้ครบ ' + warning
+          + '\n(เวลา ' + new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }) + ')';
+        const chunks: string[] = [];
+        let cur = header;
+        alerts.forEach((a) => {
+          const next = cur + '\n\n' + a.line;
+          if (next.length > 3500) { chunks.push(cur); cur = header + '\n\n' + a.line; }
+          else cur = next;
+        });
+        chunks.push(cur);
+
+        let sentOk = 0;
+        const errors: string[] = [];
+        for (const chunk of chunks) {
+          const r = await sendTelegramMessage(cfg.botToken, cfg.chatId, chunk);
+          if (r.ok) sentOk++; else errors.push(r.error || 'ไม่ทราบสาเหตุ');
+        }
+
+        // ---- บันทึกสถานะเฉพาะเมื่อส่งสำเร็จ ----
+        // ถ้าส่งไม่ผ่านแล้วยังบันทึก จะกลายเป็น "จำว่าแจ้งแล้ว" ทั้งที่ยังไม่ถึงมือใคร = เงียบหายรอบนั้น
+        if (sentOk === chunks.length) {
+          const { error: upErr } = await supabase.from('sla_notifications')
+            .upsert(alerts.map((a) => a.upsert), { onConflict: 'main_id,asset_id,stage_key' });
+          if (upErr) errors.push('บันทึกสถานะล้มเหลว: ' + upErr.message);
+        }
+
+        return jsonResponse({
+          success: errors.length === 0,
+          sent: alerts.length,
+          chunks: chunks.length,
+          message: errors.length === 0
+            ? ('ส่งแจ้งเตือน ' + alerts.length + ' งานเข้า Telegram แล้ว')
+            : ('ส่งได้บางส่วน/มีปัญหา: ' + errors.join(' · ')),
+        });
+      }
+
+      // ปุ่ม "ทดสอบ Telegram" ในหน้าตรวจความพร้อม — ยิงข้อความทดสอบ 1 ข้อความ
+      case 'sendTelegramTest': {
+        const [username, token] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้น' });
+        const cfg = await loadTelegramConfig();
+        if (!cfg.botToken || !cfg.chatId) {
+          return jsonResponse({ success: false, message: 'ยังไม่ได้ตั้งค่า Telegram — ต้องมี telegram_bot_token และ telegram_sla_chat_id ใน app_secrets ก่อน' });
+        }
+        const r = await sendTelegramMessage(cfg.botToken, cfg.chatId,
+          'ทดสอบการแจ้งเตือน SLA จากระบบ CP9X — ถ้าเห็นข้อความนี้แปลว่าตั้งค่าถูกต้องแล้ว (กดโดย ' + (session.displayName || session.username) + ')');
+        return r.ok
+          ? jsonResponse({ success: true, message: 'ส่งข้อความทดสอบเข้า Telegram แล้ว — ไปดูในกลุ่ม/แชทที่ตั้งไว้' })
+          : jsonResponse({ success: false, message: 'ส่งไม่สำเร็จ: ' + (r.error || '') + ' (เช็ค bot token / chat id / บอทถูกเชิญเข้ากลุ่มหรือยัง)' });
+      }
+
+      // ==================== ตั้งค่า Telegram จากในแอป (v1.0.75) ====================
+      // ช่วยให้แอดมินตั้งค่าได้โดยไม่ต้องไปแก้ URL / อ่าน JSON / แก้ SQL เอง
+      //   telegramSetupStatus  — สรุปสถานะ + สร้างรหัสลับ cron ให้ถ้ายังไม่มี (เอาไปวางใน SQL)
+      //   saveTelegramSettings — บันทึกโทเคนบอท / chat id ลง app_secrets
+      //   telegramDiscoverChats— ยิง getUpdates แล้วลิสต์กลุ่ม/แชทที่บอทเห็น ให้กดเลือกได้เลย
+      //
+      // ⚠ ทั้ง 3 case ต้องเป็นแอดมินเท่านั้น เพราะเปิดเผย/แก้ค่าลับของระบบ
+      case 'telegramSetupStatus': {
+        const [username, token] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้น' });
+        const cfg = await loadTelegramConfig();
+        // ยังไม่มีรหัสลับ cron = สร้างให้เลย 1 ตัว แล้วบันทึกไว้ จะได้เอาไปวางใน SQL ได้ทันที
+        // (สร้างตอนเปิดหน้านี้ ถือว่าแอดมินเป็นคนสั่งโดยการเปิดดู ไม่ใช่สร้างมั่ว ๆ เอง)
+        let cronSecret = cfg.cronSecret;
+        if (!cronSecret) {
+          cronSecret = (genToken() + genToken()).replace(/[^A-Za-z0-9]/g, '').slice(0, 40);
+          const { error } = await supabase.from('app_secrets')
+            .upsert({ key: 'telegram_cron_secret', value: cronSecret }, { onConflict: 'key' });
+          if (error) cronSecret = '';   // บันทึกไม่ได้ก็ไม่เป็นไร แค่โชว์ไม่ได้ ไม่ทำให้ทั้งหน้าพัง
+        }
+        return jsonResponse({
+          success: true,
+          hasToken: !!cfg.botToken,
+          // โชว์แค่ท้ายโทเคน กันหลุดเต็ม ๆ บนจอ
+          tokenHint: cfg.botToken ? ('••••' + cfg.botToken.slice(-6)) : '',
+          chatId: cfg.chatId || '',
+          cronSecret: cronSecret || '',
+        });
+      }
+
+      case 'saveTelegramSettings': {
+        const [username, token, botTokenRaw, chatIdRaw] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้น' });
+        const rows: any[] = [];
+        const botToken = (botTokenRaw === null || botTokenRaw === undefined) ? '' : String(botTokenRaw).trim();
+        const chatId = (chatIdRaw === null || chatIdRaw === undefined) ? '' : String(chatIdRaw).trim();
+        // ส่งมาเฉพาะช่องที่กรอก — ช่องว่างแปลว่า "ไม่แตะค่าเดิม" (กันเผลอลบโทเคนตอนแก้แค่ chat id)
+        if (botToken) rows.push({ key: 'telegram_bot_token', value: botToken });
+        if (chatId) rows.push({ key: 'telegram_sla_chat_id', value: chatId });
+        if (rows.length === 0) return jsonResponse({ success: false, message: 'ยังไม่ได้กรอกค่าอะไรมาบันทึก' });
+        const { error } = await supabase.from('app_secrets').upsert(rows, { onConflict: 'key' });
+        if (error) return jsonResponse({ success: false, message: 'บันทึกล้มเหลว: ' + error.message });
+        return jsonResponse({ success: true, message: 'บันทึกค่า Telegram แล้ว (' + rows.length + ' ค่า)' });
+      }
+
+      case 'telegramDiscoverChats': {
+        const [username, token] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้น' });
+        const cfg = await loadTelegramConfig();
+        if (!cfg.botToken) return jsonResponse({ success: false, message: 'ยังไม่ได้บันทึกโทเคนบอท — กรอกโทเคนแล้วกดบันทึกก่อน' });
+        try {
+          const res = await fetch('https://api.telegram.org/bot' + cfg.botToken + '/getUpdates', { method: 'GET' });
+          const data = await res.json().catch(() => null);
+          if (!res.ok || !data || data.ok !== true) {
+            const desc = (data && data.description) ? data.description : ('HTTP ' + res.status);
+            return jsonResponse({ success: false, message: 'เรียก Telegram ไม่สำเร็จ: ' + desc + ' (เช็คว่าโทเคนถูกต้อง)' });
+          }
+          // ดึง chat จากทุกชนิดอัปเดตที่มี chat ติดมา (ข้อความ/แชแนล/บอทถูกเชิญเข้ากลุ่ม)
+          const seen: Record<string, any> = {};
+          (data.result || []).forEach((u: any) => {
+            const chat = (u.message && u.message.chat)
+              || (u.channel_post && u.channel_post.chat)
+              || (u.my_chat_member && u.my_chat_member.chat)
+              || (u.chat_member && u.chat_member.chat) || null;
+            if (chat && chat.id !== undefined && seen[String(chat.id)] === undefined) {
+              seen[String(chat.id)] = {
+                id: String(chat.id),
+                title: chat.title || chat.username || [chat.first_name, chat.last_name].filter(Boolean).join(' ') || '(ไม่มีชื่อ)',
+                type: chat.type || '',
+              };
+            }
+          });
+          const chats = Object.keys(seen).map((k) => seen[k]);
+          return jsonResponse({
+            success: true,
+            chats,
+            note: chats.length === 0
+              ? 'ยังไม่เจอกลุ่ม/แชท — ให้เชิญบอทเข้ากลุ่ม แล้วพิมพ์อะไรก็ได้ในกลุ่ม 1 ข้อความ จากนั้นกดค้นหาอีกครั้ง (Telegram เก็บ getUpdates ไว้แค่ ~24 ชม.)'
+              : '',
+          });
+        } catch (e) {
+          return jsonResponse({ success: false, message: 'เชื่อมต่อ Telegram ล้มเหลว: ' + String(e) });
+        }
+      }
+
+      case 'explainJobNotInBilling': {
+        const [username, token, jobIdRaw] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ found: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        const jobId = (jobIdRaw || '').toString().trim();
+        if (!jobId) return jsonResponse({ found: false, message: '' });
+
+        // ---- ขั้นที่ 1: อยู่ในตารางวางบิลแล้วหรือยัง ----
+        const { data: billRows } = await supabase.from('billing_documents')
+          .select('round_no,contractor,sent_to_contractor,completed_at').eq('customer_case', jobId);
+        if (billRows && billRows.length > 0) {
+          // ผู้รับเหมาเห็นได้เฉพาะงานของตัวเองที่ส่งบิลแล้ว — ตอบตามที่เขาเห็นได้จริง
+          if (session.role !== 'admin') {
+            const mine = billRows.filter((r: any) => r.contractor === session.displayName && r.sent_to_contractor === true);
+            if (mine.length === 0) {
+              return jsonResponse({ found: true, level: 'info', message: 'เลขงาน "' + jobId + '" มีอยู่ในระบบ แต่ยังไม่ได้ส่งบิลมาให้คุณ' });
+            }
+            return jsonResponse({ found: true, level: 'info', message: 'เลขงาน "' + jobId + '" อยู่ในตารางวางบิลแล้ว ' + mine.length + ' แถว — ถ้าไม่เห็นในตาราง ให้ล้างตัวกรองรอบบิลแล้วลองใหม่' });
+          }
+          const rounds = Array.from(new Set(billRows.map((r: any) => r.round_no).filter((v: any) => v !== null && v !== undefined)));
+          const done = billRows.filter((r: any) => r.completed_at).length;
+          return jsonResponse({
+            found: true, level: 'info',
+            message: 'เลขงาน "' + jobId + '" อยู่ในตารางวางบิลแล้ว ' + billRows.length + ' แถว (รอบบิลที่ ' + rounds.join(', ') + ')'
+              + (done > 0 ? ' · ตัดบิลไปแล้ว ' + done + ' แถว' : '')
+              + ' — ถ้าไม่เห็นในตาราง ให้ล้างตัวกรอง "รอบบิล" กับ "ผู้รับเหมา" แล้วลองใหม่',
+          });
+        }
+
+        // จากตรงนี้ลงไปคือ "ยังไม่อยู่ในตารางวางบิล" — ไล่หาสาเหตุ
+        // ผู้รับเหมาไม่ต้องรู้รายละเอียดขั้นตอนภายในของฝั่งบริษัท ตอบสั้น ๆ พอ
+        if (session.role !== 'admin') {
+          return jsonResponse({ found: false, level: 'info', message: 'เลขงาน "' + jobId + '" ยังไม่ถูกส่งบิลมาให้คุณ' });
+        }
+
+        const [openRes2, closeRes2, subRes2] = await Promise.all([
+          supabase.from('open_issues').select('main_id,contractor').eq('main_id', jobId).limit(1),
+          supabase.from('close_issues').select('asset_id,created_at,parts,parts_json').eq('job_id', jobId),
+          supabase.from('job_form_submissions').select('status,submitted_at').eq('customer_case', jobId).order('submitted_at', { ascending: true }),
+        ]);
+
+        if (!openRes2.data || openRes2.data.length === 0) {
+          return jsonResponse({ found: false, level: 'error', message: 'ยังไม่มีการ "เปิดงาน" เลขที่ "' + jobId + '" ในระบบ — ต้องบันทึกเปิดงานก่อน (หรือเลขงานพิมพ์ผิด)' });
+        }
+        const closeRows2 = closeRes2.data || [];
+        if (closeRows2.length === 0) {
+          return jsonResponse({ found: false, level: 'warn', message: 'เลขงาน "' + jobId + '" เปิดงานแล้วแต่ยังไม่ได้ "ปิดงาน" จึงยังวางบิลไม่ได้' });
+        }
+
+        // ---- ขั้นที่ 4: ติดประตูรูปหรือเปล่า ----
+        const gate = await loadPhotoGateStartAt();
+        const subs2 = subRes2.data || [];
+        const lastSub2 = subs2.length > 0 ? subs2[subs2.length - 1] : null;
+        const needsPhotoFn2 = await buildNeedsPhotoFn(closeRows2);
+        const needsPhoto = gate && closeRows2.some((c: any) => {
+          const t = c.created_at ? new Date(c.created_at).getTime() : NaN;
+          return isFinite(t) && t >= gate.getTime() && needsPhotoFn2(c);
+        });
+        // v1.0.72 — เรื่องรูป "ไม่ได้" กันการดึงเข้ารอบบิลอีกแล้ว (ด่านย้ายไปอยู่ตอนส่งบิล)
+        // ตรงนี้จึงเหลือสาเหตุเดียวคือยังไม่ได้ดึงเข้ารอบ ส่วนเรื่องรูปบอกไว้เป็นข้อมูลเพิ่ม
+        const photoNote = (needsPhoto && (!lastSub2 || lastSub2.status !== 'approved'))
+          ? (' · ⚠ ยังไม่ได้ยืนยันรูป (' + (!lastSub2 ? 'ผู้รับเหมายังไม่ได้ส่งรูป'
+              : (lastSub2.status === 'rejected' ? 'รูปถูกตีกลับ รอส่งใหม่' : 'ส่งรูปแล้ว รอยืนยันที่เมนู "ไฟล์ผู้รับเหมาส่งกลับ"'))
+              + ') ดึงเข้ารอบบิลและแก้ไขได้ แต่จะกดส่งให้ผู้รับเหมาไม่ได้จนกว่ารูปจะผ่าน')
+          : (needsPhoto ? ' · ยืนยันรูปแล้ว' : ' · ไม่ต้องใช้รูป');
+
+        return jsonResponse({
+          found: false, level: 'warn',
+          message: 'เลขงาน "' + jobId + '" ปิดงานแล้ว (' + closeRows2.length + ' เลขทรัพย์สิน) แต่ยังไม่ได้ดึงเข้ารอบบิล'
+            + ' — ใช้ปุ่ม "ดูตัวอย่างก่อนบันทึกรอบบิล" หรือช่อง "เพิ่มเลขงานเข้ารอบบิลที่มีอยู่แล้ว"'
+            + photoNote,
+        });
+      }
+
+      // ==================== แก้เลขทรัพย์สินที่กรอกผิด (v1.0.93) ====================
+      // เลขทรัพย์สินของงานหนึ่งอยู่ 3 ที่: close_issues · billing_documents · billing_job_registry
+      // ระบบใช้ "เลขงาน + เลขทรัพย์สิน" จำว่างานไหนออกบิลไปแล้ว ถ้าแก้ไม่ครบทั้ง 3 ที่
+      // ระบบจะเห็นคู่ "เลขงาน + เลขใหม่" เป็นงานที่ไม่เคยออกบิล แล้วดึงเข้ารอบถัดไปอีกรอบ = เก็บเงินซ้ำ
+      //
+      // ตัวแก้จริงอยู่ในฐานข้อมูล (ฟังก์ชัน change_asset_number ใน SQL v1.0.93)
+      // เพราะต้องทำทั้ง 3 ที่ใน transaction เดียว "สำเร็จทั้งหมด หรือไม่แก้อะไรเลย"
+      // ซึ่ง Supabase client ทำจากฝั่งนี้ไม่ได้
+
+      // ดูผลกระทบก่อนแก้ — อ่านอย่างเดียว ให้แอดมินเห็นก่อนกดว่าจะไปแก้อะไรบ้าง
+      case 'previewAssetChange': {
+        const [username, token, jobIdRaw, assetRaw] = args;
+        const gate = await adminGate(username, token);
+        if (!gate.ok) return jsonResponse({ success: false, message: gate.message });
+        const jobId = String(jobIdRaw || '').trim();
+        const assetId = String(assetRaw || '').trim();
+        if (!jobId || !assetId) return jsonResponse({ success: false, message: 'ข้อมูลไม่ครบ (ต้องมีเลขงานและเลขทรัพย์สิน)' });
+
+        const { data: closeRows, error: closeErr } = await supabase.from('close_issues')
+          .select('id,branch,fix_date').eq('job_id', jobId).eq('asset_id', assetId).limit(1);
+        if (closeErr) return jsonResponse({ success: false, message: closeErr.message });
+        if (!closeRows || closeRows.length === 0) {
+          return jsonResponse({ success: false, message: 'ไม่พบงานปิดของเลขงาน ' + jobId + ' เลขทรัพย์สิน ' + assetId + ' (อาจถูกแก้ไปแล้ว ลองโหลดหน้าใหม่)' });
+        }
+        const { data: billRows, error: billErr } = await supabase.from('billing_documents')
+          .select('round_no,sent_to_contractor,completed_at,contractor').eq('customer_case', jobId).eq('asset_id', assetId);
+        if (billErr) return jsonResponse({ success: false, message: billErr.message });
+        const rows = billRows || [];
+        const sent = rows.filter((r: any) => r.sent_to_contractor === true).length;
+        const done = rows.filter((r: any) => !!r.completed_at).length;
+        const rounds = Array.from(new Set(rows.map((r: any) => r.round_no).filter((x: any) => x !== null && x !== undefined)));
+        const state = rows.length === 0 ? 'ยังไม่เข้ารอบบิล' : done > 0 ? 'ตัดบิลแล้ว' : sent > 0 ? 'ส่งผู้รับเหมาแล้ว' : 'อยู่ในรอบบิล ยังไม่ส่ง';
+
+        // เลขทรัพย์สินอื่นของงานเดียวกัน — ใช้ซ้ำไม่ได้ (ฐานข้อมูลกันซ้ำไว้อีกชั้นด้วย)
+        const { data: siblings } = await supabase.from('close_issues').select('asset_id').eq('job_id', jobId);
+        const otherAssets = (siblings || []).map((x: any) => x.asset_id).filter((a: any) => a && a !== assetId);
+
+        // ประวัติการแก้ของงานนี้ — ถ้ายังไม่ได้รัน SQL v1.0.93 จะยังไม่มีตาราง ให้ถือว่า "ยังไม่พร้อม" ไม่ใช่ error
+        let history: any[] = [];
+        let ready = true;
+        const hist = await supabase.from('asset_change_log')
+          .select('old_asset_id,new_asset_id,reason,changed_by,changed_at,billing_state')
+          .eq('job_id', jobId).order('changed_at', { ascending: false }).limit(20);
+        if (hist.error) {
+          if (/relation|does not exist|schema cache|could not find/i.test(hist.error.message || '')) ready = false;
+          else return jsonResponse({ success: false, message: hist.error.message });
+        } else history = hist.data || [];
+
+        return jsonResponse({
+          success: true, ready, jobId, assetId, branch: closeRows[0].branch || '', state,
+          billingRows: rows.length, sentRows: sent, doneRows: done, rounds,
+          contractor: rows.length ? (rows[0].contractor || '') : '', otherAssets, history,
+        });
+      }
+
+      case 'changeAssetNumber': {
+        const [username, token, jobIdRaw, oldRaw, newRaw, reasonRaw] = args;
+        // ใช้ verifySession ตรง ๆ (ไม่ใช่ adminGate) เพราะต้องเอาชื่อผู้แก้ไปบันทึกประวัติด้วย
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่ (ถ้ายังขึ้นข้อความนี้ แปลว่าแอปเป็นเวอร์ชันเก่า ต้องอัปเดตแอปก่อน)' });
+        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่แก้เลขทรัพย์สินได้' });
+        const jobId = String(jobIdRaw || '').trim();
+        const oldAsset = String(oldRaw || '').trim();
+        const newAsset = String(newRaw || '').trim();
+        const reason = String(reasonRaw || '').trim();
+        // ตรวจซ้ำที่นี่ก่อน (ข้อความเร็วกว่า) — ฐานข้อมูลตรวจซ้ำอีกชั้นด้วยกติกาเดียวกัน
+        if (!jobId || !oldAsset) return jsonResponse({ success: false, message: 'ข้อมูลไม่ครบ (ต้องมีเลขงานและเลขทรัพย์สินเดิม)' });
+        if (!/^\d{12}$/.test(newAsset)) return jsonResponse({ success: false, message: 'เลขทรัพย์สินใหม่ต้องเป็นตัวเลข 12 หลัก (ได้รับ "' + newAsset + '")' });
+        if (newAsset === oldAsset) return jsonResponse({ success: false, message: 'เลขทรัพย์สินใหม่เหมือนเลขเดิม ไม่มีอะไรต้องแก้' });
+        if (!reason) return jsonResponse({ success: false, message: 'กรุณาระบุเหตุผลที่แก้เลขทรัพย์สิน' });
+
+        const { data, error } = await supabase.rpc('change_asset_number', {
+          p_job_id: jobId, p_old_asset: oldAsset, p_new_asset: newAsset, p_reason: reason,
+          p_changed_by: session.displayName || username,
+        });
+        if (error) {
+          const msg = String(error.message || '');
+          // ข้อผิดพลาดที่ตั้งใจโยนจากฐานข้อมูลขึ้นต้นด้วย CP9X: — ตัดออกแล้วส่งข้อความไทยที่เหลือตรง ๆ
+          if (msg.indexOf('CP9X:') !== -1) return jsonResponse({ success: false, message: msg.slice(msg.indexOf('CP9X:') + 5).trim() });
+          if (/change_asset_number|could not find the function|schema cache/i.test(msg)) {
+            return jsonResponse({ success: false, message: 'ฐานข้อมูลยังไม่มีฟังก์ชันแก้เลขทรัพย์สิน — ให้แอดมินรันไฟล์ SQL v1.0.93 ก่อน' });
+          }
+          return jsonResponse({ success: false, message: 'แก้เลขทรัพย์สินไม่สำเร็จ: ' + msg });
+        }
+        const sum: any = data || {};
+        const parts: string[] = ['ปิดงาน 1 แถว'];
+        if (sum.billing_rows) parts.push('แถวบิล ' + sum.billing_rows + ' แถว');
+        if (sum.comments) parts.push('แจ้งผู้รับเหมา ' + sum.comments + ' แถว');
+        return jsonResponse({
+          success: true, summary: sum,
+          message: 'แก้เลขทรัพย์สินจาก ' + oldAsset + ' เป็น ' + newAsset + ' แล้ว (' + parts.join(' · ') + ')',
+        });
       }
 
       case 'updateBillingDocumentRow': {
@@ -2824,9 +4712,24 @@ Deno.serve(async (req: Request) => {
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่แก้ไขข้อมูลได้' });
+        // v1.0.93 — แก้ได้เฉพาะช่องที่หน้าจอเปิดให้แก้จริงเท่านั้น
+        // เดิมรับทุกช่องที่ส่งมาแล้วเขียนลงตรง ๆ = ยิงคำขอเข้ามาเองก็แก้ได้ทุกอย่าง เช่น
+        //   asset_id                  แก้เลขทรัพย์สินแค่ในตารางบิล ไม่แก้ปิดงาน/คีย์จอง -> เก็บเงินซ้ำ
+        //                             (ต้องแก้ผ่าน changeAssetNumber เท่านั้น)
+        //   contractor_review_status  แอดมินตั้งเป็น "ผู้รับเหมายืนยันแล้ว" เอง -> ข้ามกติกา
+        //                             ที่ว่าแอดมินกดยืนยันแทนผู้รับเหมาไม่ได้
+        //   completed_at / sent_to_contractor / contractor / round_no -> ข้ามขั้นตอนตัดบิล/ส่งบิล
+        // รายชื่อนี้ = ทุกช่องที่ตารางในหน้าแอปเปิดให้พิมพ์ได้ (ตรวจจาก data-field ทุกตาราง)
+        const EDITABLE_BILLING_FIELDS = ['part_code', 'part_detail', 'warranty_months', 'qty', 'unit', 'unit_price',
+          'unit_price_contractor', 'quotation_ref', 'return_old_part', 'responsible', 'company', 'billing_type', 'seq'];
+        const ignoredFields = Object.keys(fields || {}).filter((k) => EDITABLE_BILLING_FIELDS.indexOf(k) === -1);
+        const allowedKeys = Object.keys(fields || {}).filter((k) => EDITABLE_BILLING_FIELDS.indexOf(k) !== -1);
+        if (allowedKeys.length === 0) {
+          return jsonResponse({ success: false, message: 'ไม่มีช่องที่แก้ได้ในคำขอนี้' + (ignoredFields.length ? ' (ช่องที่แก้จากตรงนี้ไม่ได้: ' + ignoredFields.join(', ') + ')' : '') });
+        }
         const numericColumns = ['qty', 'unit_price', 'total_price', 'seq', 'unit_price_contractor', 'total_price_contractor'];
         const clean: any = {};
-        Object.keys(fields || {}).forEach((key) => {
+        allowedKeys.forEach((key) => {
           if (numericColumns.includes(key)) {
             clean[key] = (fields[key] === '' || fields[key] === null || fields[key] === undefined) ? null : parseFloat(fields[key]);
           } else {
@@ -2955,12 +4858,18 @@ Deno.serve(async (req: Request) => {
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ส่งบิลได้' });
         if (!ids || ids.length === 0) return jsonResponse({ success: false, message: 'ไม่มีแถวให้ส่ง กรุณาโหลดข้อมูลก่อน' });
-        const { data: checkData, error: checkErr } = await supabase.from('billing_documents').select('id,sent_to_contractor,part_code,qty').in('id', ids);
+        // ⚠ ต้องดึง customer_case / billing_type มาด้วย
+        // v1.0.72 เขียนด่าน "ต้องยืนยันรูปก่อนส่งบิล" ไว้ข้างล่างโดยอ่าน rowById[id].customer_case
+        // แต่ select ตรงนี้ไม่ได้ดึงคอลัมน์นั้นมา ค่าที่ได้จึงเป็น undefined ทุกแถว
+        // รายชื่อเลขงานที่จะเอาไปเช็คเลยว่างเปล่าเสมอ = ด่านรูปไม่เคยบล็อกอะไรเลยสักครั้ง
+        // และไม่มี error ให้เห็น เพราะทุกอย่าง "ผ่าน" หมด
+        const { data: checkData, error: checkErr } = await supabase.from('billing_documents')
+          .select('id,customer_case,round_no,billing_type,sent_to_contractor,part_code,qty').in('id', ids);
         if (checkErr) return jsonResponse({ success: false, message: checkErr.message });
         let alreadySent = 0, incomplete = 0;
         const rowById: Record<string, any> = {};
         (checkData || []).forEach((r: any) => { rowById[r.id] = r; });
-        const idsToSend = ids.filter((id: string) => {
+        const readyIds = ids.filter((id: string) => {
           const r = rowById[id];
           if (!r) return false;
           if (r.sent_to_contractor) { alreadySent++; return false; }
@@ -2969,18 +4878,407 @@ Deno.serve(async (req: Request) => {
           if (!hasPart || !hasQty) { incomplete++; return false; }
           return true;
         });
+
+        // ---- ด่าน "ต้องยืนยันรูปก่อนถึงจะส่งบิลได้" (ย้ายมาจากตอนดึงเข้ารอบบิล ใน v1.0.72) ----
+        //
+        // เดิมด่านนี้อยู่ตอนดึงเข้ารอบบิล ซึ่งใช้งานจริงไม่ได้ เพราะแอดมินต้องดูรูปคู่กับตารางวางบิล
+        // ตอนตรวจ แต่บิลยังไม่เกิดจนกว่าจะยืนยันรูปเสร็จ = ต้องยืนยันรูปทั้งที่ยังไม่เคยเห็นบิล
+        //
+        // ย้ายมาไว้ตรงนี้แทน: เตรียมบิลได้ตั้งแต่ปิดงาน แต่ส่งออกไปหาผู้รับเหมาไม่ได้จนกว่ารูปจะผ่าน
+        // ซึ่งเป็นจุดที่ถูกต้องกว่า เพราะ "ส่งบิล" คือจุดที่ข้อมูลออกไปนอกบริษัทจริง ๆ
+        const jobsToCheck = Array.from(new Set(readyIds.map((id: string) => rowById[id].customer_case).filter(Boolean))) as string[];
+        const photoOkByJob = await photoOkMapForJobs(jobsToCheck);
+        const waitingPhotoJobs = new Set<string>();
+        let waitingPhotoRows = 0;
+        const idsToSend = readyIds.filter((id: string) => {
+          const jid = rowById[id].customer_case;
+          if (jid && photoOkByJob[jid] === false) {
+            waitingPhotoRows++;
+            waitingPhotoJobs.add(jid);
+            return false;
+          }
+          return true;
+        });
         if (idsToSend.length === 0) {
           const reasons: string[] = [];
           if (alreadySent > 0) reasons.push(alreadySent + ' แถวส่งไปแล้วก่อนหน้านี้');
           if (incomplete > 0) reasons.push(incomplete + ' แถวยังกรอก Part Code/จำนวนไม่ครบ');
-          return jsonResponse({ success: false, message: 'ไม่มีแถวใหม่ให้ส่ง' + (reasons.length ? ' (' + reasons.join(', ') + ')' : '') });
+          if (waitingPhotoRows > 0) reasons.push(waitingPhotoRows + ' แถวยังไม่ได้ยืนยันรูป (เลขงาน ' + Array.from(waitingPhotoJobs).slice(0, 10).join(', ') + ')');
+          return jsonResponse({
+            success: false,
+            message: 'ไม่มีแถวใหม่ให้ส่ง' + (reasons.length ? ' (' + reasons.join(', ') + ')' : ''),
+            waitingPhotoRows, waitingPhotoJobs: Array.from(waitingPhotoJobs),
+          });
         }
-        const { error } = await supabase.from('billing_documents').update({ sent_to_contractor: true, sent_at: new Date().toISOString() }).in('id', idsToSend);
+        // ---- v1.0.74 — แยกแถวที่ผู้รับเหมาไม่มีวันได้เห็น ออกจากคิว "รอตรวจ" ----
+        // เคลมประกัน 3 เดือน / ใบเสนอราคา ถูกกรองออกจากตารางฝั่งผู้รับเหมาทั้งระบบ
+        // ถ้าตั้งเป็น 'pending' เหมือนแถวอื่น จะได้คิวที่ไม่มีใครกดได้
+        //   - ป้ายแจ้งเตือนฝั่งผู้รับเหมาขึ้นเลขค้าง กดยังไงก็ไม่ลด
+        //   - เลขงานนั้นไม่มีวันเสร็จสิ้น เพราะรอคำยืนยันที่ไม่มีวันมา
+        const idsNeedReview = idsToSend.filter((id: string) => billingRowNeedsContractorReview(rowById[id]));
+        const idsNoReview = idsToSend.filter((id: string) => !billingRowNeedsContractorReview(rowById[id]));
+
+        // v1.0.69 — ส่งบิล = เปิดคิวให้ผู้รับเหมาตรวจแถวนั้นด้วย (รอบที่ 1)
+        // ⚠ ถ้าฐานข้อมูลยังไม่ได้รัน SQL v1.0.69 คอลัมน์พวกนี้จะยังไม่มี แล้ว PostgREST จะปฏิเสธทั้งคำสั่ง
+        // ถอยไปส่งบิลแบบเดิมแทน (ยังส่งได้จริง เสียแค่ยังไม่เข้ากระบวนการตรวจของผู้รับเหมา)
+        const sentAtIso = new Date().toISOString();
+        let reviewColumnsMissing = false;
+        let error: any = null;
+        for (const grp of [
+          { ids: idsNeedReview, status: 'pending' },
+          { ids: idsNoReview, status: REVIEW_NOT_REQUIRED },
+        ]) {
+          if (grp.ids.length === 0) continue;
+          let res = await supabase.from('billing_documents')
+            .update({ sent_to_contractor: true, sent_at: sentAtIso, contractor_review_status: grp.status, revision_no: 1 })
+            .in('id', grp.ids);
+          if (res.error && /column|schema cache/i.test(res.error.message || '')) {
+            reviewColumnsMissing = true;
+            res = await supabase.from('billing_documents')
+              .update({ sent_to_contractor: true, sent_at: sentAtIso }).in('id', grp.ids);
+          }
+          if (res.error) { error = res.error; break; }
+        }
         if (error) return jsonResponse({ success: false, message: 'ส่งบิลล้มเหลว: ' + error.message });
+
+        // ---- เลขงานที่ไม่เหลือแถวรอผู้รับเหมาแล้ว = ปิดบิลให้เลยตรงนี้ ----
+        // ไม่มีขั้นตอนอื่นคั่นอยู่ ถ้าไม่ปิดตรงนี้จะไม่มีอะไรมาปิดให้อีกเลย
+        // (ยังผ่านด่านฝั่งรูปตามปกติ — sweepBillsReadyToClose เช็คให้ในตัว)
+        let autoClosed: { closed: number; jobs: string[] } = { closed: 0, jobs: [] };
+        if (!reviewColumnsMissing && idsNoReview.length > 0) {
+          const noReviewJobs = Array.from(new Set(
+            idsNoReview.map((id: string) => rowById[id].customer_case).filter(Boolean),
+          )) as string[];
+          autoClosed = await sweepBillsReadyToClose(noReviewJobs);
+        }
         const notes: string[] = [];
+        if (idsNoReview.length > 0) {
+          notes.push(idsNoReview.length + ' แถวเป็นเคลมประกัน/ใบเสนอราคา ไม่ต้องให้ผู้รับเหมาตรวจ'
+            + (autoClosed.closed > 0 ? (' — ปิดบิลให้แล้ว ' + autoClosed.closed + ' แถว') : ' — รอยืนยันรูปก่อนถึงจะปิดบิลได้'));
+        }
+        if (reviewColumnsMissing) notes.push('⚠ ยังไม่ได้รันไฟล์ SQL v1.0.69 ผู้รับเหมาจึงยังกดยืนยัน/ตีกลับบิลไม่ได้');
         if (alreadySent > 0) notes.push('ข้าม ' + alreadySent + ' แถวที่ส่งไปแล้วก่อนหน้านี้');
         if (incomplete > 0) notes.push('ข้าม ' + incomplete + ' แถวที่ยังกรอก Part Code/จำนวนไม่ครบ');
-        return jsonResponse({ success: true, message: 'ส่งบิลให้ผู้รับเหมาเรียบร้อยแล้ว (' + idsToSend.length + ' แถวใหม่' + (notes.length ? ', ' + notes.join(', ') : '') + ')' });
+        if (waitingPhotoRows > 0) notes.push('ข้าม ' + waitingPhotoRows + ' แถวที่ยังไม่ได้ยืนยันรูป (เลขงาน ' + Array.from(waitingPhotoJobs).slice(0, 10).join(', ') + ') — ยืนยันรูปแล้วค่อยกดส่งอีกครั้ง');
+        return jsonResponse({
+          success: true,
+          message: 'ส่งบิลให้ผู้รับเหมาเรียบร้อยแล้ว (' + idsToSend.length + ' แถวใหม่' + (notes.length ? ', ' + notes.join(', ') : '') + ')',
+          waitingPhotoRows, waitingPhotoJobs: Array.from(waitingPhotoJobs),
+        });
+      }
+
+      // ==================== v1.0.69 — ผู้รับเหมาตรวจบิลทีละแถวอะไหล่ ====================
+      // ผู้รับเหมากดได้ 2 อย่างต่อแถว: ยืนยัน หรือ ตีกลับพร้อมคอมเมนต์
+      // พอทุกแถวของเลขงานนั้นในรอบบิลถูกยืนยันครบ = ตัดบิลอัตโนมัติ งานจบ
+      case 'reviewBillingRowsByContractor': {
+        const [username, token, ids, decisionRaw, commentRaw] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        // แอดมินกดแทนไม่ได้โดยตั้งใจ — ขั้นนี้คือหลักฐานว่า "ผู้รับเหมารับรองยอดนี้เอง"
+        // ถ้าแอดมินกดแทนได้ ตัวตัดบิลจะกลายเป็นฝ่ายเดียวกับคนออกบิล ซึ่งทำให้ขั้นตอนนี้ไม่มีความหมาย
+        if (session.role === 'admin') {
+          return jsonResponse({ success: false, message: 'ขั้นนี้เป็นการตรวจรับของผู้รับเหมา แอดมินกดแทนไม่ได้' });
+        }
+        const decision = (decisionRaw === 'rejected') ? 'rejected' : (decisionRaw === 'approved' ? 'approved' : '');
+        if (!decision) return jsonResponse({ success: false, message: 'สถานะไม่ถูกต้อง (ต้องเป็น ยืนยัน หรือ ตีกลับ เท่านั้น)' });
+        const comment = (commentRaw === null || commentRaw === undefined) ? '' : String(commentRaw).trim();
+        if (decision === 'rejected' && !comment) {
+          return jsonResponse({ success: false, message: 'กรุณาเขียนคอมเมนต์ว่าผิดตรงไหน ก่อนกดตีกลับ' });
+        }
+        const idList: string[] = Array.isArray(ids) ? ids : (ids ? [ids] : []);
+        if (idList.length === 0) return jsonResponse({ success: false, message: 'ยังไม่ได้เลือกแถวที่จะตรวจ' });
+
+        const { data: rows, error: fetchErr } = await supabase.from('billing_documents')
+          .select('id,customer_case,round_no,contractor,sent_to_contractor,completed_at,contractor_review_status,revision_no,billing_type,part_code')
+          .in('id', idList);
+        if (fetchErr) {
+          if (/column|schema cache/i.test(fetchErr.message || '')) {
+            return jsonResponse({ success: false, message: 'ฐานข้อมูลยังไม่มีคอลัมน์สำหรับการตรวจบิล — ให้รันไฟล์ SQL v1.0.69 ก่อน' });
+          }
+          return jsonResponse({ success: false, message: fetchErr.message });
+        }
+
+        // คัดเฉพาะแถวที่ผู้รับเหมาคนนี้มีสิทธิ์ตรวจจริง ๆ
+        // เช็คทุกเงื่อนไขที่ฝั่งเซิร์ฟเวอร์ ไม่เชื่อรายการ id ที่ส่งมาจากหน้าจอ
+        // เพราะยิงคำขอตรงเข้ามาพร้อม id ของผู้รับเหมาคนอื่นได้
+        let notMine = 0, notSent = 0, alreadyDone = 0, notForContractor = 0, notWaitingResend = 0;
+        const target = (rows || []).filter((r: any) => {
+          // v1.0.74 — แถวที่ไม่เคยโผล่ในตารางของเขา ก็ต้องกดไม่ได้ด้วย
+          // (ปกติกดไม่ถึงอยู่แล้วเพราะมองไม่เห็น แต่ยิงคำขอตรงเข้ามาพร้อม id ได้)
+          if (!billingRowNeedsContractorReview(r)) { notForContractor++; return false; }
+          if (r.contractor !== session.displayName) { notMine++; return false; }
+          if (r.sent_to_contractor !== true) { notSent++; return false; }
+          if (r.completed_at) { alreadyDone++; return false; }
+          // v1.0.82 — กดได้เฉพาะแถวที่กำลังรอเขาตรวจ (pending) เท่านั้น
+          // ยืนยันแล้ว = จบ · ตีกลับไปแล้ว (rejected) ต้องรอบริษัทแก้แล้วส่งกลับ (สถานะกลับเป็น pending) ก่อน
+          // กันการกดตีกลับซ้ำ ๆ รัว ๆ ระหว่างที่งานอยู่ฝั่งบริษัท (บังคับที่เซิร์ฟเวอร์ ไม่เชื่อหน้าจออย่างเดียว)
+          if (r.contractor_review_status !== 'pending') {
+            if (r.contractor_review_status === 'rejected') notWaitingResend++; else alreadyDone++;
+            return false;
+          }
+          return true;
+        });
+        if (target.length === 0) {
+          const reasons: string[] = [];
+          if (notForContractor > 0) reasons.push(notForContractor + ' แถวเป็นเคลมประกัน/ใบเสนอราคา (ไม่ต้องให้ผู้รับเหมาตรวจ)');
+          if (notMine > 0) reasons.push(notMine + ' แถวไม่ใช่งานของคุณ');
+          if (notSent > 0) reasons.push(notSent + ' แถวยังไม่ได้ส่งบิลมาให้');
+          if (alreadyDone > 0) reasons.push(alreadyDone + ' แถวยืนยันหรือปิดงานไปแล้ว');
+          if (notWaitingResend > 0) reasons.push(notWaitingResend + ' แถวคุณตีกลับไปแล้ว ต้องรอบริษัทแก้และส่งกลับมาก่อนถึงจะตรวจใหม่ได้');
+          return jsonResponse({ success: false, message: 'ไม่มีแถวที่ตรวจได้' + (reasons.length ? ' (' + reasons.join(', ') + ')' : '') });
+        }
+
+        const nowIso = new Date().toISOString();
+        const { error: upErr } = await supabase.from('billing_documents').update({
+          contractor_review_status: decision,
+          contractor_reviewed_at: nowIso,
+          contractor_reviewed_by: session.displayName,
+        }).in('id', target.map((r: any) => r.id));
+        if (upErr) return jsonResponse({ success: false, message: 'บันทึกผลตรวจล้มเหลว: ' + upErr.message });
+
+        const historySaved = await logBillingRowComments(target.map((r: any) => ({
+          billing_id: String(r.id),
+          customer_case: r.customer_case || null,
+          revision_no: r.revision_no || 1,
+          author_role: 'contractor',
+          author_name: session.displayName,
+          action: decision,
+          message: comment || null,
+        })));
+
+        // ยืนยันแล้วค่อยเช็คว่าเลขงานนั้นครบหรือยัง — ตีกลับไม่ต้องเช็ค เพราะยังไงก็ไม่ครบ
+        let closedRows = 0;
+        const finishedJobs: string[] = [];
+        const waitingPhotoJobs: string[] = [];
+        if (decision === 'approved') {
+          const seenJobs = new Set<string>();
+          for (const r of target) {
+            const key = String(r.customer_case) + '||' + String(r.round_no);
+            if (seenJobs.has(key)) continue;
+            seenJobs.add(key);
+            const n = await completeBillingJobIfReady(r.customer_case, r.round_no);
+            if (n > 0) { closedRows += n; finishedJobs.push(r.customer_case); }
+            // ไม่ปิด = ยังมีแถวอื่นค้าง หรือฝั่งรูปยังไม่ผ่าน
+            // แยกสองกรณีนี้ให้ออก ไม่งั้นผู้รับเหมากดยืนยันครบแล้วงานไม่จบ โดยไม่มีอะไรบอกว่าทำไม
+            else if (waitingPhotoJobs.indexOf(r.customer_case) === -1
+              && !(await jobPhotoRequirementMet(r.customer_case))) {
+              waitingPhotoJobs.push(r.customer_case);
+            }
+          }
+        }
+
+        let message = decision === 'approved'
+          ? ('ยืนยันเรียบร้อย ' + target.length + ' รายการ')
+          : ('ตีกลับเรียบร้อย ' + target.length + ' รายการ — ทางบริษัทจะแก้ไขแล้วส่งกลับมาให้ตรวจอีกครั้ง');
+        if (closedRows > 0) {
+          message += ' · ยืนยันครบทุกรายการแล้วสำหรับเลขงาน ' + finishedJobs.join(', ') + ' — ปิดงานและตัดบิลเรียบร้อย';
+        }
+        if (waitingPhotoJobs.length > 0) {
+          message += ' · เลขงาน ' + waitingPhotoJobs.join(', ') + ' ยังไม่เสร็จสิ้น เพราะรอทางบริษัทยืนยันรูปอยู่'
+            + ' (เสร็จสิ้น = ยืนยันรูป + ผู้รับเหมายืนยันรอบบิล)';
+        }
+        if (!historySaved) message += ' · ⚠ ยังไม่ได้เก็บประวัติคอมเมนต์ เพราะฐานข้อมูลยังไม่มีตาราง billing_row_comments (ให้รัน SQL v1.0.69)';
+        return jsonResponse({ success: true, message, reviewed: target.length, closedRows, finishedJobs });
+      }
+
+      // แอดมินแก้ตามที่ถูกตีกลับแล้ว ส่งกลับไปให้ผู้รับเหมาตรวจอีกรอบ
+      // วนได้ไม่จำกัดรอบ — revision_no เดินขึ้นทีละ 1 ทุกครั้ง จะได้รู้ว่าคุยกันมากี่รอบแล้ว
+      case 'resendBillingRowsToContractor': {
+        const [username, token, ids, replyRaw] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ส่งบิลกลับได้' });
+        const idList: string[] = Array.isArray(ids) ? ids : (ids ? [ids] : []);
+        if (idList.length === 0) return jsonResponse({ success: false, message: 'ยังไม่ได้เลือกแถวที่จะส่งกลับ' });
+        const reply = (replyRaw === null || replyRaw === undefined) ? '' : String(replyRaw).trim();
+
+        const { data: rows, error: fetchErr } = await supabase.from('billing_documents')
+          .select('id,customer_case,contractor_review_status,revision_no,completed_at,sent_to_contractor')
+          .in('id', idList);
+        if (fetchErr) {
+          if (/column|schema cache/i.test(fetchErr.message || '')) {
+            return jsonResponse({ success: false, message: 'ฐานข้อมูลยังไม่มีคอลัมน์สำหรับการตรวจบิล — ให้รันไฟล์ SQL v1.0.69 ก่อน' });
+          }
+          return jsonResponse({ success: false, message: fetchErr.message });
+        }
+        // ส่งกลับได้เฉพาะแถวที่ "ถูกตีกลับมาจริง ๆ และยังไม่ปิดงาน"
+        // ถ้าปล่อยให้ส่งแถว approved กลับไปได้ จะเป็นการดึงงานที่ผู้รับเหมารับรองแล้วกลับมาแก้เงียบ ๆ
+        const target = (rows || []).filter((r: any) =>
+          r.sent_to_contractor === true && !r.completed_at && r.contractor_review_status === 'rejected');
+        if (target.length === 0) {
+          return jsonResponse({ success: false, message: 'ไม่มีแถวที่ส่งกลับได้ (ต้องเป็นแถวที่ผู้รับเหมาตีกลับมาและยังไม่ปิดงาน)' });
+        }
+
+        // revision_no ของแต่ละแถวอาจไม่เท่ากัน จึงอัปเดตทีละกลุ่มตามเลขรอบเดิม
+        // (ทำเป็นก้อนแทนการยิงทีละแถว เพราะแถวที่ตีกลับพร้อมกันมักมีเลขรอบเดียวกันอยู่แล้ว)
+        const byRev: Record<string, string[]> = {};
+        target.forEach((r: any) => {
+          const k = String(r.revision_no || 1);
+          (byRev[k] = byRev[k] || []).push(r.id);
+        });
+        const nowIso = new Date().toISOString();
+        for (const k of Object.keys(byRev)) {
+          const { error: upErr } = await supabase.from('billing_documents').update({
+            contractor_review_status: 'pending',
+            contractor_reviewed_at: null,
+            contractor_reviewed_by: null,
+            revision_no: (parseInt(k, 10) || 1) + 1,
+            sent_at: nowIso,
+          }).in('id', byRev[k]);
+          if (upErr) return jsonResponse({ success: false, message: 'ส่งกลับล้มเหลว: ' + upErr.message });
+        }
+
+        const historySaved = await logBillingRowComments(target.map((r: any) => ({
+          billing_id: String(r.id),
+          customer_case: r.customer_case || null,
+          revision_no: (r.revision_no || 1) + 1,
+          author_role: 'admin',
+          author_name: session.displayName,
+          action: 'resent',
+          message: reply || null,
+        })));
+
+        let message = 'ส่งกลับให้ผู้รับเหมาตรวจอีกครั้งแล้ว ' + target.length + ' รายการ';
+        if (!historySaved) message += ' · ⚠ ยังไม่ได้เก็บประวัติ เพราะฐานข้อมูลยังไม่มีตาราง billing_row_comments (ให้รัน SQL v1.0.69)';
+        return jsonResponse({ success: true, message, resent: target.length });
+      }
+
+      // v1.0.79 — ย้อนสถานะบิลที่ผู้รับเหมายืนยันแล้ว/ปิดงานแล้ว กลับเข้าคิวตรวจใหม่ (แอดมินเท่านั้น)
+      // ใช้ตอน "ผรม.กดยืนยันมาผิด" หรือ "เราตัดบิลผิดไปแล้ว" — เดิมไม่มีทางดึงกลับ ต้องไปแก้ในฐานข้อมูลเอง
+      // ต่างจาก resend ตรงที่ resend จงใจบล็อกแถว approved/ปิดงานแล้ว เพื่อกันการดึงงานที่ผู้รับเหมารับรองแล้วกลับมาแก้เงียบ ๆ
+      // อันนี้จึงแยกเป็นคำสั่งของแอดมินโดยเฉพาะ + บังคับกรอกเหตุผล + เก็บ log ทุกครั้ง (action = reopened)
+      case 'reopenBillingRows': {
+        const [username, token, ids, reasonRaw] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ย้อนสถานะบิลได้' });
+        const idList: string[] = Array.isArray(ids) ? ids : (ids ? [ids] : []);
+        if (idList.length === 0) return jsonResponse({ success: false, message: 'ยังไม่ได้เลือกแถวที่จะย้อนสถานะ' });
+        const reason = (reasonRaw === null || reasonRaw === undefined) ? '' : String(reasonRaw).trim();
+        // บังคับเหตุผล — การย้อนงานที่รับรอง/ตัดบิลแล้วเป็นเรื่องใหญ่ ต้องรู้ว่าย้อนเพราะอะไร
+        if (!reason) return jsonResponse({ success: false, message: 'กรุณากรอกเหตุผลที่ต้องย้อนสถานะก่อน (ผู้รับเหมาจะเห็นข้อความนี้)' });
+
+        const { data: rows, error: fetchErr } = await supabase.from('billing_documents')
+          .select('id,customer_case,contractor_review_status,revision_no,completed_at,sent_to_contractor,billing_type')
+          .in('id', idList);
+        if (fetchErr) {
+          if (/column|schema cache/i.test(fetchErr.message || '')) {
+            return jsonResponse({ success: false, message: 'ฐานข้อมูลยังไม่มีคอลัมน์สำหรับการตรวจบิล — ให้รันไฟล์ SQL v1.0.69 ก่อน' });
+          }
+          return jsonResponse({ success: false, message: fetchErr.message });
+        }
+        // ย้อนได้เฉพาะแถวที่ "ผู้รับเหมายืนยันแล้ว" (approved) — ครอบคลุมทั้งที่ยังไม่ปิดงานและที่ปิด/ตัดบิลไปแล้ว
+        // ไม่ยุ่งกับแถว pending/rejected (ใช้ปุ่มส่งกลับปกติ) และไม่ยุ่งกับแถวที่ผู้รับเหมาไม่ต้องตรวจ (เคลม/ใบเสนอราคา ที่ปิดเองอัตโนมัติ)
+        const target = (rows || []).filter((r: any) =>
+          r.sent_to_contractor === true && r.contractor_review_status === 'approved');
+        if (target.length === 0) {
+          return jsonResponse({ success: false, message: 'ไม่มีแถวที่ย้อนได้ (ย้อนได้เฉพาะแถวที่ผู้รับเหมากดยืนยันไปแล้ว)' });
+        }
+
+        // เดิน revision_no ขึ้น 1 เหมือนตอนส่งกลับ จะได้เห็นในประวัติว่านี่คือรอบใหม่
+        // ทำเป็นก้อนตาม revision_no เดิม (แถวที่ยืนยันพร้อมกันมักอยู่รอบเดียวกัน)
+        const byRev: Record<string, string[]> = {};
+        target.forEach((r: any) => {
+          const k = String(r.revision_no || 1);
+          (byRev[k] = byRev[k] || []).push(r.id);
+        });
+        const nowIso = new Date().toISOString();
+        for (const k of Object.keys(byRev)) {
+          const { error: upErr } = await supabase.from('billing_documents').update({
+            completed_at: null,                       // เปิดงานกลับ — ยกเลิกการตัดบิล
+            contractor_review_status: 'pending',      // กลับเข้าคิวให้ผู้รับเหมาตรวจใหม่
+            contractor_reviewed_at: null,
+            contractor_reviewed_by: null,
+            revision_no: (parseInt(k, 10) || 1) + 1,
+            sent_at: nowIso,
+          }).in('id', byRev[k]);
+          if (upErr) return jsonResponse({ success: false, message: 'ย้อนสถานะล้มเหลว: ' + upErr.message });
+        }
+
+        const historySaved = await logBillingRowComments(target.map((r: any) => ({
+          billing_id: String(r.id),
+          customer_case: r.customer_case || null,
+          revision_no: (r.revision_no || 1) + 1,
+          author_role: 'admin',
+          author_name: session.displayName,
+          action: 'reopened',
+          message: reason,
+        })));
+
+        const reopenedClosed = target.filter((r: any) => r.completed_at).length;
+        let message = 'ย้อนสถานะแล้ว ' + target.length + ' รายการ — กลับไปให้ผู้รับเหมาตรวจใหม่';
+        if (reopenedClosed > 0) message += ' · ในจำนวนนี้ ' + reopenedClosed + ' รายการเคยปิดงาน/ตัดบิลไปแล้ว ถูกเปิดกลับมา (รายงานรอบบิลจะเปลี่ยนตาม)';
+        if (!historySaved) message += ' · ⚠ ยังไม่ได้เก็บประวัติ เพราะฐานข้อมูลยังไม่มีตาราง billing_row_comments (ให้รัน SQL v1.0.69)';
+        return jsonResponse({ success: true, message, reopened: target.length });
+      }
+
+      // บทสนทนาของแถวอะไหล่แถวเดียว (ตีกลับ/ตอบกลับ/ยืนยัน ทุกรอบ เรียงตามเวลา)
+      case 'getBillingRowComments': {
+        const [username, token, billingId] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ error: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (!billingId) return jsonResponse([]);
+        // ผู้รับเหมาอ่านได้เฉพาะแถวของตัวเอง — กันเปิดดูคอมเมนต์ของผู้รับเหมาเจ้าอื่น
+        if (session.role !== 'admin') {
+          const { data: own } = await supabase.from('billing_documents')
+            .select('id,contractor,sent_to_contractor').eq('id', billingId).limit(1);
+          const r = (own && own.length > 0) ? own[0] : null;
+          if (!r || r.contractor !== session.displayName || r.sent_to_contractor !== true) return jsonResponse([]);
+        }
+        const { data, error } = await supabase.from('billing_row_comments')
+          .select('*').eq('billing_id', String(billingId)).order('id', { ascending: true });
+        // ยังไม่ได้รัน SQL v1.0.69 = ยังไม่มีตาราง ให้ถือว่า "ยังไม่มีคอมเมนต์" ไม่ใช่ error
+        // ไม่งั้นหน้าจอจะขึ้นแดงทั้งที่ระบบยังใช้งานได้ปกติทุกอย่าง
+        if (error) return jsonResponse([]);
+        return jsonResponse(data || []);
+      }
+
+      // ตัวเลขขึ้นป้ายแจ้งเตือน — แอดมินเห็น "ถูกตีกลับกี่แถว" ผู้รับเหมาเห็น "รอตรวจกี่แถว"
+      case 'getBillingReviewCounts': {
+        const [username, token] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ waiting: 0, rejected: 0 });
+        const wanted = (session.role === 'admin') ? 'rejected' : 'pending';
+        let q = supabase.from('billing_documents')
+          .select('id', { count: 'exact', head: true })
+          .eq('contractor_review_status', wanted).is('completed_at', null);
+        // v1.0.74 — ตัดประเภทที่ผู้รับเหมามองไม่เห็นออก (เคลมประกัน / ใบเสนอราคา)
+        // ไม่งั้นป้ายจะขึ้นว่า "มีบิลรอคุณตรวจ N รายการ" แต่พอเปิดตารางมาแล้วไม่มีแถวไหนให้กดเลย
+        // = เลขค้างอยู่อย่างนั้นตลอดไป ไม่มีทางทำให้เป็นศูนย์ได้
+        q = excludeBillingTypes(q, BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
+        if (session.role !== 'admin') q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true);
+        const { count, error } = await q;
+        if (error) return jsonResponse({ waiting: 0, rejected: 0 });
+        const n = count || 0;
+        return jsonResponse({ waiting: session.role === 'admin' ? 0 : n, rejected: session.role === 'admin' ? n : 0 });
+      }
+
+      // v1.0.84 — ดึง "แถวที่ฝั่งเราต้องลงมือ" ตรง ๆ ให้ปุ่มกดดูที่ป้ายแจ้งเตือน
+      //
+      // ทำไมต้องมีแยก: ตารางปกติของแอดมิน (getBillingDocuments แบบไม่เลือกผู้รับเหมา)
+      // ดึงเฉพาะแถวที่ยังไม่ได้ส่งให้ผู้รับเหมา (sent_to_contractor is null/false)
+      // แต่แถวที่ถูกตีกลับคือแถวที่ "ส่งไปแล้ว" จึงไม่เคยอยู่ในตารางนั้นเลย
+      // ป้ายจึงขึ้นเลขแต่กดดูแล้วไม่เจอแถวไหน
+      //
+      // เงื่อนไขตรงกับ getBillingReviewCounts ทุกข้อ ตัวเลขบนป้ายกับจำนวนแถวที่ได้จึงตรงกันเสมอ
+      case 'getBillingRowsNeedingAction': {
+        const [username, token] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ error: 'กรุณาเข้าสู่ระบบใหม่' });
+        const wanted = (session.role === 'admin') ? 'rejected' : 'pending';
+        let q = supabase.from('billing_documents').select('*')
+          .eq('contractor_review_status', wanted).is('completed_at', null)
+          .order('round_no', { ascending: false })
+          .order('contractor', { ascending: true })
+          .order('seq', { ascending: true })
+          .order('customer_case', { ascending: true })
+          .limit(500);
+        q = excludeBillingTypes(q, BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
+        if (session.role !== 'admin') q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true);
+        const { data, error } = await q;
+        if (error) return jsonResponse({ error: error.message });
+        if (session.role !== 'admin') return jsonResponse(stripCjPricesForContractor(data || []));
+        return jsonResponse(data || []);
       }
 
       case 'getBillingRoundOptions': {
@@ -3032,6 +5330,10 @@ Deno.serve(async (req: Request) => {
           const g = groups[k];
           g.status = g.any_completed ? (g.all_completed ? 'ตัดบิลแล้วทั้งหมด' : 'ตัดบิลแล้วบางส่วน') : 'ส่งบิลแล้ว รอตัดบิล';
           delete g.all_completed; delete g.any_completed;
+          // v1.0.87 — ยอดรวมฝั่ง CJ ของทั้งรอบ ห้ามส่งไปฝั่งผู้รับเหมา
+          // หน้าจอเขาซ่อนคอลัมน์นี้อยู่แล้ว แต่ตัวเลขยังถูกส่งไปถึงเครื่องเขาจริง ๆ
+          // ตั้งเป็น 0 แทนการลบทิ้ง เพื่อให้หน้าจอเก่าที่อ่านค่านี้ตรง ๆ ไม่พัง
+          if (session.role !== 'admin') g.total_cj = 0;
           return g;
         });
         list.sort((a: any, b: any) => b.round_no - a.round_no || (a.contractor || '').localeCompare(b.contractor || '', 'th'));
@@ -3049,8 +5351,13 @@ Deno.serve(async (req: Request) => {
         if (candResult.error) return jsonResponse({ success: false, message: candResult.error });
         const candidatePairs = candResult.candidatePairs;
         const roundPeriod = candResult.roundPeriod;
+        // v1.0.72 — งานพวกนี้ "ดึงเข้ารอบบิลได้" แล้ว แต่ยัง "ส่งบิลไม่ได้" จนกว่าจะยืนยันรูป
+        // บอกไว้ตั้งแต่ตอนดูตัวอย่าง จะได้รู้ล่วงหน้าว่าเดี๋ยวกดส่งบิลแล้วจะมีกี่งานที่ยังส่งไม่ออก
+        const waitingPhoto = candResult.waitingPhoto || [];
+        const waitingPhotoCount = waitingPhoto.length;
+        const waitingPhotoJobs = Array.from(new Set(waitingPhoto.map((b) => b.jobId))).slice(0, 50);
         if (candidatePairs.length === 0) {
-          return jsonResponse({ success: true, roundPeriod, candidates: [], alreadyBilledCount: 0 });
+          return jsonResponse({ success: true, roundPeriod, candidates: [], alreadyBilledCount: 0, waitingPhotoCount, waitingPhotoJobs });
         }
         const candidateJobIds = Array.from(new Set(candidatePairs.map((p) => p.jobId)));
         // "เลขงาน+เลขทรัพย์สิน" คู่ไหนที่มีรอบบิลอยู่แล้ว (ถูกจับคู่ไปก่อนหน้า) ไม่นับเป็นตัวอย่างซ้ำ - ให้เห็นแต่ของใหม่จริง ๆ
@@ -3061,7 +5368,7 @@ Deno.serve(async (req: Request) => {
         const newPairs = candidatePairs.filter((p) => !alreadyBilledSet.has(p.jobId + '||' + p.assetId));
         const alreadyBilledCount = candidatePairs.length - newPairs.length;
         if (newPairs.length === 0) {
-          return jsonResponse({ success: true, roundPeriod, candidates: [], alreadyBilledCount });
+          return jsonResponse({ success: true, roundPeriod, candidates: [], alreadyBilledCount, waitingPhotoCount, waitingPhotoJobs });
         }
         const newJobIds = Array.from(new Set(newPairs.map((p) => p.jobId)));
         const [openRes, closeRes, branchesRes] = await Promise.all([
@@ -3098,7 +5405,7 @@ Deno.serve(async (req: Request) => {
             is_backlog: !!p.isBacklog,
           };
         });
-        return jsonResponse({ success: true, roundPeriod, candidates, alreadyBilledCount });
+        return jsonResponse({ success: true, roundPeriod, candidates, alreadyBilledCount, waitingPhotoCount, waitingPhotoJobs });
       }
 
       case 'generateBillingDocumentsForAllClosedJobs': {
@@ -3114,7 +5421,13 @@ Deno.serve(async (req: Request) => {
         const candidatePairs = candResult.candidatePairs;
         const roundPeriod = candResult.roundPeriod;
         if (candidatePairs.length === 0) {
-          return jsonResponse({ success: true, message: 'ไม่มีข้อมูลรายการปิดงานในช่วงที่เลือก', created: 0, skipped: 0, matchedJobIds: [] });
+          // v1.0.72 — ไม่มีงานถูกกันด้วยเรื่องรูปอีกแล้ว (ด่านรูปย้ายไปอยู่ตอนส่งบิล)
+          // เหลือสาเหตุเดียวคือไม่มีรายการปิดงานในช่วงที่เลือกจริง ๆ
+          return jsonResponse({
+            success: true,
+            message: 'ไม่มีข้อมูลรายการปิดงานในช่วงที่เลือก',
+            created: 0, skipped: 0, matchedJobIds: [],
+          });
         }
         const { data: roundNoData, error: roundNoErr } = await supabase.rpc('next_billing_round_no');
         if (roundNoErr) return jsonResponse({ success: false, message: 'ขอเลขรอบบิลล้มเหลว: ' + roundNoErr.message });
@@ -3157,7 +5470,8 @@ Deno.serve(async (req: Request) => {
         (branchesData || []).forEach((b: any) => { if (b.branch_code) branchMap[b.branch_code] = b.branch_name; });
         const contractorSeqCounters: Record<string, number> = {};
         const rowsToInsert: any[] = [];
-        claimedPairs.forEach((p) => {
+        // ใช้ for..of ไม่ใช่ forEach เพราะข้างในต้อง await หาราคาอะไหล่จากตาราง parts
+        for (const p of claimedPairs) {
           const openRecord = openByJob[p.jobId] || null;
           const closeRecord = closeByPair[p.jobId + '||' + p.assetId] || null;
           const contractorKey = (openRecord && openRecord.contractor) || '__ไม่มีผู้รับเหมา__';
@@ -3168,13 +5482,16 @@ Deno.serve(async (req: Request) => {
           const codeMatch = rawBranchText.toString().match(/^\d+/);
           if (codeMatch) { branchCode = codeMatch[0]; branchName = branchMap[branchCode] || rawBranchText; }
           else if (rawBranchText) { branchName = rawBranchText; }
-          rowsToInsert.push({
+          const headFields = {
             seq, round_no: roundNo, round_period: roundPeriod, customer_case: p.jobId, branch_code: branchCode, branch_name: branchName,
             service_type: openRecord ? (openRecord.service_work || openRecord.service_type || '-') : '-',
             asset_id: closeRecord ? (closeRecord.asset_id || '-') : p.assetId, req_date: openRecord ? (openRecord.req_date || '-') : '-',
             visit_date: closeRecord ? (closeRecord.fix_date || '-') : '-', contractor: openRecord ? (openRecord.contractor || null) : null, synced_to_sheet: false,
-          });
-        });
+          };
+          // v1.0.68 — กางอะไหล่ที่กรอกไว้ตอนปิดงานออกเป็นแถวละชิ้น พร้อมประเภทเก็บเงินของชิ้นนั้น
+          const partRows = await billingPartRowsFromCloseRow(closeRecord);
+          partRows.forEach((pf: any) => { rowsToInsert.push(Object.assign({}, headFields, pf)); });
+        }
         const { error: insertErr } = await supabase.from('billing_documents').insert(rowsToInsert);
         if (insertErr) {
           await supabase.from('billing_job_registry').delete().in('customer_case', claimedKeys);
@@ -3687,7 +6004,9 @@ Deno.serve(async (req: Request) => {
 
       // ==================== พักงาน ====================
       case 'pauseIssue': {
-        const [formData] = args;
+        const [formData, username, token] = args;
+        const gate = await adminGate(username, token);
+        if (!gate.ok) return jsonResponse({ success: false, message: gate.message });
         const f = formData || {};
         const mainId = (f.mainId || '').toString().trim();
         const reason = (f.reason || '').toString().trim();
@@ -3711,7 +6030,9 @@ Deno.serve(async (req: Request) => {
       }
 
       case 'resumeIssue': {
-        const [mainId, resumedBy] = args;
+        const [mainId, resumedBy, username, token] = args;
+        const gate = await adminGate(username, token);
+        if (!gate.ok) return jsonResponse({ success: false, message: gate.message });
         if (!mainId) return jsonResponse({ success: false, message: 'ต้องระบุเลขที่งาน' });
         const { data: active, error: activeErr } = await supabase.from('pause_records').select('id').eq('main_id', mainId).eq('status', 'paused').order('paused_at', { ascending: false }).limit(1);
         if (activeErr) return jsonResponse({ success: false, message: activeErr.message });
@@ -3723,13 +6044,18 @@ Deno.serve(async (req: Request) => {
       }
 
       case 'getActivePausedList': {
+        const [username, token] = args;
+        const gate = await adminGate(username, token);
+        if (!gate.ok) return jsonResponse({ error: gate.message });
         const { data, error } = await supabase.from('pause_records').select('*').eq('status', 'paused').order('paused_at', { ascending: false }).limit(1000);
         if (error) return jsonResponse({ error: error.message });
         return jsonResponse(data);
       }
 
       case 'getPauseHistory': {
-        const [mainId] = args;
+        const [mainId, username, token] = args;
+        const gate = await adminGate(username, token);
+        if (!gate.ok) return jsonResponse({ error: gate.message });
         if (!mainId) return jsonResponse({ error: 'ต้องระบุเลขที่งาน' });
         const { data, error } = await supabase.from('pause_records').select('*').eq('main_id', mainId).order('paused_at', { ascending: false }).limit(200);
         if (error) return jsonResponse({ error: error.message });
@@ -3737,7 +6063,11 @@ Deno.serve(async (req: Request) => {
       }
 
       case 'updatePauseRecordFields': {
-        const [pauseId, mainId, fields] = args;
+        // v1.0.88 — หน้าแอปไม่ได้เรียกตัวนี้เลยแม้แต่จุดเดียว (เหลือค้างไว้จากรอบเก่า)
+        // แต่เดิมเขียนข้อมูลได้โดยไม่ต้องล็อกอิน จึงต้องกั้นไว้เหมือนตัวอื่น
+        const [pauseId, mainId, fields, username, token] = args;
+        const gate = await adminGate(username, token);
+        if (!gate.ok) return jsonResponse({ success: false, message: gate.message });
         const id = (pauseId || '').toString().trim();
         const jobId = (mainId || '').toString().trim();
         if (!id || !jobId) return jsonResponse({ success: false, message: 'ต้องระบุรายการพักงานและเลขที่งาน' });
@@ -3753,7 +6083,10 @@ Deno.serve(async (req: Request) => {
       }
 
       case 'updateOpenIssueWhilePaused': {
-        const [mainId, fields] = args;
+        // v1.0.88 — หน้าแอปไม่ได้เรียกตัวนี้เลยแม้แต่จุดเดียว (เหลือค้างไว้จากรอบเก่า) แต่เขียนข้อมูลได้
+        const [mainId, fields, username, token] = args;
+        const gate = await adminGate(username, token);
+        if (!gate.ok) return jsonResponse({ success: false, message: gate.message });
         const id = (mainId || '').toString().trim();
         if (!id) return jsonResponse({ success: false, message: 'ต้องระบุเลขที่งาน' });
         const pauseCheck = await checkIssuePausedStatus(id);
@@ -3771,7 +6104,9 @@ Deno.serve(async (req: Request) => {
       }
 
       case 'saveEditWhilePaused': {
-        const [mainId, pauseId, openFields, pauseFields] = args;
+        const [mainId, pauseId, openFields, pauseFields, username, token] = args;
+        const gate = await adminGate(username, token);
+        if (!gate.ok) return jsonResponse({ success: false, message: gate.message });
         const notes: string[] = [];
         let overallSuccess = true;
         // เรียกฟังก์ชันภายในตรงๆ (เลี่ยงจำลอง HTTP self-call)
@@ -3820,7 +6155,9 @@ Deno.serve(async (req: Request) => {
       }
 
       case 'getOpenIssueByMainId': {
-        const [mainId] = args;
+        const [mainId, username, token] = args;
+        const gate = await adminGate(username, token);
+        if (!gate.ok) return jsonResponse({ error: gate.message });
         const id = (mainId || '').toString().trim();
         if (!id) return jsonResponse({ error: 'ต้องระบุเลขที่งาน' });
         const { data, error } = await supabase.from('open_issues').select('*').eq('main_id', id).order('created_at', { ascending: false }).limit(1);
@@ -3829,7 +6166,9 @@ Deno.serve(async (req: Request) => {
       }
 
       case 'checkIssuePausedStatus': {
-        const [mainId] = args;
+        const [mainId, username, token] = args;
+        const gate = await adminGate(username, token);
+        if (!gate.ok) return jsonResponse({ error: gate.message });
         return jsonResponse(await checkIssuePausedStatus(mainId));
       }
 
@@ -3838,36 +6177,97 @@ Deno.serve(async (req: Request) => {
         const [username, token] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ error: 'กรุณาเข้าสู่ระบบใหม่' });
-        // ฟอร์มวางบิล (.xlsx) เป็นเอกสารของ "ฝั่งผู้รับเหมา" จึงต้องตัดรายการที่ไม่เก็บเงินผู้รับเหมาออกเสมอ
-        // เดิมตรงนี้ไม่ได้กรอง billing_type เลย ทำให้เลขงานที่อะไหล่ทุกชิ้นเป็น "เคลมประกัน 3 เดือน"
-        // ยังโผล่ในแท็บฟอร์มวางบิลของผู้รับเหมา ทั้งที่ไม่มีอะไรต้องเก็บเงินสักบาท
-        // ถ้าเลขงานไหนเหลือ 0 แถวหลังกรอง ก็จะไม่ถูกใส่เข้า jobs เลย = หายไปจากแท็บทั้งเลขงาน (ตามที่ต้องการ)
-        let jobsQ = supabase.from('billing_documents').select('customer_case,branch_code,branch_name,service_type,asset_id,contractor,created_at').eq('sent_to_contractor', true).is('completed_at', null).order('created_at', { ascending: true }).limit(2000);
-        jobsQ = excludeBillingTypes(jobsQ, BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
-        if (session.role !== 'admin') jobsQ = jobsQ.eq('contractor', session.displayName);
-        const { data: jobsData, error: jobsErr } = await jobsQ;
-        if (jobsErr) return jsonResponse({ error: jobsErr.message });
-        const seen = new Set(); const jobs: any[] = [];
-        (jobsData || []).forEach((r: any) => {
-          if (!r.customer_case || seen.has(r.customer_case)) return;
-          seen.add(r.customer_case);
-          jobs.push({ customerCase: r.customer_case, branchCode: r.branch_code, branchName: r.branch_name, serviceType: r.service_type, assetId: r.asset_id, contractor: r.contractor });
+        // ==================== v1.0.68 — เปลี่ยนต้นทางเป็น close_issues ====================
+        // เดิม: ผู้รับเหมาเห็นงานก็ต่อเมื่อแอดมินดึงเข้ารอบบิลและกดส่งบิลแล้ว (อ่านจาก billing_documents)
+        // ใหม่: เห็นทันทีที่ปิดงาน เพื่อให้ส่งรูปได้ก่อน แล้วค่อยวางบิลตามหลัง
+        //
+        // ผู้รับเหมาเจ้าของงานไม่ได้อยู่ใน close_issues แต่อยู่ใน open_issues
+        // จึงต้องหาเลขงานของตัวเองจาก open_issues ก่อน แล้วค่อยไปดึงรายการปิดงาน
+        // (ทำแบบนี้แทนการดึง close_issues ทั้งตารางมากรองทีหลัง เพราะตารางนั้นโตขึ้นเรื่อย ๆ)
+        const isAdminView = session.role === 'admin';
+        let closeQ = supabase.from('close_issues')
+          .select('job_id,asset_id,branch,parts,parts_json,created_at')
+          .order('created_at', { ascending: false }).limit(3000);
+        if (!isAdminView) {
+          const myJobIds: string[] = [];
+          const { data: myOpen, error: myOpenErr } = await supabase.from('open_issues')
+            .select('main_id').eq('contractor', session.displayName).limit(20000);
+          if (myOpenErr) return jsonResponse({ error: myOpenErr.message });
+          (myOpen || []).forEach((o: any) => { if (o.main_id) myJobIds.push(o.main_id); });
+          if (myJobIds.length === 0) return jsonResponse([]);
+          // PostgREST รับ .in() ได้จำกัดความยาว URL จึงตัดเอาเฉพาะงานล่าสุดพอสมควร
+          closeQ = closeQ.in('job_id', myJobIds.slice(0, 3000));
+        }
+        const { data: closeRows, error: closeRowsErr } = await closeQ;
+        if (closeRowsErr) return jsonResponse({ error: closeRowsErr.message });
+
+        // รวมรายการปิดงานเป็น "1 รายการต่อ 1 เลขงาน" เหมือนรูปแบบเดิมที่หน้าแอปรออยู่
+        // (ฟอร์มแนบรูปเป็นไฟล์เดียวต่อเลขงาน ข้างในค่อยแยก sheet ตามเลขทรัพย์สิน)
+        const jobAgg: Record<string, any> = {};
+        const needsPhotoList = await buildNeedsPhotoFn(closeRows || []);
+        (closeRows || []).forEach((r: any) => {
+          if (!r.job_id) return;
+          // อะไหล่ทุกชิ้นของทรัพย์สินชิ้นนี้ไม่เก็บเงินผู้รับเหมา = ไม่ต้องให้ส่งรูป
+          // ถ้าไม่ตัดออก งานเคลมประกันล้วนจะค้างอยู่ในแท็บของผู้รับเหมาตลอดไป
+          // v1.0.74 — แต่ถ้าในตารางบิลมีแถวที่เก็บเงินเขา ต้องขอรูปถึงจะเก็บเงินได้
+          if (!needsPhotoList(r)) return;
+          if (!jobAgg[r.job_id]) jobAgg[r.job_id] = { customerCase: r.job_id, branchText: r.branch || '', assetIds: [] };
+          const a = (r.asset_id || '').toString().trim();
+          if (a && jobAgg[r.job_id].assetIds.indexOf(a) === -1) jobAgg[r.job_id].assetIds.push(a);
         });
+        const jobIdsForForm = Object.keys(jobAgg);
+        if (jobIdsForForm.length === 0) return jsonResponse([]);
+
+        // เติมชื่อผู้รับเหมา/งานบริการจาก open_issues และชื่อสาขาจากตาราง branches
+        const openInfo: Record<string, any> = {};
+        for (let i = 0; i < jobIdsForForm.length; i += 200) {
+          const { data: oi } = await supabase.from('open_issues')
+            .select('main_id,contractor,branch,service_work,service_type').in('main_id', jobIdsForForm.slice(i, i + 200));
+          (oi || []).forEach((o: any) => { openInfo[o.main_id] = o; });
+        }
+        const { data: branchRows } = await supabase.from('branches').select('branch_code,branch_name');
+        const branchNameByCode: Record<string, string> = {};
+        (branchRows || []).forEach((b: any) => { if (b.branch_code) branchNameByCode[b.branch_code] = b.branch_name; });
+
+        const jobs: any[] = jobIdsForForm.map((jid) => {
+          const agg = jobAgg[jid];
+          const oi = openInfo[jid] || {};
+          const rawBranch = (agg.branchText || oi.branch || '').toString();
+          const codeMatch = rawBranch.match(/^\d+/);
+          const branchCode = codeMatch ? codeMatch[0] : null;
+          const branchName = branchCode
+            ? (branchNameByCode[branchCode] || rawBranch.replace(/^\d+[\s-]*/, '') || rawBranch)
+            : (rawBranch || null);
+          return {
+            customerCase: jid, branchCode, branchName,
+            serviceType: oi.service_work || oi.service_type || '-',
+            assetId: agg.assetIds.join(', '),
+            contractor: oi.contractor || null,
+          };
+        }).filter((j) => isAdminView || j.contractor === session.displayName);
         if (jobs.length === 0) return jsonResponse([]);
         const jobIds = jobs.map((j) => j.customerCase);
-        let subQ = supabase.from('job_form_submissions').select('*').in('customer_case', jobIds).order('submitted_at', { ascending: true });
-        if (session.role !== 'admin') subQ = subQ.eq('contractor', session.displayName);
-        const { data: subData } = await subQ;
+        // ดึงทีละ 200 เลขงาน กัน URL ยาวเกินจน PostgREST ปฏิเสธ
+        // (เดิมยิงทีเดียวได้เพราะรายการถูกจำกัดด้วยเงื่อนไข "ส่งบิลแล้ว" ตอนนี้ไม่มีตัวจำกัดนั้นแล้ว)
         const latestByJob: Record<string, any> = {};
-        (subData || []).forEach((s: any) => { latestByJob[s.customer_case] = s; });
+        for (let i = 0; i < jobIds.length; i += 200) {
+          let subQ = supabase.from('job_form_submissions').select('*')
+            .in('customer_case', jobIds.slice(i, i + 200)).order('submitted_at', { ascending: true });
+          if (!isAdminView) subQ = subQ.eq('contractor', session.displayName);
+          const { data: subData } = await subQ;
+          (subData || []).forEach((s: any) => { latestByJob[s.customer_case] = s; });
+        }
         const result = jobs.map((job) => {
           const sub = latestByJob[job.customerCase];
           return {
             customerCase: job.customerCase, branchCode: job.branchCode, branchName: job.branchName, serviceType: job.serviceType, assetId: job.assetId, contractor: job.contractor,
             submissionStatus: sub ? sub.status : 'none', adminRemark: sub ? sub.admin_remark : null, submittedAt: sub ? sub.submitted_at : null,
             fileUrl: sub ? sub.file_url : null, fileName: sub ? sub.file_name : null,
+            finishedAt: sub ? (sub.finished_at || null) : null,
           };
-        });
+        // งานที่ผ่านขั้นสุดท้ายแล้ว (สิ้นสุดงาน) ไม่ต้องค้างอยู่ในแท็บของผู้รับเหมาอีก
+        // เดิมใช้เงื่อนไข completed_at ของ billing_documents ทำหน้าที่นี้ ซึ่งตอนนี้ไม่ได้อ่านแล้ว
+        }).filter((r) => !r.finishedAt);
         return jsonResponse(result);
       }
 
@@ -3876,7 +6276,7 @@ Deno.serve(async (req: Request) => {
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ error: 'กรุณาเข้าสู่ระบบใหม่' });
         // TUCK CR ต้องเปิดเมนูนี้ได้เสมอ ถึงจะกดอนุมัติขั้นสุดท้ายได้ แม้บัญชีจะไม่ได้ตั้ง role เป็น admin
-        if (session.role !== 'admin' && !session.isFinalApprover) return jsonResponse({ error: 'เฉพาะแอดมินและผู้อนุมัติขั้นสุดท้ายเท่านั้นที่ดูรายการนี้ได้' });
+        if (session.role !== 'admin' && !session.isFinalApprover && !session.isChecker) return jsonResponse({ error: 'เฉพาะแอดมิน ผู้ตรวจสอบ และ TUCK CR เท่านั้นที่ดูรายการนี้ได้' });
         const { data, error } = await supabase.from('job_form_submissions').select('*').order('submitted_at', { ascending: false }).limit(500);
         if (error) return jsonResponse({ error: error.message });
         const unreadIds = (data || []).filter((r: any) => r.is_read === false).map((r: any) => r.id);
@@ -3886,10 +6286,56 @@ Deno.serve(async (req: Request) => {
         return jsonResponse(data);
       }
 
+      // ดาวน์โหลด Excel "งานที่ตีกลับไปแล้ว แต่ผู้รับเหมายังไม่ส่งกลับ"
+      // ใช้ไล่ตามงานที่ค้างอยู่ฝั่งผู้รับเหมา เปิดให้แอดมิน ผู้ตรวจสอบ และ TUCK CR โหลดได้
+      case 'downloadRejectedPendingXlsx': {
+        const [username, token] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        if (session.role !== 'admin' && !session.isChecker && !session.isFinalApprover) {
+          return jsonResponse({ success: false, message: 'เฉพาะแอดมินและผู้ตรวจสอบเท่านั้นที่โหลดรายงานนี้ได้' });
+        }
+
+        // ต้องดึงมาทั้งหมด ไม่ใช่แค่แถวที่ status = 'rejected'
+        // เพราะต้องเทียบกับแถวที่ส่งมาทีหลังของเลขงานเดียวกัน ว่ามีการส่งกลับมาแล้วหรือยัง
+        // ถ้าดึงเฉพาะ rejected จะได้งานที่เขาส่งกลับมาแล้วติดมาด้วย = ตามงานผิดคน
+        //
+        // ดึงแบบแบ่งหน้า เพราะ PostgREST มี db-max-rows ตัดจำนวนแถวเงียบ ๆ
+        // ถ้าไม่แบ่ง จะได้ข้อมูลไม่ครบโดยไม่มี error และรายงานก็จะขาดงานไปเฉย ๆ
+        const PAGE = 1000;
+        const allRows: any[] = [];
+        for (let from = 0; ; from += PAGE) {
+          const { data, error } = await supabase
+            .from('job_form_submissions')
+            .select('*')
+            .order('submitted_at', { ascending: true })
+            .range(from, from + PAGE - 1);
+          if (error) return jsonResponse({ success: false, message: 'ดึงข้อมูลล้มเหลว: ' + error.message });
+          const batch = data || [];
+          allRows.push(...batch);
+          if (batch.length < PAGE) break;
+          if (from > 200000) break;   // กันวนไม่รู้จบถ้ามีอะไรผิดปกติ
+        }
+
+        const items = pickLatestRejectedSubmissions(allRows);
+        if (items.length === 0) {
+          return jsonResponse({ success: false, message: 'ไม่มีงานที่ตีกลับแล้วค้างอยู่ — ผู้รับเหมาส่งกลับมาครบทุกงานแล้ว' });
+        }
+
+        const result = await generateRejectedPendingXlsxBase64(items);
+        if (!result.success) return jsonResponse(result);
+        return jsonResponse({
+          success: true,
+          base64: result.base64,
+          rowCount: items.length,
+          filename: 'งานตีกลับ-ยังไม่ส่งกลับ_' + new Date(Date.now() + 7 * 60 * 60 * 1000).toISOString().slice(0, 10) + '.xlsx',
+        });
+      }
+
       case 'getUnreadJobFormSubmissionCount': {
         const [username, token] = args;
         const session = await verifySession(username, token);
-        if (!session.valid || (session.role !== 'admin' && !session.isFinalApprover)) return jsonResponse({ count: 0 });
+        if (!session.valid || (session.role !== 'admin' && !session.isFinalApprover && !session.isChecker)) return jsonResponse({ count: 0 });
         const { count, error } = await supabase.from('job_form_submissions').select('id', { count: 'exact', head: true }).eq('is_read', false);
         if (error) return jsonResponse({ count: 0 });
         return jsonResponse({ count: count || 0 });
@@ -3899,190 +6345,150 @@ Deno.serve(async (req: Request) => {
         const [username, token] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
-        if (session.role !== 'admin' && !session.isFinalApprover) return jsonResponse({ success: false, message: 'เฉพาะแอดมินและผู้อนุมัติขั้นสุดท้ายเท่านั้นที่ทำรายการนี้ได้' });
+        if (session.role !== 'admin' && !session.isFinalApprover && !session.isChecker) return jsonResponse({ success: false, message: 'เฉพาะแอดมิน ผู้ตรวจสอบ และ TUCK CR เท่านั้นที่ทำรายการนี้ได้' });
         const { error } = await supabase.from('job_form_submissions').update({ is_read: true, read_at: new Date().toISOString() }).eq('is_read', false);
         if (error) return jsonResponse({ success: false, message: error.message });
         return jsonResponse({ success: true });
       }
 
-      // ==================== ขั้นที่ 1: ผู้ตรวจสอบ 3 คน ====================
-      // ลำดับใหม่ (v1.0.61) สลับจากเดิม:
-      //   ขั้นที่ 1 = ผู้ตรวจสอบ 3 คน (is_checker) กด "อนุมัติ/ตีกลับ" — กดคนเดียวใน 3 คนก็ผ่าน
-      //   ขั้นที่ 2 = TUCK CR (is_final_approver) กด "อนุมัติขั้นสุดท้าย/ตีกลับ" — ขั้นนี้เท่านั้นที่ตัดบิลจริง
+      // ==================== ยืนยันรูป — ขั้นตอนเดียวจบ (v1.0.70) ====================
+      // เดิมเป็นการตรวจ 2 ชั้น: ผู้ตรวจสอบกดขั้นที่ 1 -> TUCK CR กดขั้นสุดท้าย
+      // ตอนนี้ยุบเหลือขั้นเดียว "ยืนยันรูป" / "ตีกลับ" — ผู้ตรวจสอบและ TUCK CR กดได้ทั้งคู่
+      // (ไม่ได้เพิ่มคนที่กดได้ใหม่ แค่ไม่ต้องรอกันเป็นทอด ๆ อีกแล้ว)
       //
-      // ⚠ TUCK CR กดขั้นที่ 1 ไม่ได้ ต้องรอให้ผู้ตรวจสอบกดก่อนเสมอ
-      //    ถ้าปล่อยให้กดได้ คนเดียวจะกดผ่านครบทั้ง 2 ขั้น = การตรวจ 2 ชั้นไม่เหลือความหมาย
-      case 'reviewJobFormSubmission': {
-        const [username, token, submissionId, decision, remark] = args;
-        const session = await verifySession(username, token);
-        if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
-        if (session.isFinalApprover) {
-          return jsonResponse({ success: false, message: 'บัญชีนี้เป็นผู้อนุมัติขั้นสุดท้าย จึงกดในขั้นที่ 1 ไม่ได้ — ต้องรอให้ผู้ตรวจสอบอนุมัติก่อน แล้วค่อยมากดขั้นสุดท้าย' });
-        }
-        if (!session.isChecker) {
-          return jsonResponse({ success: false, message: 'บัญชีนี้ไม่มีสิทธิ์ในขั้นที่ 1 — ขั้นนี้ต้องให้ผู้ตรวจสอบเป็นคนกดเท่านั้น' });
-        }
-        if (decision !== 'approved' && decision !== 'rejected') return jsonResponse({ success: false, message: 'สถานะไม่ถูกต้อง' });
-        if (decision === 'rejected' && (!remark || !remark.toString().trim())) return jsonResponse({ success: false, message: 'กรุณาระบุหมายเหตุ/เหตุผลที่ตีกลับ ก่อนดำเนินการ' });
-
-        // กันกดซ้ำทับของที่ผ่านขั้นสุดท้ายไปแล้ว
-        // ถ้าไม่กัน ผู้ตรวจสอบจะดึงงานที่ตัดบิลไปแล้วกลับมาเป็น rejected ได้ ทั้งที่เงินถูกตัดไปแล้ว
-        // ⚠ ใช้ select('*') ไม่ระบุชื่อคอลัมน์
-        // ถ้าระบุชื่อคอลัมน์ที่ยังไม่มีในฐานข้อมูล (เช่น finished_at ที่มาจาก SQL รอบ v1.0.57
-        // ซึ่งอาจยังไม่ได้รัน) PostgREST จะตอบเป็น error ทั้งคำสั่ง ทำให้กดอะไรไม่ได้เลยทั้งขั้นตอน
-        // select('*') คืนเฉพาะคอลัมน์ที่มีจริง คอลัมน์ที่ขาดจะเป็น undefined ซึ่งโค้ดข้างล่างรับได้
-        const { data: preRows, error: preErr } = await supabase
-          .from('job_form_submissions').select('*').eq('id', submissionId).limit(1);
-        if (preErr) return jsonResponse({ success: false, message: preErr.message });
-        if (!preRows || preRows.length === 0) return jsonResponse({ success: false, message: 'ไม่พบรายการนี้ (อาจถูกลบไปแล้ว กดโหลด/รีเฟรชอีกครั้ง)' });
-        if (preRows[0].finished_at) return jsonResponse({ success: false, message: 'รายการนี้ผ่านการอนุมัติขั้นสุดท้ายและตัดบิลไปแล้ว แก้ไขในขั้นที่ 1 ไม่ได้' });
-
-        // ⚠ ขั้นนี้ไม่ตัดบิล — การตัดบิลอยู่ที่ขั้นสุดท้ายของ TUCK CR (finishJobFormSubmission)
-        // ทั้ง 2 ชื่อถูกบันทึกไว้และแสดงในตาราง ตรวจย้อนหลังได้ว่าใครทำขั้นไหน
-        const fields = {
-          status: decision,
-          admin_remark: remark ? remark.toString().trim() : null,
-          reviewed_at: new Date().toISOString(),
-          reviewed_by: session.displayName,
-          is_read: true,
-        };
-        const { error } = await supabase.from('job_form_submissions').update(fields).eq('id', submissionId);
-        if (error) return jsonResponse({ success: false, message: error.message });
-        return jsonResponse({
-          success: true,
-          message: decision === 'approved'
-            ? 'อนุมัติขั้นที่ 1 เรียบร้อยแล้ว — ยังไม่ตัดบิล รอ TUCK CR อนุมัติขั้นสุดท้ายจึงจะตัดบิลออกจากตารางของผู้รับเหมา'
-            : 'ตีกลับเรียบร้อยแล้ว - ผู้รับเหมาจะเห็นหมายเหตุนี้และต้องส่งฟอร์มใหม่',
-        });
-      }
-
-      // ==================== ขั้นที่ 2 (ขั้นสุดท้าย): TUCK CR ====================
-      // ทำได้ 2 อย่าง: "อนุมัติขั้นสุดท้าย" (ตัดบิลจริง) หรือ "ตีกลับ" (ส่งกลับให้ผู้รับเหมาแก้)
+      // ⚠ ขั้นนี้ไม่ใช่ตัวตัดบิลของงานใหม่อีกต่อไป
+      // กติกาใหม่: เสร็จสิ้น = ยืนยันรูปแล้ว **และ** ผู้รับเหมายืนยันรอบบิลแล้ว ทั้งสองอย่าง
+      // จึงเรียก completeBillingJobIfReady() ให้ไปเช็คอีกฝั่งด้วยทุกครั้งที่ยืนยันรูปสำเร็จ
       //
-      // ⚠ เฉพาะบัญชีที่ถูกตั้งธง is_final_approver = true (TUCK CR) เท่านั้น
-      //    ผู้ตรวจสอบ 3 คนและแอดมินทั่วไป "กดไม่ได้" ตามที่ออกแบบให้เป็นการตรวจ 2 ฝ่าย
-      //    และ "ตีกลับ" ของขั้นนี้มีไว้กันกรณีผู้ตรวจสอบอนุมัติมาแบบตรวจไม่ละเอียดหรือตกหล่น
+      // ยังรับทั้งชื่อเดิม reviewJobFormSubmission และ finishJobFormSubmission
+      // เพราะแอปเวอร์ชันเก่าที่ยังไม่ได้อัปเดตจะเรียกชื่อใดชื่อหนึ่ง ถ้าตัดทิ้งเครื่องพวกนั้นจะกดอะไรไม่ได้เลย
+      case 'reviewJobFormSubmission':
       case 'finishJobFormSubmission': {
         const [username, token, submissionId, decisionRaw, remarkRaw] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
-        if (!session.isFinalApprover) {
-          return jsonResponse({ success: false, message: 'บัญชีนี้ไม่มีสิทธิ์ในขั้นสุดท้าย — ขั้นนี้ต้องให้ TUCK CR เป็นคนกดเท่านั้น (ผู้ตรวจสอบทำได้แค่ขั้นที่ 1)' });
+        if (!session.isChecker && !session.isFinalApprover) {
+          return jsonResponse({ success: false, message: 'บัญชีนี้ไม่มีสิทธิ์ยืนยันรูป — ต้องเป็นผู้ตรวจสอบหรือ TUCK CR เท่านั้น' });
         }
-
-        // ไม่ส่ง decision มา = ถือว่า "สิ้นสุดงาน" เพื่อให้แอปเวอร์ชันเก่าที่ยังส่งแค่ 3 ค่ายังใช้ได้
-        const decision = (decisionRaw === 'rejected') ? 'rejected' : 'finished';
-        const remark = remarkRaw ? remarkRaw.toString().trim() : '';
+        // แอปเวอร์ชันเก่าส่ง 'approved' (ขั้นที่ 1) หรือ 'finished' (ขั้นสุดท้าย) มา ถือเป็น "ยืนยันรูป" เหมือนกันหมด
+        const decision = (decisionRaw === 'rejected') ? 'rejected' : 'approved';
+        const remark = (remarkRaw === null || remarkRaw === undefined) ? '' : String(remarkRaw).trim();
         if (decision === 'rejected' && !remark) {
           return jsonResponse({ success: false, message: 'กรุณาระบุหมายเหตุ/เหตุผลที่ตีกลับ ก่อนดำเนินการ' });
         }
 
-        // ⚠ select('*') ด้วยเหตุผลเดียวกับขั้นที่ 1 — ระบุชื่อคอลัมน์ที่ยังไม่มีแล้วจะพังทั้งคำสั่ง
-        // เดิมระบุ finished_at ไว้ตรง ๆ ถ้าฐานข้อมูลยังไม่มีคอลัมน์นี้ ขั้นสุดท้ายจะล้มตั้งแต่บรรทัดนี้
-        // ทั้งปุ่มอนุมัติสุดท้ายและปุ่มตีกลับจึงใช้ไม่ได้ทั้งคู่ โดยไม่มีอะไรบอกว่าเพราะอะไร
+        // ⚠ select('*') ไม่ระบุชื่อคอลัมน์ — ถ้าระบุคอลัมน์ที่ยังไม่มีในฐานข้อมูล
+        // PostgREST จะตอบ error ทั้งคำสั่ง ทำให้กดอะไรไม่ได้เลยทั้งขั้นตอน
         const { data: subRows, error: subErr } = await supabase
-          .from('job_form_submissions')
-          .select('*')
-          .eq('id', submissionId).limit(1);
+          .from('job_form_submissions').select('*').eq('id', submissionId).limit(1);
         if (subErr) return jsonResponse({ success: false, message: subErr.message });
         if (!subRows || subRows.length === 0) return jsonResponse({ success: false, message: 'ไม่พบรายการนี้ (อาจถูกลบไปแล้ว กดโหลด/รีเฟรชอีกครั้ง)' });
         const sub = subRows[0];
-        if (sub.status !== 'approved') {
-          return jsonResponse({ success: false, message: 'ต้องให้ผู้ตรวจสอบอนุมัติในขั้นที่ 1 ก่อน TUCK CR จึงจะกดขั้นสุดท้ายได้ (สถานะตอนนี้: ' + (sub.status === 'rejected' ? 'ตีกลับ' : 'รอผู้ตรวจสอบ') + ')' });
+        const jobId = sub.customer_case;
+
+        if (decision === 'approved' && sub.status === 'approved' && sub.finished_at) {
+          return jsonResponse({ success: false, message: 'รายการนี้ยืนยันรูปไปแล้ว ไม่ต้องกดซ้ำ' });
         }
-        if (sub.finished_at) return jsonResponse({ success: false, message: 'รายการนี้อนุมัติขั้นสุดท้ายไปแล้ว ไม่ต้องกดซ้ำ' });
 
         const nowIso = new Date().toISOString();
 
-        // ---- กรณี TUCK CR "ตีกลับ" ----
-        // ไม่แตะบิลเลย แค่ดึงสถานะกลับไปเป็นตีกลับ ผู้รับเหมาจะเห็นหมายเหตุและต้องส่งฟอร์มใหม่
-        // เก็บชื่อผู้ตรวจสอบขั้นที่ 1 ไว้ไม่ลบ จะได้ตามได้ว่าใครอนุมัติผ่านมาก่อนหน้า
+        // ---- ตีกลับ ----
+        // กลับไปสถานะ "ส่งแบบฟอร์มรูปแล้ว" ผู้รับเหมาต้องส่งรูปใหม่
+        // ต้องล้าง finished_at ด้วย ไม่งั้นระบบจะยังนับว่า "ยืนยันรูปแล้ว" ทั้งที่เพิ่งตีกลับไป
+        // แล้วงานจะถูกปิดว่าเสร็จสิ้นทั้งที่รูปยังไม่ผ่าน
         if (decision === 'rejected') {
-          let { error: rejErr } = await supabase.from('job_form_submissions').update({
-            status: 'rejected',
-            admin_remark: remark,
-            checker_by: session.displayName,
-            checker_at: nowIso,
-            checker_decision: 'rejected',
-            checker_remark: remark,
-            is_read: true,
-          }).eq('id', submissionId);
-
-          // เผื่อฐานข้อมูลยังไม่มีคอลัมน์ประวัติผู้ตรวจ (ยังไม่ได้รัน SQL ที่เพิ่มคอลัมน์ checker_*)
-          // เดิมจะพังทั้งคำสั่งแล้วตีกลับไม่ได้เลย — ตอนนี้ถอยไปบันทึกเฉพาะคอลัมน์หลักที่มีแน่นอน
-          // ผลคือตีกลับได้จริง เสียแค่ประวัติชื่อผู้กด ซึ่งดีกว่าปล่อยให้ใช้งานไม่ได้ทั้งฟีเจอร์
+          // งานที่ตัดบิลไปแล้วดึงกลับมาไม่ได้ เพราะเงินถูกตัดไปแล้ว
+          const { count: doneCount } = await supabase.from('billing_documents')
+            .select('id', { count: 'exact', head: true })
+            .eq('customer_case', jobId).not('completed_at', 'is', null);
+          if ((doneCount || 0) > 0) {
+            return jsonResponse({ success: false, message: 'เลขงานนี้ตัดบิลไปแล้ว จึงตีกลับรูปไม่ได้ (ถ้าต้องแก้จริง ต้องแก้ที่ตารางวางบิลโดยตรง)' });
+          }
+          const rejectFields: any = {
+            status: 'rejected', admin_remark: remark, is_read: true,
+            reviewed_at: nowIso, reviewed_by: session.displayName,
+            finished_at: null, finished_by: null,
+            checker_by: session.displayName, checker_at: nowIso,
+            checker_decision: 'rejected', checker_remark: remark,
+          };
+          let { error: rejErr } = await supabase.from('job_form_submissions').update(rejectFields).eq('id', submissionId);
+          // เผื่อฐานข้อมูลยังไม่มีคอลัมน์ประวัติผู้ตรวจ — ถอยไปบันทึกเฉพาะคอลัมน์ที่มีแน่นอน
+          // ตีกลับได้จริงสำคัญกว่าการเก็บชื่อคนกด
           if (rejErr && /column|schema cache/i.test(rejErr.message || '')) {
-            const retry = await supabase.from('job_form_submissions').update({
-              status: 'rejected',
-              admin_remark: remark,
-              is_read: true,
-            }).eq('id', submissionId);
+            const retry = await supabase.from('job_form_submissions')
+              .update({ status: 'rejected', admin_remark: remark, is_read: true }).eq('id', submissionId);
             rejErr = retry.error;
-            if (!rejErr) {
-              return jsonResponse({
-                success: true,
-                message: 'ตีกลับเรียบร้อยแล้ว — ไม่ได้ตัดบิล ผู้รับเหมาจะเห็นหมายเหตุนี้และต้องส่งฟอร์มใหม่'
-                  + ' · ⚠ ยังไม่ได้บันทึกชื่อผู้ตีกลับ เพราะฐานข้อมูลยังไม่มีคอลัมน์ประวัติผู้ตรวจ ให้รันไฟล์ SQL v1.0.62 เพื่อเพิ่มคอลัมน์',
-              });
-            }
           }
           if (rejErr) return jsonResponse({ success: false, message: 'ตีกลับไม่สำเร็จ: ' + rejErr.message });
           return jsonResponse({
             success: true,
-            message: 'ตีกลับเรียบร้อยแล้ว — ไม่ได้ตัดบิล ผู้รับเหมาจะเห็นหมายเหตุนี้และต้องส่งฟอร์มใหม่'
-              + (sub.reviewed_by ? (' (ขั้นที่ 1 อนุมัติโดย ' + sub.reviewed_by + ')') : ''),
+            message: 'ตีกลับเรียบร้อยแล้ว — เลขงานนี้กลับไปสถานะ "ส่งแบบฟอร์มรูปแล้ว" ผู้รับเหมาจะเห็นหมายเหตุนี้และต้องส่งรูปใหม่',
           });
         }
 
-        // ---- กรณี TUCK CR "อนุมัติขั้นสุดท้าย" ----
-        // ตัดบิลเฉพาะแถวที่ "ส่งบิลให้ผู้รับเหมาไปแล้ว และยังไม่เคยตัด" เท่านั้น
-        //
-        // บั๊กเดิม: กรองแค่ .eq('customer_case', jobId) อย่างเดียว ไม่ได้ดูสถานะการส่งบิลเลย
-        // เลขงานเดียวกันอยู่ได้หลายรอบบิล (จากงานหลายเลขทรัพย์สิน หรือจากการติ๊กรวมงานตกค้าง)
-        // กดครั้งเดียวจึงไปตัดบิลของรอบใหม่ที่เพิ่งสร้างและยังไม่ได้ส่งบิลด้วย
-        // แถวพวกนั้นจะกลายเป็น "เสร็จสิ้น (ตัดบิลแล้ว)" ทั้งที่ยังไม่เคยเก็บเงิน = เงินหลุดโดยไม่มีใครรู้
-        const jobId = sub.customer_case;
-        let closedCount = 0;
-        if (jobId) {
-          const { data: closedRows, error: closeErr } = await supabase
-            .from('billing_documents')
-            .update({ completed_at: nowIso })
-            .eq('customer_case', jobId)
-            .eq('sent_to_contractor', true)
-            .is('completed_at', null)
-            .select('id');
-          if (closeErr) return jsonResponse({ success: false, message: 'ตัดบิลไม่สำเร็จ: ' + closeErr.message + ' (ยังไม่ได้บันทึกการสิ้นสุดงาน ลองใหม่อีกครั้ง)' });
-          closedCount = (closedRows || []).length;
-        }
-
-        // บันทึกหลังตัดบิลสำเร็จเท่านั้น ถ้าตัดบิลพลาดจะได้กดใหม่ได้ ไม่ค้างสถานะครึ่ง ๆ กลาง ๆ
-        let { error: finErr } = await supabase.from('job_form_submissions').update({
-          finished_at: nowIso,
-          finished_by: session.displayName,
-          checker_by: session.displayName,
-          checker_at: nowIso,
-          checker_decision: 'finished',
-          checker_remark: remark || null,
-        }).eq('id', submissionId);
-
-        // เผื่อคอลัมน์ประวัติผู้ตรวจยังไม่มีในฐานข้อมูล (ยังไม่ได้รัน SQL) — ถอยไปบันทึกเฉพาะ 2 คอลัมน์หลัก
-        // ถ้าไม่ถอย บิลจะถูกตัดไปแล้วแต่สถานะไม่ถูกบันทึก = กดซ้ำได้เรื่อย ๆ และงานค้างครึ่ง ๆ กลาง ๆ
-        if (finErr && /column|schema cache/i.test(finErr.message || '')) {
+        // ---- ยืนยันรูป ----
+        // บันทึกทั้ง status และ finished_at พร้อมกันในครั้งเดียว (เมื่อก่อนอยู่คนละขั้น)
+        const approveFields: any = {
+          status: 'approved', admin_remark: remark || null, is_read: true,
+          reviewed_at: nowIso, reviewed_by: session.displayName,
+          finished_at: nowIso, finished_by: session.displayName,
+          checker_by: session.displayName, checker_at: nowIso,
+          checker_decision: 'finished', checker_remark: remark || null,
+        };
+        let { error: appErr } = await supabase.from('job_form_submissions').update(approveFields).eq('id', submissionId);
+        let historyColumnsMissing = false;
+        if (appErr && /column|schema cache/i.test(appErr.message || '')) {
+          historyColumnsMissing = true;
           const retry = await supabase.from('job_form_submissions').update({
-            finished_at: nowIso,
-            finished_by: session.displayName,
+            status: 'approved', admin_remark: remark || null, is_read: true,
+            reviewed_at: nowIso, reviewed_by: session.displayName,
           }).eq('id', submissionId);
-          finErr = retry.error;
+          appErr = retry.error;
         }
-        if (finErr) return jsonResponse({ success: false, message: 'ตัดบิลแล้วแต่บันทึกชื่อผู้อนุมัติขั้นสุดท้ายไม่สำเร็จ: ' + finErr.message + ' — ให้รันไฟล์ SQL v1.0.62 เพื่อเพิ่มคอลัมน์ที่ขาด' });
+        if (appErr) return jsonResponse({ success: false, message: 'ยืนยันรูปไม่สำเร็จ: ' + appErr.message });
 
-        return jsonResponse({
-          success: true,
-          message: (closedCount > 0
-            ? ('อนุมัติขั้นสุดท้ายเรียบร้อย — ตัดบิล ' + closedCount + ' แถวของเลขงานนี้ออกจากตารางวางบิลของผู้รับเหมาแล้ว')
-            : 'อนุมัติขั้นสุดท้ายเรียบร้อย (ไม่มีแถวที่ต้องตัดบิล เพราะยังไม่ได้ส่งบิลให้ผู้รับเหมา หรือตัดบิลไปแล้วก่อนหน้านี้)')
-            + (sub.reviewed_by ? (' · ขั้นที่ 1 โดย ' + sub.reviewed_by + ' · ขั้นสุดท้ายโดย ' + session.displayName) : ''),
-        });
+        // ---- ปิดบิลของงานเก่าที่ยังเดินตามลำดับเดิม ----
+        // แถวที่ส่งบิลไปก่อนมีระบบตรวจรับของผู้รับเหมา (contractor_review_status เป็น null)
+        // ไม่มีใครมากดยืนยันฝั่งผู้รับเหมาให้ ถ้าไม่ปิดตรงนี้จะค้างถาวร
+        // ส่วนแถวที่อยู่ในระบบใหม่ ปล่อยให้ completeBillingJobIfReady เป็นคนตัดสิน
+        let legacyClosed = 0;
+        if (jobId) {
+          let res = await supabase.from('billing_documents')
+            .update({ completed_at: nowIso })
+            .eq('customer_case', jobId).eq('sent_to_contractor', true)
+            .is('completed_at', null).is('contractor_review_status', null).select('id');
+          if (res.error && /column|schema cache/i.test(res.error.message || '')) {
+            res = await supabase.from('billing_documents')
+              .update({ completed_at: nowIso })
+              .eq('customer_case', jobId).eq('sent_to_contractor', true)
+              .is('completed_at', null).select('id');
+          }
+          legacyClosed = (res.data || []).length;
+        }
+
+        // ---- เช็คอีกฝั่ง: ผู้รับเหมายืนยันรอบบิลครบแล้วหรือยัง ----
+        // ถ้าครบแล้วและเพิ่งยืนยันรูปเสร็จ = ครบเงื่อนไข "เสร็จสิ้น" พอดี ปิดให้เลยตรงนี้
+        let newFlowClosed = 0;
+        let waitingContractor = 0;
+        if (jobId) {
+          const { data: roundRows } = await supabase.from('billing_documents')
+            .select('round_no').eq('customer_case', jobId).is('completed_at', null);
+          const rounds = Array.from(new Set((roundRows || []).map((r: any) => r.round_no)));
+          for (const rn of rounds) newFlowClosed += await completeBillingJobIfReady(jobId, rn);
+          const { count: pendingCount } = await supabase.from('billing_documents')
+            .select('id', { count: 'exact', head: true })
+            .eq('customer_case', jobId).is('completed_at', null)
+            .in('contractor_review_status', ['pending', 'rejected']);
+          waitingContractor = pendingCount || 0;
+        }
+
+        const closedTotal = legacyClosed + newFlowClosed;
+        let message = 'ยืนยันรูปเรียบร้อยแล้ว';
+        if (closedTotal > 0) message += ' — ครบเงื่อนไขเสร็จสิ้น ตัดบิล ' + closedTotal + ' แถวของเลขงานนี้แล้ว';
+        else if (waitingContractor > 0) message += ' — ยังไม่เสร็จสิ้น เพราะบิล ' + waitingContractor + ' แถวรอผู้รับเหมายืนยันอยู่ (เสร็จสิ้น = ยืนยันรูป + ผู้รับเหมายืนยันรอบบิล)';
+        else message += ' — ยังไม่ได้ส่งบิลให้ผู้รับเหมา งานจะเสร็จสิ้นเมื่อส่งบิลแล้วผู้รับเหมายืนยันครบ';
+        if (historyColumnsMissing) message += ' · ⚠ ยังไม่ได้บันทึกประวัติผู้กด เพราะฐานข้อมูลยังไม่มีคอลัมน์ checker_* (ให้รัน SQL v1.0.62)';
+        return jsonResponse({ success: true, message });
       }
 
       case 'uploadJobFormSubmission': {
@@ -4091,13 +6497,25 @@ Deno.serve(async (req: Request) => {
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (!jobId || !fileBase64) return jsonResponse({ success: false, message: 'ข้อมูลไม่ครบ (ต้องมีเลขงานและไฟล์)' });
         try {
-          const { data: jobRows, error: jobErr } = await supabase.from('billing_documents').select('customer_case,contractor,branch_name,sent_to_contractor').eq('customer_case', jobId).limit(1);
-          if (jobErr) return jsonResponse({ success: false, message: jobErr.message });
-          if (!jobRows || jobRows.length === 0) return jsonResponse({ success: false, message: 'ไม่พบเลขงาน "' + jobId + '" ในระบบ' });
-          const jobRecord = jobRows[0];
+          // v1.0.68 — สิทธิ์ส่งไฟล์อ้างอิงจาก "ปิดงานแล้วหรือยัง" แทน "ส่งบิลแล้วหรือยัง"
+          // เงื่อนไขเดิม sent_to_contractor = true ใช้ไม่ได้อีกต่อไป เพราะตอนส่งรูปยังไม่มีบิลด้วยซ้ำ
+          // เจ้าของงานดูจาก open_issues.contractor (close_issues ไม่เก็บชื่อผู้รับเหมา)
+          const { data: closeRowsUp, error: closeUpErr } = await supabase
+            .from('close_issues').select('job_id,branch').eq('job_id', jobId).limit(1);
+          if (closeUpErr) return jsonResponse({ success: false, message: closeUpErr.message });
+          if (!closeRowsUp || closeRowsUp.length === 0) {
+            return jsonResponse({ success: false, message: 'เลขงาน "' + jobId + '" ยังไม่ได้ปิดงาน จึงยังส่งฟอร์มแนบรูปไม่ได้' });
+          }
+          const { data: openRowsUp } = await supabase
+            .from('open_issues').select('main_id,contractor,branch').eq('main_id', jobId).limit(1);
+          const openUp = (openRowsUp && openRowsUp.length > 0) ? openRowsUp[0] : {};
+          const jobRecord: any = {
+            customer_case: jobId,
+            contractor: openUp.contractor || null,
+            branch_name: closeRowsUp[0].branch || openUp.branch || '',
+          };
           if (session.role !== 'admin') {
             if (jobRecord.contractor !== session.displayName) return jsonResponse({ success: false, message: 'คุณไม่มีสิทธิ์ส่งไฟล์สำหรับเลขงานนี้' });
-            if (jobRecord.sent_to_contractor !== true) return jsonResponse({ success: false, message: 'เลขงานนี้ยังไม่ถูกส่งบิลให้คุณ' });
           }
 
           const safeOriginalName = (fileName || (jobId + '.pdf')).toString();
@@ -4105,6 +6523,52 @@ Deno.serve(async (req: Request) => {
           const imageExts = ['jpg', 'jpeg', 'png'];
           const isImage = imageExts.indexOf(ext) !== -1;
           const rawBytes = Uint8Array.from(atob(fileBase64), (c) => c.charCodeAt(0));
+
+          // ==================== กันส่งฟอร์มซ้ำ (v1.0.91) ====================
+          // อาการที่เจอจริง: เลขงานเดียวกันโผล่ 2 แถว เวลาเดียวกัน ชื่อไฟล์เหมือนกันเป๊ะ
+          //
+          // ต้นเหตุ: ผู้รับเหมากดส่ง -> เซิร์ฟเวอร์รับไฟล์และบันทึกสำเร็จแล้วจริง ๆ
+          // แต่คำตอบกลับไปไม่ทันเวลา (เน็ตมือถือช้า / ไฟล์ใหญ่) หน้าแอปจึงขึ้น "เชื่อมต่อล้มเหลว"
+          // แล้วปลดล็อกปุ่มให้กดใหม่ได้ เขาเห็นว่าไม่สำเร็จก็กดส่งซ้ำ = ได้ไฟล์ 2 ไฟล์ 2 แถว
+          //
+          // เดิมไม่มีอะไรกันเลย เพราะชื่อไฟล์ใน Storage มีเวลา+ตัวสุ่มต่อท้าย จึงไม่มีวันซ้ำกัน
+          // แล้วต่อด้วย insert ตรง ๆ ไม่เคยเช็คว่าเพิ่งรับไฟล์ก้อนนี้ไปหรือยัง
+          //
+          // วิธีกัน: ทำ "ลายนิ้วมือ" ของไฟล์ แล้วฝังไว้ในชื่อไฟล์ที่เก็บใน Storage
+          // ถ้างานนี้เพิ่งรับไฟล์ก้อนเดิมเป๊ะไปเมื่อกี้ และยังรอตรวจอยู่ = ถือว่าเป็นการกดซ้ำ
+          // คืนผลว่าสำเร็จพร้อมข้อมูลแถวเดิม ไม่สร้างแถวใหม่ (ผู้รับเหมาไม่ต้องรู้อะไรเลย)
+          //
+          // ⚠ ต้องแฮชจาก rawBytes (ไฟล์ดิบที่ส่งมา) ห้ามแฮชจาก pdfBytes
+          // เพราะไฟล์รูปจะถูกแปลงเป็น PDF ใหม่ทุกครั้ง ได้ไบต์ไม่เหมือนเดิม แฮชจะไม่มีวันตรงกัน
+          //
+          // การส่งใหม่ที่ "ตั้งใจ" ยังทำได้ปกติทุกกรณี:
+          //   - ส่งไฟล์คนละก้อน  -> ลายนิ้วมือคนละค่า ไม่เข้าเงื่อนไข
+          //   - ส่งใหม่หลังถูกตีกลับ -> แถวเดิมเป็น rejected ไม่ใช่ pending จึงไม่เข้าเงื่อนไข
+          //   - ส่งซ้ำหลังผ่านไปนาน -> เกิน 15 นาที ไม่เข้าเงื่อนไข
+          //
+          // แถวเก่าที่บันทึกไว้ก่อนรอบนี้ไม่มีลายนิ้วมือในชื่อไฟล์ จึงไม่มีวันถูกจับผิดว่าซ้ำ
+          const hashBuf = await crypto.subtle.digest('SHA-256', rawBytes);
+          const fileHash = Array.from(new Uint8Array(hashBuf)).slice(0, 8)
+            .map((b) => b.toString(16).padStart(2, '0')).join('');
+          const dupSinceIso = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+          const { data: recentUps } = await supabase.from('job_form_submissions')
+            .select('id,file_name,file_url,submitted_at,drive_file_id,status')
+            .eq('customer_case', jobId).eq('status', 'pending')
+            .gte('submitted_at', dupSinceIso)
+            .order('submitted_at', { ascending: false }).limit(20);
+          const dupRow = (recentUps || []).find((r: any) =>
+            String(r.drive_file_id || '').indexOf('__h' + fileHash + '__') !== -1);
+          if (dupRow) {
+            return jsonResponse({
+              success: true,
+              duplicate: true,
+              message: 'ไฟล์ฟอร์มของเลขงาน "' + jobId + '" ส่งเข้าระบบเรียบร้อยแล้ว'
+                + ' (เป็นไฟล์เดิมที่เพิ่งส่งมา ระบบจึงไม่บันทึกซ้ำ) รอแอดมินตรวจสอบ',
+              fileUrl: dupRow.file_url,
+              fileName: dupRow.file_name,
+              submittedAt: dupRow.submitted_at,
+            });
+          }
 
           let pdfBytes: Uint8Array;
           if (isImage) {
@@ -4129,11 +6593,27 @@ Deno.serve(async (req: Request) => {
           // ทำให้เจอ error "Invalid key" ตอนอัปโหลด) - ชื่อไฟล์ภาษาไทยที่อ่านง่ายยังคงเก็บแยกไว้ที่คอลัมน์ file_name
           // สำหรับใช้ตอนดาวน์โหลด/แสดงผลบนหน้าเว็บตามปกติ ไม่กระทบผู้ใช้เลย
           const safeJobIdForPath = jobId.toString().replace(/[^a-zA-Z0-9._-]/g, '_');
-          const storagePath = safeJobIdForPath + '/' + Date.now() + '_' + Math.random().toString(36).slice(2, 8) + '.pdf';
+          // ฝังลายนิ้วมือไว้ในชื่อไฟล์ เพื่อให้รอบหน้าตรวจเจอว่าเป็นไฟล์ก้อนเดิม
+          // (ใช้ตัวอักษร ASCII ล้วน ตามข้อจำกัดของ Storage key เหมือนเดิม)
+          const storagePath = safeJobIdForPath + '/__h' + fileHash + '__'
+            + Date.now() + '_' + Math.random().toString(36).slice(2, 8) + '.pdf';
 
-          const { error: uploadErr } = await supabase.storage.from('job-form-submissions').upload(storagePath, pdfBytes, { contentType: 'application/pdf', upsert: false });
-          if (uploadErr) return jsonResponse({ success: false, message: 'อัปโหลดไฟล์ล้มเหลว: ' + uploadErr.message });
-          const { data: publicUrlData } = supabase.storage.from('job-form-submissions').getPublicUrl(storagePath);
+          const { error: uploadErr } = await supabase.storage.from(JOB_FORM_BUCKET).upload(storagePath, pdfBytes, { contentType: 'application/pdf', upsert: false });
+          if (uploadErr) {
+            // ข้อความดิบจาก Supabase เป็นภาษาอังกฤษสั้น ๆ เช่น "Bucket not found"
+            // ซึ่งผู้รับเหมาที่เจอหน้าจอนี้ทำอะไรต่อไม่ได้เลย และแอดมินก็เดาไม่ออกว่าต้องไปแก้ที่ไหน
+            // จึงแปลเป็นวิธีแก้ให้ตรง ๆ สำหรับสาเหตุที่เจอจริงบ่อยที่สุด
+            const raw = (uploadErr.message || '').toString();
+            if (/bucket not found/i.test(raw)) {
+              return jsonResponse({
+                success: false,
+                message: 'อัปโหลดไฟล์ล้มเหลว: โปรเจกต์นี้ยังไม่มีที่เก็บไฟล์ชื่อ "' + JOB_FORM_BUCKET + '"'
+                  + ' — ให้แอดมินรันไฟล์ SQL v1.0.73 ในโปรเจกต์นี้ก่อน แล้วลองส่งใหม่',
+              });
+            }
+            return jsonResponse({ success: false, message: 'อัปโหลดไฟล์ล้มเหลว: ' + raw });
+          }
+          const { data: publicUrlData } = supabase.storage.from(JOB_FORM_BUCKET).getPublicUrl(storagePath);
           const fileUrl = publicUrlData ? publicUrlData.publicUrl : null;
 
           const row = {
@@ -4152,15 +6632,23 @@ Deno.serve(async (req: Request) => {
 
       // ==================== PDF ตารางวางบิล / ใบเขียว (สร้างจริงด้วย pdf-lib แทน Google Docs) ====================
       case 'generateBillingPdfBase64': {
-        const [rowsArg, isAdminArg] = args;
-        // isAdmin = true คือใบฝั่ง CJ (ใช้คอลัมน์ราคา CJ) / false คือใบฝั่งผู้รับเหมา
+        // v1.0.87 — เดิมไม่ตรวจ session และ "เชื่อค่า isAdmin ที่หน้าแอปส่งมา" ตรง ๆ
+        // = ยิงคำขอเข้ามาพร้อม isAdmin=true ก็ได้ใบวางบิลราคา CJ ออกไปเลย
+        // ตอนนี้ฝั่งของเอกสารตัดสินจาก session เท่านั้น ค่าที่ส่งมาใช้ได้แค่ตอนแอดมินเลือกฝั่งเอง
+        const [rowsArg, isAdminArg, username, token] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) {
+          return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่ (ถ้ายังขึ้นข้อความนี้ แปลว่าแอปเป็นเวอร์ชันเก่า ต้องอัปเดตแอปก่อน)' });
+        }
+        // ผู้รับเหมาได้ใบฝั่งตัวเองเสมอ ไม่ว่าจะส่ง isAdmin มาเป็นอะไร
+        const wantCjSide = (session.role === 'admin') && !!isAdminArg;
         // แถวส่งมาจากหน้าแอปโดยตรง จึงกรองประเภทการเก็บเงินซ้ำอีกชั้นที่นี่ กันกรณีหน้าแอปเวอร์ชันเก่ายังไม่กรอง
-        const sideRows = filterRowsForSide(rowsArg, isAdminArg ? 'cj' : 'contractor');
+        const sideRows = filterRowsForSide(rowsArg, wantCjSide ? 'cj' : 'contractor');
         if (!sideRows || sideRows.length === 0) {
           return jsonResponse({ success: false, message: 'ไม่มีรายการที่ต้องเก็บเงินในฝั่งนี้ (รายการเคลมประกัน 3 เดือน / เคลมอะไหล่ ถูกตัดออกแล้ว)' });
         }
         // หน้าแอปนับเลขลำดับมาให้แล้ว แต่นับซ้ำอีกชั้นเพื่อกันกรณีหน้าแอปเวอร์ชันเก่าส่งลำดับดิบมา
-        const result = await generateBillingPdfBase64(renumberBillingRowsForDocument(sideRows), !!isAdminArg);
+        const result = await generateBillingPdfBase64(renumberBillingRowsForDocument(sideRows), wantCjSide);
         return jsonResponse(result);
       }
 
@@ -4223,25 +6711,58 @@ Deno.serve(async (req: Request) => {
         // ฟอร์มวางบิลเป็นเอกสารฝั่งผู้รับเหมา จึงตัด "เคลมประกัน 3 เดือน" ออกทั้งสองบทบาท (รวมตอนแอดมินสร้างแทนด้วย)
         // ผลที่ได้: เลขทรัพย์สินที่อะไหล่ทุกชิ้นเป็นเคลมประกัน 3 เดือน จะไม่มี sheet ในไฟล์
         // และถ้าทั้งเลขงานเป็นแบบนั้นหมด จะไม่มีไฟล์ออกมาเลย พร้อมข้อความบอกเหตุผล
-        let q = supabase.from('billing_documents').select('customer_case,branch_code,branch_name,service_type,asset_id,contractor,sent_to_contractor').in('customer_case', jobIds).order('created_at', { ascending: true });
-        q = excludeBillingTypes(q, BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
-        if (session.role !== 'admin') q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true);
-        const { data, error } = await q;
-        if (error) return jsonResponse({ success: false, message: 'ดึงข้อมูลล้มเหลว: ' + error.message });
-        // เดิม dedupe ด้วย customer_case อย่างเดียว ทำให้ 1 เลขงานที่มีหลายเลขทรัพย์สินได้ฟอร์มแค่ 1 ใบ (สูญข้อมูลเลขทรัพย์สินอื่น)
-        // เปลี่ยนเป็นรวมเลขทรัพย์สินทั้งหมดของแต่ละเลขงานไว้ด้วยกัน แล้วออกไฟล์เดียวต่อเลขงาน แต่เพิ่ม sheet แยกทีละเลขทรัพย์สินในไฟล์เดียวกัน (แพทเทิร์นฟอร์มเดิม เปลี่ยนแค่เลขทรัพย์สิน)
+        // ==================== v1.0.68 — สร้างฟอร์มจาก close_issues แทน billing_documents ====================
+        // เหตุผล: ฟอร์มต้องพร้อมให้กรอกตั้งแต่ "ปิดงาน" ซึ่งเป็นตอนที่ยังไม่มีแถวในตารางวางบิลเลยสักแถว
+        // ถ้ายังอ่านจาก billing_documents เหมือนเดิม ผู้รับเหมาจะกดขอไฟล์ไม่ได้จนกว่าแอดมินจะดึงเข้ารอบบิล
+        // ซึ่งขัดกับลำดับใหม่ทั้งหมด (รูปต้องมาก่อนบิล)
+        const { data: closeForForm, error: closeFormErr } = await supabase
+          .from('close_issues').select('job_id,asset_id,branch,parts,parts_json')
+          .in('job_id', jobIds).order('created_at', { ascending: true });
+        if (closeFormErr) return jsonResponse({ success: false, message: 'ดึงข้อมูลล้มเหลว: ' + closeFormErr.message });
+        // ผู้รับเหมาเจ้าของงานและชื่องานบริการอยู่ที่ open_issues
+        const openForForm: Record<string, any> = {};
+        for (let i = 0; i < jobIds.length; i += 200) {
+          const { data: oi } = await supabase.from('open_issues')
+            .select('main_id,contractor,branch,service_work,service_type').in('main_id', jobIds.slice(i, i + 200));
+          (oi || []).forEach((o: any) => { openForForm[o.main_id] = o; });
+        }
+        const { data: branchRowsForm } = await supabase.from('branches').select('branch_code,branch_name');
+        const branchNameByCodeForm: Record<string, string> = {};
+        (branchRowsForm || []).forEach((b: any) => { if (b.branch_code) branchNameByCodeForm[b.branch_code] = b.branch_name; });
+
+        // 1 เลขงาน = 1 ไฟล์ แต่ข้างในแยก sheet ทีละเลขทรัพย์สิน (แพทเทิร์นฟอร์มเดิม เปลี่ยนแค่เลขทรัพย์สิน)
         const jobMap: Record<string, any> = {};
-        (data || []).forEach((r: any) => {
-          if (!r.customer_case) return;
+        // ต้องใช้กฎเดียวกับตอนขึ้นรายการในแท็บเป๊ะ ๆ
+        // ถ้าที่นั่นบอกว่าต้องส่งรูป แต่ที่นี่ไม่สร้าง sheet ให้ ผู้รับเหมาจะได้ไฟล์เปล่า
+        // แล้วส่งรูปไม่ได้ ทั้งที่ระบบรอรูปอยู่ = ค้างโดยไม่มีทางออก
+        const needsPhotoForm = await buildNeedsPhotoFn(closeForForm || []);
+        (closeForForm || []).forEach((r: any) => {
+          if (!r.job_id) return;
+          // ทรัพย์สินที่อะไหล่ทุกชิ้นไม่เก็บเงินผู้รับเหมา ไม่ต้องมี sheet ในไฟล์ (กฎเดิมของระบบ)
+          if (!needsPhotoForm(r)) return;
+          const oi = openForForm[r.job_id] || {};
+          // ผู้รับเหมาขอไฟล์ได้เฉพาะงานของตัวเอง แอดมินขอแทนได้ทุกงาน
+          if (session.role !== 'admin' && oi.contractor !== session.displayName) return;
           const assetKey = (r.asset_id || '-').toString().trim() || '-';
-          if (!jobMap[r.customer_case]) {
-            jobMap[r.customer_case] = { customerCase: r.customer_case, branchCode: r.branch_code, branchName: r.branch_name, serviceType: r.service_type, assetIds: [] };
+          if (!jobMap[r.job_id]) {
+            const rawBranch = (r.branch || oi.branch || '').toString();
+            const codeMatch = rawBranch.match(/^\d+/);
+            const branchCode = codeMatch ? codeMatch[0] : null;
+            jobMap[r.job_id] = {
+              customerCase: r.job_id,
+              branchCode,
+              branchName: branchCode
+                ? (branchNameByCodeForm[branchCode] || rawBranch.replace(/^\d+[\s-]*/, '') || rawBranch)
+                : (rawBranch || null),
+              serviceType: oi.service_work || oi.service_type || '-',
+              assetIds: [],
+            };
           }
-          if (jobMap[r.customer_case].assetIds.indexOf(assetKey) === -1) jobMap[r.customer_case].assetIds.push(assetKey);
+          if (jobMap[r.job_id].assetIds.indexOf(assetKey) === -1) jobMap[r.job_id].assetIds.push(assetKey);
         });
         const jobs: any[] = Object.values(jobMap);
         if (jobs.length === 0) {
-          return jsonResponse({ success: false, message: 'ไม่มีฟอร์มต้องกรอกสำหรับเลขงานนี้ — อะไหล่ทุกชิ้นเป็น "เคลมประกัน 3 เดือน" ซึ่งไม่เก็บเงินผู้รับเหมา (หรือไม่ใช่งานของคุณ / ยังไม่ถูกส่งบิล)' });
+          return jsonResponse({ success: false, message: 'ไม่มีฟอร์มต้องกรอกสำหรับเลขงานนี้ — ยังไม่ได้ปิดงาน หรืออะไหล่ทุกชิ้นเป็นประเภทที่ไม่เก็บเงินผู้รับเหมา (เคลมประกัน 3 เดือน / ใบเสนอราคา) หรือไม่ใช่งานของคุณ' });
         }
         // ---- เติมคำอธิบายทรัพย์สินและวันรับประกันลงหัวฟอร์ม ----
         // ดึงทีเดียวสำหรับทุกเลขทรัพย์สินของทุกงานในรอบนี้ แทนการ query ทีละ sheet
