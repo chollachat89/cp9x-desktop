@@ -2852,7 +2852,9 @@
                     }
                     closeRemoveJobModal();
                     showAlert('success', res.message || 'คืนงานเรียบร้อย');
-                    loadBillingDocuments();
+                    // โหลดหน้าที่กำลังเปิดอยู่ใหม่ ให้แถวที่คืนไปหายออกจากจอทันที
+                    if (currentMode === 'statusreport') loadStatusReport();
+                    else loadBillingDocuments();
                 },
                 function (err) {
                     setRemoveJobError_('เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : ''));
@@ -7831,12 +7833,12 @@
                 'bg-orange-50 text-orange-800 ring-orange-200', 'bg-orange-500', 'bg-orange-100 text-orange-700'],
             ['ส่งแบบฟอร์มรูปแล้ว', 'ปิดงานแล้ว รอผู้รับเหมาใส่รูป (รวมที่ถูกตีกลับ)',
                 'bg-amber-50 text-amber-800 ring-amber-200', 'bg-amber-500', 'bg-amber-100 text-amber-700'],
-            ['ปิดงานแล้ว (ไม่ต้องส่งรูป)', 'เคลมประกัน/ใบเสนอราคา ไม่ต้องส่งให้ ผรม. รอเราวางบิล',
-                'bg-cyan-50 text-cyan-800 ring-cyan-200', 'bg-cyan-500', 'bg-cyan-100 text-cyan-700'],
             ['ผรม. ส่งงานมาแล้วรอตรวจสอบ', 'ผู้รับเหมาส่งรูปแล้ว รอแอดมินตรวจ',
                 'bg-violet-50 text-violet-800 ring-violet-200', 'bg-violet-500', 'bg-violet-100 text-violet-700'],
             ['ยืนยันรูปแล้ว', 'แอดมินยืนยันรูปแล้ว ยังไม่ได้ส่งบิล',
                 'bg-sky-50 text-sky-800 ring-sky-200', 'bg-sky-500', 'bg-sky-100 text-sky-700'],
+            ['ปิดงานแล้ว (ไม่ต้องส่งรูป)', 'เคลมประกัน 3 เดือน / ใบเสนอราคา ล้วน ๆ ไม่เก็บเงินใคร ไม่ต้องส่งรูป = จบแล้ว',
+                'bg-cyan-50 text-cyan-800 ring-cyan-200', 'bg-cyan-500', 'bg-cyan-100 text-cyan-700'],
             ['อยู่ในรอบบิล รอส่ง', 'ดึงเข้ารอบบิลแล้ว รอแอดมินกดส่งให้ผู้รับเหมา',
                 'bg-indigo-50 text-indigo-800 ring-indigo-200', 'bg-indigo-500', 'bg-indigo-100 text-indigo-700'],
             ['ส่งงานแล้ว', 'ส่งบิลให้ผู้รับเหมาแล้ว รอเขาตรวจ',
@@ -7947,6 +7949,24 @@
 
         let currentStatusReportRenderedRows = []; // แถวที่กำลังแสดงอยู่จริง (หลังกรอง) - ใช้ให้ปุ่ม "ดูรายละเอียด" อ้างอิงกลับได้ด้วย index
 
+        // v1.0.96 — ปุ่มคืนงานในรายงานสถานะดำเนินการ
+        // ขึ้นเฉพาะแอดมิน และเฉพาะแถวที่เซิร์ฟเวอร์บอกว่าคืนได้ (มีแถวบิล และยังไม่มีแถวไหนถูกตัดบิล)
+        // ไม่เดาเองจากสถานะที่เห็นบนจอ เพราะสถานะเป็นข้อความ ถ้าวันหลังแก้คำจะพังเงียบ ๆ
+        //
+        // รายงานนี้ไม่มีเลขรอบบิลในแถว จึงส่งรอบเป็นค่าว่าง = คืนทุกรอบของคู่เลขงาน+เลขทรัพย์สินนั้น
+        // ซึ่งตรงกับความหมายของการคืนงานจากหน้านี้ ("ตัดออกจากระบบไปเลย")
+        function statusReportRemoveBtnHtml(row) {
+            if (!currentSession || currentSession.role !== 'admin') return '';
+            if (!row || row.can_remove_billing !== true) return '';
+            return '<button type="button" onclick="openRemoveJobModalFromBtn(this)"'
+                + ' data-job="' + escapeAttr(row.main_id) + '"'
+                + ' data-asset="' + escapeAttr(row.asset_id) + '"'
+                + ' data-round=""'
+                + ' class="ml-2 text-rose-600 hover:text-rose-700 hover:underline text-xs font-semibold"'
+                + ' title="คืนงาน — ตัดงานนี้ออกจากระบบวางบิลทั้งงาน (ทุกรอบของเลขทรัพย์สินนี้)">'
+                + '<i class="fa-solid fa-arrow-rotate-left mr-1"></i>คืนงาน</button>';
+        }
+
         function renderStatusReport(rows) {
             currentStatusReportRenderedRows = rows;
             const tbody = document.getElementById('statusReportBody');
@@ -7973,6 +7993,7 @@
                         <button type="button" onclick="showStatusReportDetail(${i})" class="text-blood-700 hover:text-blood-800 hover:underline text-xs font-semibold" title="ดูรายละเอียด">
                             <i class="fa-solid fa-eye mr-1"></i>ดูรายละเอียด
                         </button>
+                        ${statusReportRemoveBtnHtml(row)}
                     </td>
                 </tr>`;
             }).join('');

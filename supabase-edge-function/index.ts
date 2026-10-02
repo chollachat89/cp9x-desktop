@@ -3271,8 +3271,41 @@ Deno.serve(async (req: Request) => {
         billablePairs.add(jobAssetKey(b.customer_case, b.asset_id));
       }
     });
-    const closeRowNeedsPhoto = (row: any) => closeRowNeedsContractorPhoto(row)
-      || billablePairs.has(jobAssetKey(row && row.job_id, row && row.asset_id));
+    // v1.0.96 — สรุปตารางบิลเป็นรายคู่ (เลขงาน+เลขทรัพย์สิน) ไม่สนว่าตัดบิลแล้วหรือยัง
+    // ใช้ตัดสินประเภทงานของ "แถวที่ปิดก่อน v1.0.68" ซึ่งไม่มี parts_json ให้ดู
+    const pairBilling = new Map<string, { rows: number; contractorBillable: number }>();
+    (billingRes.data || []).forEach((b: any) => {
+      const k = jobAssetKey(b.customer_case, b.asset_id);
+      let m = pairBilling.get(k);
+      if (!m) { m = { rows: 0, contractorBillable: 0 }; pairBilling.set(k, m); }
+      m.rows++;
+      if (billingRowNeedsContractorReview(b)) m.contractorBillable++;
+    });
+
+    // งานนี้ต้องให้ผู้รับเหมาส่งรูปหรือไม่
+    //
+    // ⚠ จุดที่เคยผิด: แถวที่ปิดงานก่อน v1.0.68 ไม่มี parts_json
+    // partsJsonFromCloseRow จึงถอยไปอ่านคอลัมน์ parts ซึ่งเป็นข้อความล้วน ไม่มีประเภทเก็บเงินติดมา
+    // ทุกชิ้นเลยถูกตีเป็น 'normal' = "ต้องส่งรูป" ทั้งหมด ไม่ว่าจริง ๆ จะเป็นงานเคลมหรือไม่
+    //
+    // ผลที่เกิดกับข้อมูลจริง (ตรวจ 2 ต.ค. 2569): งานเคลมประกัน 3 เดือน / ใบเสนอราคา ที่ไม่เก็บเงินใครเลย
+    // 281 แถว ไปกองรวมอยู่กับงานที่รอผู้รับเหมาส่งรูปจริง ๆ ทั้งที่งานพวกนี้ไม่มีฟอร์มรูปให้ส่งตั้งแต่ต้น
+    //
+    // แก้เป็น: แถวเก่าให้ถาม "ตารางวางบิล" ซึ่งเป็นแหล่งที่รู้ประเภทเก็บเงินจริง
+    //   มีแถวบิล -> ต้องส่งรูปก็ต่อเมื่อมีอย่างน้อย 1 รายการที่เก็บเงินฝั่งผู้รับเหมา
+    //   ไม่มีแถวบิลเลย -> ยังไม่มีอะไรให้ตัดสิน ถือว่าต้องส่งรูปไว้ก่อน (เหมือนเดิม)
+    const closeRowHasPartsJson = (row: any) =>
+      !!(row && Array.isArray(row.parts_json) && row.parts_json.length > 0);
+
+    const closeRowNeedsPhoto = (row: any) => {
+      const key = jobAssetKey(row && row.job_id, row && row.asset_id);
+      if (closeRowHasPartsJson(row)) {
+        return closeRowNeedsContractorPhoto(row) || billablePairs.has(key);
+      }
+      const m = pairBilling.get(key);
+      if (m && m.rows > 0) return m.contractorBillable > 0;
+      return true;
+    };
 
     // v1.0.95 — เลขงานที่ถูกกด "คืนงาน" ออกจากตารางวางบิล
     // ต้องมีสถานะของตัวเอง ไม่งั้นพอแถวบิลถูกตัดออก งานจะตกกลับไปขึ้นว่า "ส่งแบบฟอร์มรูปแล้ว"
@@ -3330,6 +3363,7 @@ Deno.serve(async (req: Request) => {
         //   เสร็จสิ้น                    ยืนยันรูปแล้ว + ผู้รับเหมายืนยันรอบบิลแล้ว (ตัดบิลแล้ว)
         //   ยืนยันงานแล้ว                ผู้รับเหมายืนยันบิลครบทุกแถว แต่ยังขาดฝั่งรูป
         //   ส่งงานแล้ว                   แอดมินกดส่งบิลไปหาผู้รับเหมาแล้ว รอเขาตรวจ
+        //   ปิดงานแล้ว (ไม่ต้องส่งรูป)     เคลมประกัน 3 เดือน / ใบเสนอราคา ล้วน ๆ ไม่เก็บเงินฝั่งผู้รับเหมา (v1.0.96)
         //   อยู่ในรอบบิล รอส่ง            ดึงเข้ารอบบิลแล้ว แต่แอดมินยังไม่กดส่ง (v1.0.95)
         //   คืนงานแล้ว (ตัดออกจากบิล)     แอดมินกดคืนงาน ตัดออกจากระบบวางบิล (v1.0.95)
         //   ยืนยันรูปแล้ว                แอดมินยืนยันรูปแล้ว แต่ยังไม่ได้ส่งบิล
@@ -3342,9 +3376,13 @@ Deno.serve(async (req: Request) => {
         if (billingInfo && billingInfo.completed) status = 'เสร็จสิ้น';
         else if (billingInfo && billingInfo.contractorAny && !billingInfo.contractorPending) status = 'ยืนยันงานแล้ว';
         else if (billingInfo && billingInfo.sent) status = 'ส่งงานแล้ว';
+        // v1.0.96 — งานเคลมประกัน 3 เดือน / ใบเสนอราคา ล้วน ๆ ไม่เก็บเงินทั้ง 2 ฝั่ง
+        // ไม่มีฟอร์มรูปให้รอ และไม่มีบิลให้ส่ง = จบงานตั้งแต่ปิดงานแล้ว
+        // ต้องตัดสินก่อน "อยู่ในรอบบิล รอส่ง" ไม่งั้นงานพวกนี้จะไปกองปนกับบิลที่รอแอดมินกดส่งจริง ๆ
+        // (ข้อมูลจริง 2 ต.ค. 2569: ในถังนั้น 281 จาก 284 แถวเป็นงานเคลม เหลือบิลที่รอส่งจริงแค่ 3)
+        else if (closeRec && !closeRowNeedsPhoto(closeRec)) status = 'ปิดงานแล้ว (ไม่ต้องส่งรูป)';
         // v1.0.95 — ก่อนหน้านี้งานกลุ่มนี้ตกไปรวมอยู่ในถัง "ส่งแบบฟอร์มรูปแล้ว"
         // ซึ่งอ่านแล้วเข้าใจว่า "รอผู้รับเหมาส่งรูป" ทั้งที่คนที่ต้องลงมือต่อคือแอดมินเอง
-        // (ตรวจข้อมูลจริง 2 ต.ค. 2569: 284 จาก 314 งานในถังนั้นเป็นกรณีนี้)
         else if (billingInfo && billingInfo.hasRows) status = 'อยู่ในรอบบิล รอส่ง';
         else if (removedJobs.has(o.main_id)) status = 'คืนงานแล้ว (ตัดออกจากบิล)';
         else if (photoStatus === 'approved') status = 'ยืนยันรูปแล้ว';
@@ -3352,10 +3390,8 @@ Deno.serve(async (req: Request) => {
         // ปิดงานแล้ว = ฟอร์มรูปถูกส่งให้ผู้รับเหมาทันที (ตั้งแต่ v1.0.68)
         // จึงใช้ชื่อสถานะว่า "ส่งแบบฟอร์มรูปแล้ว" ไม่ใช่ "ปิดงานแล้ว" ตามคำที่ใช้กันจริงในทีม
         // รูปที่ถูกตีกลับ (photoStatus === 'rejected') ก็ตกมาที่ขั้นนี้ ตรงตามที่ออกแบบไว้
-        // v1.0.74 — ปิดงานครั้งนี้ไม่มีอะไหล่ที่เก็บเงินฝั่งผู้รับเหมาเลย (เคลมประกัน/ใบเสนอราคา ล้วน ๆ)
-        // ระบบไม่เคยออกฟอร์มรูปให้ จึงห้ามขึ้นว่า "ส่งแบบฟอร์มรูปแล้ว"
-        // ไม่งั้นจะดูเหมือนกองรอผู้รับเหมาอยู่ ทั้งที่คนที่ต้องลงมือต่อคือฝั่งเราเอง
-        else if (closeRec) status = closeRowNeedsPhoto(closeRec) ? 'ส่งแบบฟอร์มรูปแล้ว' : 'ปิดงานแล้ว (ไม่ต้องส่งรูป)';
+        // มาถึงตรงนี้แปลว่า "ต้องส่งรูป" แน่นอนแล้ว (กรณีไม่ต้องส่งรูปถูกจับไปข้างบนตั้งแต่ v1.0.96)
+        else if (closeRec) status = 'ส่งแบบฟอร์มรูปแล้ว';
         else if (isCurrentlyPaused) status = 'พักงาน';
 
         // ==================== alarm ตามเวลา (v1.0.71) ====================
@@ -3405,6 +3441,17 @@ Deno.serve(async (req: Request) => {
           fix_date: closeRec ? closeRec.fix_date : null, closed_at: closeRec ? closeRec.created_at : null,
           action_taken: closeRec ? closeRec.action_taken : null, duration_hours: durationHours,
           sent_to_contractor: !!(billingInfo && billingInfo.sent), completed: !!(billingInfo && billingInfo.completed), status,
+          // v1.0.96 — คืนงานได้ไหม (ใช้ตัดสินว่าจะโชว์ปุ่มคืนงานในรายงานสถานะหรือไม่)
+          // เงื่อนไขเดียวกับฝั่งเซิร์ฟเวอร์/ฐานข้อมูลเป๊ะ ๆ: มีแถวบิลของคู่นี้ และยังไม่มีแถวไหนถูกตัดบิล
+          // คิดจาก "คู่ เลขงาน+เลขทรัพย์สิน" ของแถวนี้ ไม่ใช่ทั้งเลขงาน เพราะปุ่มคืนงานทำงานเป็นรายคู่
+          can_remove_billing: (() => {
+            if (!closeRec) return false;
+            const k = jobAssetKey(closeRec.job_id, closeRec.asset_id);
+            const m = pairBilling.get(k);
+            if (!m || m.rows === 0) return false;
+            return !(billingRes.data || []).some((b: any) =>
+              jobAssetKey(b.customer_case, b.asset_id) === k && !!b.completed_at);
+          })(),
           is_paused: isCurrentlyPaused,
           pause_periods: pausePeriodsOut,
           pause_count: pausePeriods.length,
