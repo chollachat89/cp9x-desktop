@@ -377,6 +377,27 @@ function jobAssetKey(jobId: any, assetId: any): string {
   return s1 + '||' + s2;
 }
 
+// ==================== ส่งหลายแถวพร้อมกัน ต้องมีคีย์ครบเท่ากันทุกแถว (v1.0.99) ====================
+// ⚠ กับดักของ PostgREST: การ insert ด้วย array ใช้ json_populate_recordset ข้างใน
+// คีย์ที่ "แถวแรกมี แต่แถวหลังไม่มี" จะกลายเป็น NULL — ไม่ใช่ค่า default ของคอลัมน์
+//
+// เกิดขึ้นจริง 3 ต.ค. 2569: กดยืนยันบันทึกรอบบิลแล้วขึ้น
+//   สร้างแถวตารางวางบิลล้มเหลว: null value in column "billing_type" ... violates not-null constraint
+// เพราะรอบนั้นมีทั้งงานที่กรอกอะไหล่ไว้ (แถวมี billing_type) และงานที่ไม่ได้กรอก (parts = "1. -")
+// ซึ่งแถวหลังไม่มีคีย์ billing_type เลย -> กลายเป็น NULL -> ทั้งรอบบิลล้มทั้งชุด
+// (ถ้าทั้งรอบไม่มีใครกรอกอะไหล่เลยจะไม่พัง เลยไม่เจอมาก่อน ต้องมีปนกันถึงจะโผล่)
+//
+// ใช้ร่วมกับการกำหนดค่าเริ่มต้นให้ครบใน billingPartRowsFromCloseRow — กันไว้ 2 ชั้น
+function sameShapeRows(rows: any[]): any[] {
+  const keys = new Set<string>();
+  (rows || []).forEach((r) => Object.keys(r || {}).forEach((k) => keys.add(k)));
+  return (rows || []).map((r) => {
+    const out: any = {};
+    keys.forEach((k) => { out[k] = (r && Object.prototype.hasOwnProperty.call(r, k)) ? r[k] : null; });
+    return out;
+  });
+}
+
 // ==================== งานนี้ต้องให้ผู้รับเหมาส่งรูปไหม — กติกาเดียวทั้งระบบ (v1.0.97) ====================
 // ⚠ เดิมมี 2 ชุดที่ตัดสินไม่เหมือนกัน
 //   - รายงานสถานะ (แก้แล้วใน v1.0.96) รู้ว่างานเคลมไม่ต้องส่งรูป
@@ -2922,7 +2943,20 @@ Deno.serve(async (req: Request) => {
   // คืน [{}] (แถวเปล่าแบบเดิม) เฉพาะกรณีที่ไม่มีรายการอะไหล่เลยจริง ๆ เท่านั้น
   async function billingPartRowsFromCloseRow(closeRow: any): Promise<any[]> {
     const usable = partsJsonFromCloseRow(closeRow);
-    if (usable.length === 0) return [{}];
+    // ไม่ได้กรอกอะไหล่ไว้เลย (เช่น parts = "1. -") -> ออกแถวเปล่า 1 แถวให้แอดมินมากรอกเองในตารางวางบิล
+    //
+    // ⚠ v1.0.99 — เดิมคืน [{}] ซึ่งไม่มีคีย์อะไรเลย พอส่ง insert ปนกับแถวที่มีอะไหล่
+    // คีย์ที่ขาดจะกลายเป็น NULL (ดู sameShapeRows) แล้ว billing_type ที่เป็น NOT NULL จะล้มทั้งรอบบิล
+    // จึงต้องใส่คีย์ให้ครบเท่าแถวปกติ ค่าที่ใส่ตรงกับผลลัพธ์เดิมเป๊ะ ๆ
+    // (คอลัมน์พวกนี้ว่างได้หมด มีแต่ billing_type ที่ฐานข้อมูลบังคับ และค่า default ของมันคือ 'normal')
+    if (usable.length === 0) {
+      return [{
+        part_code: null, part_detail: null, warranty_months: null, qty: null, unit: null,
+        unit_price: null, total_price: null, unit_price_contractor: null, total_price_contractor: null,
+        quotation_ref: null, return_old_part: null, company: null,
+        billing_type: 'normal',
+      }];
+    }
     const codes = Array.from(new Set(usable.map((p: any) => p.partCode).filter(Boolean))) as string[];
     const partByCode: Record<string, any> = {};
     for (let i = 0; i < codes.length; i += 100) {
@@ -3878,7 +3912,7 @@ Deno.serve(async (req: Request) => {
         if (rowsToInsert.length === 0) {
           return jsonResponse({ success: false, message: 'เลขงาน "' + jobId + '" มีอยู่ในตารางวางบิลครบทุกเลขทรัพย์สินแล้ว (' + skipped + ' รายการ) จึงไม่มีอะไรให้เพิ่ม' });
         }
-        const { error: insErr } = await supabase.from('billing_documents').insert(rowsToInsert);
+        const { error: insErr } = await supabase.from('billing_documents').insert(sameShapeRows(rowsToInsert));
         if (insErr) return jsonResponse({ success: false, message: 'เพิ่มเข้ารอบบิลล้มเหลว: ' + insErr.message });
         return jsonResponse({
           success: true,
@@ -5858,7 +5892,7 @@ Deno.serve(async (req: Request) => {
           const partRows = await billingPartRowsFromCloseRow(closeRecord);
           partRows.forEach((pf: any) => { rowsToInsert.push(Object.assign({}, headFields, pf)); });
         }
-        const { error: insertErr } = await supabase.from('billing_documents').insert(rowsToInsert);
+        const { error: insertErr } = await supabase.from('billing_documents').insert(sameShapeRows(rowsToInsert));
         if (insertErr) {
           await supabase.from('billing_job_registry').delete().in('customer_case', claimedKeys);
           return jsonResponse({ success: false, message: 'สร้างแถวตารางวางบิลล้มเหลว: ' + insertErr.message });

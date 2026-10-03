@@ -3333,6 +3333,40 @@
             lastAutoCloseDateTime = currentCloseDateTimeValue();
         }
 
+        // ==================== กันหน้าจอค้างตอนผู้ใช้กำลังพิมพ์ (v1.0.99) ====================
+        //
+        // อาการที่เจอจริง: กำลังพิมพ์ "เหตุผลที่คืนงาน" แล้วหน้าจอค้างเป็นช่วง ๆ
+        //
+        // ต้นเหตุ: ทุก 30 วินาทีมีการวาดตารางใหม่ทั้งตาราง (รายงานสถานะมี 626 แถว)
+        // ระหว่างวาด เบราว์เซอร์หยุดรับคีย์บอร์ด = รู้สึกเหมือนเครื่องค้าง
+        // และถ้ากำลังพิมพ์ภาษาไทยอยู่ ตัวที่กำลังประกอบจะหลุดด้วย
+        //
+        // ของเดิมมีตัวกันอยู่แล้ว แต่เป็น "รายชื่อหน้าต่างที่เขียนมือ" ซึ่งตกหล่น 7 ตัว
+        // (editPausedModal · pmAddLineItemModal · detailModal · billingHistoryModal ·
+        //  completedRoundDetailModal · pmBillingHistoryModal · pmBillingPreviewModal)
+        // พอเพิ่มหน้าต่างใหม่แล้วลืมมาต่อรายชื่อ อาการนี้ก็กลับมาอีก
+        //
+        // เปลี่ยนเป็น "ตรวจจากหน้าตาของหน้าต่างเอง" แทน — ทุกหน้าต่างในแอปนี้ใช้คลาสชุดเดียวกันหมด
+        // (fixed inset-0 z-50) จึงครอบคลุมหน้าต่างที่จะเพิ่มในอนาคตโดยไม่ต้องมาแก้ตรงนี้อีก
+        function anyDialogOpen_() {
+            const nodes = document.querySelectorAll('.fixed.inset-0.z-50:not(.hidden)');
+            return Array.prototype.some.call(nodes, function (el) { return el.id !== 'loginScreen'; });
+        }
+
+        // จำเวลาที่กดแป้นล่าสุดในช่องกรอก — ใช้ capture เพื่อให้เห็นการพิมพ์ในหน้าต่างย่อยด้วย
+        let lastTypedAt_ = 0;
+        // ดัก 2 เหตุการณ์: keydown (พิมพ์ปกติ) และ input (วาง · เลือกคำจากตัวช่วยพิมพ์ภาษาไทย
+        // ซึ่งบางครั้งไม่ยิง keydown ออกมา) — พลาดเหตุการณ์ใดเหตุการณ์หนึ่งก็ยังจับได้จากอีกตัว
+        function markTyping_(e) {
+            const t = e.target;
+            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) lastTypedAt_ = Date.now();
+        }
+        document.addEventListener('keydown', markTyping_, true);
+        document.addEventListener('input', markTyping_, true);
+        // หยุดวาดหน้าจอ 15 วินาทีหลังพิมพ์ตัวสุดท้าย (ไม่ใช่หยุดถาวรตอนเคอร์เซอร์ค้างอยู่ในช่อง
+        //  ไม่งั้นข้อมูลจะไม่อัปเดตเลยทั้งวันถ้าลืมคลิกออกจากช่องค้นหา)
+        function userIsTyping_() { return Date.now() - lastTypedAt_ < 15000; }
+
         // ==================== อัปเดตข้อมูลอัตโนมัติเป็นรอบๆ (real-time แบบเบาๆ) ====================
         // รวมทุกอย่างไว้ใน timer เดียว (เดิมมี 3 ตัวจับเวลาแยกกัน รวมเป็นตัวเดียวลดโอเวอร์เฮด)
         // อัปเดตทุกแท็บที่เป็นการ "ดูข้อมูล" (ตรวจสอบเปิดงาน/ปิดงาน, รายงานสถานะ, แดชบอร์ด, ฟอร์มวางบิล, ไฟล์ผู้รับเหมาส่งกลับ)
@@ -3346,9 +3380,8 @@
             // v1.0.77 — มีหน้าต่างย่อย (โมดัล) เปิดอยู่ = หยุดรีเฟรชพื้นหลังทั้งหมด
             // กันการวาด DOM ระหว่างที่ผู้ใช้กำลังพิมพ์ โดยเฉพาะภาษาไทยที่พิมพ์แบบต่อเนื่อง
             // ถ้าวาดหน้าจอกลางคัน ตัวอักษรที่กำลังประกอบจะหลุด = อาการ "บางครั้งพิมพ์ไม่ได้"
-            const anyDialogOpen = ['billingReviewModal', 'reopenReasonModal', 'assetChangeModal', 'addProductModal', 'billingPreviewModal', 'syncTablesModal', 'systemCheckModal', 'telegramSetupModal', 'maintenanceModal', 'removeJobModal']
-                .some(function (mid) { const m = document.getElementById(mid); return m && !m.classList.contains('hidden'); });
-            if (anyDialogOpen) return;
+            // v1.0.99 — ตรวจหน้าต่างแบบอัตโนมัติ (ดู anyDialogOpen_) + หยุดตอนกำลังพิมพ์ในช่องใด ๆ
+            if (anyDialogOpen_() || userIsTyping_()) return;
 
             const active = document.activeElement;
             const isTypingOrPicking = active && ['TEXTAREA', 'INPUT', 'SELECT'].indexOf(active.tagName) !== -1;
@@ -7841,8 +7874,33 @@
             }
             if (currentMode === 'statusreport') {
                 statusReportLiveTickInterval = setInterval(function () {
-                    if (currentMode === 'statusreport') filterStatusReport();
+                    if (currentMode !== 'statusreport') return;
+                    // ⚠ v1.0.99 — ตัวนี้คือต้นเหตุหลักของอาการค้างตอนกรอก "เหตุผลที่คืนงาน"
+                    // ปุ่มคืนงานอยู่ในหน้านี้ (ตั้งแต่ v1.0.96) แต่เดิมตัวจับเวลานี้ไม่เคยเช็ก
+                    // ว่ามีหน้าต่างเปิดอยู่ไหม จึงวาดตาราง 626 แถวใหม่ทับทุก 30 วินาที
+                    // ขณะที่ผู้ใช้กำลังพิมพ์อยู่ในหน้าต่าง
+                    if (anyDialogOpen_() || userIsTyping_()) return;
+                    tickStatusReportDurations_();
                 }, 30000);
+            }
+        }
+
+        // อัปเดต "ระยะเวลาดำเนินการ" ของงานที่ยังไม่ปิด โดยแตะเฉพาะช่องนั้น
+        //
+        // ของเดิมเรียก filterStatusReport() ซึ่งกรองใหม่ + วาดตารางใหม่ทั้ง 626 แถว
+        // ทั้งที่สิ่งเดียวที่เปลี่ยนคือตัวเลขเวลาในคอลัมน์เดียว
+        // วิธีนี้ไม่แตะโครงตาราง จึงไม่ทำให้ตำแหน่งเคอร์เซอร์/ช่องที่เลือกอยู่หลุด และไม่หน่วง
+        function tickStatusReportDurations_() {
+            const tbody = document.getElementById('statusReportBody');
+            if (!tbody) return;
+            const rows = currentStatusReportRenderedRows || [];
+            const trs = tbody.children;
+            const n = Math.min(trs.length, rows.length);
+            for (let i = 0; i < n; i++) {
+                const row = rows[i];
+                if (!row || row.closed_at) continue;   // ปิดงานแล้ว เวลาหยุดเดินแล้ว ไม่ต้องแตะ
+                const cell = trs[i].querySelector('td[data-col="duration"]');
+                if (cell) cell.textContent = getRowDurationDisplay(row);
             }
         }
 
