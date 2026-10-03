@@ -52,6 +52,30 @@
 
 
 -- =====================================================================
+--  ⚠ ด่านกันรันผิดโปรเจกต์ — ต้องเป็นโปรเจกต์ maintenance-system (CP9X) เท่านั้น
+-- =====================================================================
+--  เรื่องจริงที่เกิดขึ้น 3 ต.ค. 2569: ไฟล์นี้ถูกรันใน SQL Editor ของโปรเจกต์ "Inventory"
+--  (คนละโปรเจกต์กัน แต่หน้าตา SQL Editor เหมือนกันเป๊ะ แยกไม่ออกถ้าไม่ดูชื่อมุมบนซ้าย)
+--  ผลคือขึ้น error ว่าไม่มีตาราง photo_submissions แล้วไม่มีอะไรถูกแก้เลย
+--  ส่วนช่องโหว่ของ CP9X ก็ยังเปิดอยู่เหมือนเดิม โดยเข้าใจผิดว่ารันไปแล้ว
+--
+--  ด่านนี้หยุดทันทีถ้าไม่ใช่ฐานข้อมูลของ CP9X — ปลอดภัยกว่าปล่อยให้รันครึ่ง ๆ กลาง ๆ
+do $$
+begin
+  if to_regclass('public.contractors') is null
+     or to_regclass('public.billing_documents') is null
+     or to_regclass('public.billing_job_registry') is null then
+    raise exception E'หยุด: นี่ไม่ใช่ฐานข้อมูลของ CP9X\n'
+      'ไม่พบตารางหลัก (contractors / billing_documents / billing_job_registry)\n'
+      'คุณกำลังเปิด SQL Editor ของโปรเจกต์อื่นอยู่ (เช่น Inventory)\n'
+      'วิธีแก้: มุมบนซ้ายของหน้า Supabase กดสลับโปรเจกต์เป็น "maintenance-system" '
+      '(รหัสโปรเจกต์ hefnjozijflnhdunmewl) แล้วรันไฟล์นี้ใหม่';
+  end if;
+  raise notice 'ตรวจแล้ว: เป็นฐานข้อมูลของ CP9X ถูกต้อง — เริ่มทำงาน';
+end $$;
+
+
+-- =====================================================================
 --  0. ดูก่อนว่าตอนนี้เปิดอะไรไว้บ้าง (อ่านอย่างเดียว)
 -- =====================================================================
 select c.relname as "ตาราง",
@@ -104,11 +128,31 @@ begin
   end loop;
 end $$;
 
--- policy ที่ให้ anon "ทำได้ทุกอย่าง" (เพิ่ม/แก้/ลบ) กับ photo_submissions
-drop policy if exists "allow all photo_submissions" on public.photo_submissions;
-
--- ข้อมูลประกันทรัพย์สิน — เปิดให้ทุกคนอ่าน แต่ไม่มีระบบไหนอ่านทางนี้ (ตรวจจาก log แล้ว)
-drop policy if exists "asset_warranty_read" on public.asset_warranty;
+-- policy อื่นที่เปิดให้ anon นอกเหนือจาก "mshadow read"
+--   photo_submissions : policy "allow all" = anon เพิ่ม/แก้/ลบได้
+--   asset_warranty    : เปิดให้ทุกคนอ่าน แต่ไม่มีระบบไหนอ่านทางนี้ (ตรวจจาก log แล้ว)
+--
+-- ⚠ ต้องเช็คก่อนว่ามีตารางนั้นจริง
+--    "drop policy if exists" กัน "ไม่มี policy" ได้ แต่ "ไม่มีตาราง" ยัง error อยู่ดี
+--    (PostgreSQL 17 ยืนยันแล้ว: ERROR 42P01 relation ... does not exist)
+--    ถ้าพังตรงนี้ คำสั่งที่เหลือทั้งไฟล์จะไม่ถูกรันเลย
+do $$
+declare t record;
+begin
+  for t in
+    select * from (values
+      ('photo_submissions', 'allow all photo_submissions'),
+      ('asset_warranty',    'asset_warranty_read')
+    ) as v(tbl, pol)
+  loop
+    if to_regclass('public.' || quote_ident(t.tbl)) is null then
+      raise notice 'ข้าม: ไม่มีตาราง % ในฐานข้อมูลนี้', t.tbl;
+    else
+      execute format('drop policy if exists %I on public.%I', t.pol, t.tbl);
+      raise notice 'ลบ policy "%" ของตาราง % (ถ้ามี)', t.pol, t.tbl;
+    end if;
+  end loop;
+end $$;
 
 
 -- =====================================================================
@@ -160,18 +204,32 @@ alter default privileges for role postgres in schema public revoke execute on fu
 -- =====================================================================
 --  5. ตรวจซ้ำ: ตารางลับต้องอ่านไม่ได้แล้ว
 -- =====================================================================
-select 'contractors'  as "ตาราง", has_table_privilege('anon', 'public.contractors', 'select') as "anon อ่านได้ (ต้องเป็น false)"
-union all select 'billing_documents (ราคา CJ)', has_table_privilege('anon', 'public.billing_documents', 'select')
-union all select 'open_issues',       has_table_privilege('anon', 'public.open_issues', 'select')
-union all select 'app_secrets',       has_table_privilege('anon', 'public.app_secrets', 'select')
-union all select 'parts',             has_table_privilege('anon', 'public.parts', 'select')
-union all select 'photo_submissions', has_table_privilege('anon', 'public.photo_submissions', 'select')
-union all select 'ฟังก์ชัน claim_billing_jobs',
-  has_function_privilege('anon', 'public.claim_billing_jobs(text[], integer)', 'execute')
-union all select 'ฟังก์ชัน next_billing_round_no',
-  has_function_privilege('anon', 'public.next_billing_round_no()', 'execute')
-union all select '(ต้องเป็น true) เซิร์ฟเวอร์ยังเรียก claim_billing_jobs ได้',
-  has_function_privilege('service_role', 'public.claim_billing_jobs(text[], integer)', 'execute');
+--  ⚠ ใช้ to_regclass / to_regprocedure แทนการเขียนชื่อตรง ๆ
+--     เพราะถ้าเขียนชื่อตรง ๆ แล้ววันหนึ่งไม่มีตาราง/ฟังก์ชันนั้น คำสั่งตรวจจะ error
+--     กลายเป็นว่าแก้สำเร็จแล้วแต่หน้าจอขึ้นสีแดง ทำให้เข้าใจผิดว่าล้มเหลว
+--     2 ตัวนี้คืนค่าว่างแทน error จึงขึ้นเป็น "ไม่มีในฐานข้อมูลนี้" ได้อย่างปลอดภัย
+select "ตาราง / ฟังก์ชัน", coalesce("ผล"::text, 'ไม่มีในฐานข้อมูลนี้') as "anon ใช้ได้ (ต้องเป็น false)"
+from (
+  select 'contractors (session_token)' as "ตาราง / ฟังก์ชัน", 1 as ord,
+         has_table_privilege('anon', to_regclass('public.contractors')::oid, 'select') as "ผล"
+  union all select 'billing_documents (ราคา CJ)', 2, has_table_privilege('anon', to_regclass('public.billing_documents')::oid, 'select')
+  union all select 'open_issues', 3, has_table_privilege('anon', to_regclass('public.open_issues')::oid, 'select')
+  union all select 'app_secrets (Google key)', 4, has_table_privilege('anon', to_regclass('public.app_secrets')::oid, 'select')
+  union all select 'parts', 5, has_table_privilege('anon', to_regclass('public.parts')::oid, 'select')
+  union all select 'photo_submissions', 6, has_table_privilege('anon', to_regclass('public.photo_submissions')::oid, 'select')
+  union all select 'ฟังก์ชัน claim_billing_jobs', 7,
+    has_function_privilege('anon', to_regprocedure('public.claim_billing_jobs(text[], integer)')::oid, 'execute')
+  union all select 'ฟังก์ชัน next_billing_round_no', 8,
+    has_function_privilege('anon', to_regprocedure('public.next_billing_round_no()')::oid, 'execute')
+  union all select '(ข้อนี้ต้องเป็น true) เซิร์ฟเวอร์ยังเรียก claim_billing_jobs ได้', 9,
+    has_function_privilege('service_role', to_regprocedure('public.claim_billing_jobs(text[], integer)')::oid, 'execute')
+) x order by ord;
+
+-- เหลือ policy ที่เปิดให้ anon อีกไหม (ต้องได้ 0 แถว)
+select c.relname as "ตารางที่ยังมี policy เปิดอยู่", p.polname as "policy"
+from pg_policy p join pg_class c on c.oid = p.polrelid
+where c.relnamespace = 'public'::regnamespace
+  and ('anon' = any (select pg_get_userbyid(r) from unnest(coalesce(p.polroles, '{}')) r) or p.polroles = '{0}');
 
 
 -- =====================================================================

@@ -8761,7 +8761,10 @@
                     const typeSel = tr.querySelector('[data-field="billing_type"]');
                     if (typeSel) typeSel.className = 'grid-input w-full px-1 py-1 rounded border text-xs ' + billingTypeSelectClass(typeSel.value);
                     updateBillingExportButtonCounts();
-                    showAlert('success', 'บันทึกแถวเรียบร้อย');
+                    // v1.0.97 — เปลี่ยนประเภทเก็บเงินข้ามกลุ่ม เซิร์ฟเวอร์จะบอกผลที่ตามมา (ต้องส่งรูป/เลิกขอรูป/ผู้รับเหมาต้องยืนยันใหม่)
+                    showAlert('success', res.message || 'บันทึกแถวเรียบร้อย');
+                    // สถานะตรวจรับของแถวอาจเปลี่ยน (เช่น กลับเข้าคิวให้ผู้รับเหมายืนยันใหม่) ต้องวาดตารางใหม่ให้ป้ายตรง
+                    if (res.message && res.row && res.row.sent_to_contractor === true) loadBillingDocuments();
                 } else {
                     showAlert('error', (res && res.message) || 'บันทึกล้มเหลว');
                 }
@@ -8779,7 +8782,7 @@
                     if (tr) tr.remove();
                     currentBillingData = (currentBillingData || []).filter(r => String(r.id) !== String(id));
                     updateBillingExportButtonCounts();
-                    showAlert('success', 'ลบแถวเรียบร้อย');
+                    showAlert('success', res.message || 'ลบแถวเรียบร้อย');
                 } else {
                     showAlert('error', (res && res.message) || 'ลบล้มเหลว');
                 }
