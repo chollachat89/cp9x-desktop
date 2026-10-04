@@ -2595,6 +2595,7 @@
                 const el = document.getElementById(id);
                 if (el) el.innerHTML = '';
             });
+            clearRowCache_();
             const jobFormsPendingListEl = document.getElementById('jobFormsPendingList');
             if (jobFormsPendingListEl) jobFormsPendingListEl.innerHTML = '<p class="text-sm text-slate-400">ไม่มีงานที่ต้องดำเนินการ</p>';
             const pausedListEl = document.getElementById('pausedListContainer');
@@ -3333,28 +3334,77 @@
             lastAutoCloseDateTime = currentCloseDateTimeValue();
         }
 
-        // ==================== ไม่วาดตารางใหม่ถ้าข้อมูลเหมือนเดิม (v1.1.0) ====================
+        // ==================== อัปเดตตารางทีละแถว (v1.1.1) ====================
         //
-        // นี่คือต้นเหตุจริงของอาการ "ค้างเป็นช่วง ๆ" ที่แก้รอบ v1.0.99 แล้วยังไม่หาย
+        // ต้นเหตุจริงของอาการ "ค้างเป็นช่วง ๆ" — วัดกับข้อมูลจริง 626 แถว (รายงานสถานะ)
+        //     วาดตารางใหม่ทั้งตาราง (innerHTML 1.37 MB)  ~700 ms  <- หน้าจอหยุดรับคีย์บอร์ด/เมาส์ช่วงนี้
         //
-        // วัดกับข้อมูลจริง 626 แถว (รายงานสถานะ) ได้ว่า
-        //     วาดตารางใหม่ทั้งตาราง  ~700 ms   <- หน้าจอหยุดรับคีย์บอร์ดช่วงนี้
-        //     เทียบลายนิ้วมือข้อมูล  ~1.8 ms
-        // แอปวาดใหม่ทุก 30 วินาทีเสมอ ถึงแม้ข้อมูลจะไม่เปลี่ยนเลยสักตัวอักษร
-        // = ค้างประมาณ 0.7 วินาที ทุก 30 วินาที ตลอดเวลาที่เปิดหน้านั้นทิ้งไว้
+        // v1.1.0 พยายามแก้ด้วย "ข้อมูลเหมือนเดิมเป๊ะ = ไม่ต้องวาด" แต่ใช้ไม่ได้จริงกับรายงานสถานะ
+        // เพราะเซิร์ฟเวอร์ส่งเวลา alarm (usedHours ละเอียด 0.01 ชม. = 36 วินาที) มาด้วยทุกแถวที่ยังเดินอยู่
+        // รีเฟรชทุก 30 วินาทีค่านี้จึงเปลี่ยนทุกครั้ง = "ข้อมูลไม่เหมือนเดิม" ทุกครั้ง = วาดใหม่ทั้ง 626 แถวเหมือนเดิม
+        // หลังกดคืนงาน / ยืนยันรูป / แก้อะไรก็ตาม ก็วาดใหม่ทั้งตารางเช่นกัน ทั้งที่เปลี่ยนแค่แถวเดียว
         //
-        // v1.0.99 แก้ไปแล้วแค่ "ตอนกำลังพิมพ์" กับ "ตอนเปิดหน้าต่าง" ซึ่งไม่พอ
-        // เพราะพอหยุดพิมพ์เกิน 15 วินาที หรือปิดหน้าต่าง มันก็กลับมาวาดใหม่ทั้งตารางเหมือนเดิม
+        // วิธีใหม่: จำ <tr> ของแต่ละแถวไว้พร้อม "หน้าตา HTML" ของมัน
+        //   แถวไหนหน้าตาเหมือนเดิม  -> ใช้ <tr> ตัวเดิม ไม่แตะเลย
+        //   แถวไหนเปลี่ยน/เพิ่มใหม่   -> สร้างใหม่เฉพาะแถวนั้น
+        //   กรอง/ค้นหา               -> หยิบ <tr> ที่มีอยู่แล้วมาเรียงใหม่ ไม่ต้องแปลง HTML ใหม่เลย
+        // ผลพลอยได้: ช่องที่พิมพ์ค้างไว้ (เช่น หมายเหตุตอนตรวจรูป) ไม่หายเวลารีเฟรช ถ้าแถวนั้นไม่เปลี่ยน
         //
-        // รอบนี้แก้ที่ต้นตอ: เทียบข้อมูลก่อน ถ้าเหมือนเดิมเป๊ะก็ไม่ต้องแตะ DOM เลย
-        // รีเฟรชพื้นหลังส่วนใหญ่ได้ข้อมูลเดิม จึงเหลือ ~2 ms แทน ~700 ms (เร็วขึ้นราว 390 เท่า)
-        const lastRenderSig_ = {};
-        function sameAsLastRender_(key, sig, tbody) {
-            // ตารางยังว่างอยู่ = ต้องวาดจริง (เช่น เพิ่งสลับแท็บกลับมา)
-            if (!tbody || tbody.children.length === 0) { lastRenderSig_[key] = sig; return false; }
-            if (lastRenderSig_[key] === sig) return true;
-            lastRenderSig_[key] = sig;
-            return false;
+        // items: [{ key, sig, html }]
+        //   key  = ตัวระบุแถว (ซ้ำได้ ฟังก์ชันนี้เติมลำดับให้เอง)
+        //   sig  = หน้าตาของแถวที่ใช้เทียบว่าเปลี่ยนไหม (ส่วนที่เปลี่ยนทุกนาทีอย่างเวลาที่เดินอยู่ ไม่ต้องใส่)
+        //   html = HTML ของแถวนั้น (<tr> หนึ่งตัวพอดี) หรือฟังก์ชันที่คืน HTML — เรียกเฉพาะแถวที่ต้องสร้างใหม่
+        // คืนจำนวนแถวที่สร้างใหม่ (ใช้ในตัวทดสอบ)
+        const rowCache_ = {};
+        function clearRowCache_() { Object.keys(rowCache_).forEach(function (k) { delete rowCache_[k]; }); }
+        // opts.onBuilt(el, i) = เรียกกับแถว/การ์ดที่เพิ่งสร้างใหม่เท่านั้น (ไว้ผูก event) — แถวที่ใช้ซ้ำมี event เดิมติดอยู่แล้ว
+        // tbody จะเป็นกล่องอะไรก็ได้ (เช่น <div> ที่เรียงการ์ด) ขอแค่ทุกลูกเป็นแถว/การ์ดละ 1 ตัว
+        // opts.reuseIf(tr) = เงื่อนไขเพิ่มว่าแถวเดิมยังใช้ซ้ำได้ไหม (เช่น ตารางวางบิล: แถวที่พิมพ์แก้ค้างไว้ต้องสร้างใหม่
+        //   ให้ตรงกับข้อมูลในระบบ เหมือนพฤติกรรมเดิมตอนกดโหลด/รีเฟรช)
+        function renderRowsKeyed_(tbody, cacheName, items, opts) {
+            const reuseIf = opts && opts.reuseIf;
+            const onBuilt = opts && opts.onBuilt;
+            if (!tbody) return 0;
+            const old = rowCache_[cacheName] || new Map();
+            const next = new Map();
+            const seen = {};
+            const keys = new Array(items.length);
+            const nodes = new Array(items.length);
+            const toBuild = [];
+            for (let i = 0; i < items.length; i++) {
+                const base = String(items[i].key);
+                seen[base] = (seen[base] || 0) + 1;
+                const k = base + '#' + seen[base];
+                keys[i] = k;
+                const hit = old.get(k);
+                if (hit && hit.sig === items[i].sig && (!reuseIf || reuseIf(hit.tr))) { nodes[i] = hit.tr; next.set(k, hit); }
+                else toBuild.push(i);
+            }
+            const htmlOf = function (i) { const h = items[i].html; return typeof h === 'function' ? h() : h; };
+            if (toBuild.length) {
+                // แปลง HTML ในกล่องชนิดเดียวกับของจริง (<tr> ต้องอยู่ใน tbody · การ์ด <div> อยู่ใน div)
+                const tmp = document.createElement(tbody.tagName);
+                tmp.innerHTML = toBuild.map(htmlOf).join('');
+                const built = Array.prototype.slice.call(tmp.children);
+                if (built.length !== toBuild.length) {
+                    // HTML ของบางแถวไม่ใช่แถว/การ์ดตัวเดียว — จับคู่ไม่ได้ วาดทั้งตารางแบบเดิมไปเลย ปลอดภัยกว่า
+                    tbody.innerHTML = items.map(function (_x, i) { return htmlOf(i); }).join('');
+                    rowCache_[cacheName] = new Map();
+                    if (onBuilt) Array.prototype.forEach.call(tbody.children, function (el, i) { onBuilt(el, i); });
+                    return items.length;
+                }
+                toBuild.forEach(function (i, j) { nodes[i] = built[j]; next.set(keys[i], { sig: items[i].sig, tr: built[j] }); });
+                if (onBuilt) toBuild.forEach(function (i, j) { onBuilt(built[j], i); });
+            }
+            // เก็บแถวที่ถูกกรองออกไว้ด้วย ล้างตัวกรองแล้วจะได้ไม่ต้องสร้างใหม่ (จำกัดขนาด กันหน่วยความจำบาน)
+            if (old.size < 5000) old.forEach(function (v, k) { if (!next.has(k)) next.set(k, v); });
+            rowCache_[cacheName] = next;
+            // ลำดับบนจอตรงอยู่แล้ว = ไม่ต้องย้ายอะไรเลย
+            const cur = tbody.children;
+            let same = cur.length === nodes.length;
+            for (let i = 0; same && i < nodes.length; i++) if (cur[i] !== nodes[i]) same = false;
+            if (!same) tbody.replaceChildren.apply(tbody, nodes);
+            return toBuild.length;
         }
 
         // ==================== กันหน้าจอค้างตอนผู้ใช้กำลังพิมพ์ (v1.0.99) ====================
@@ -6958,8 +7008,10 @@
 
         function renderBillingGrid(rows) {
             const tbody = document.getElementById('billingBody');
-            tbody.innerHTML = '';
+            // v1.1.1 — ไม่ล้างตารางทิ้งแล้ว ใช้ renderRowsKeyed_ อัปเดตเฉพาะแถวที่เปลี่ยน (ดูท้ายฟังก์ชัน)
+            wireBillingBodyEvents_(tbody);
             const isAdmin = currentSession && currentSession.role === 'admin';
+            const items = [];
             // อัปเดตป้ายจำนวนบนปุ่มดาวน์โหลดทุกครั้งที่ตารางถูกวาดใหม่ (โหลดข้อมูล / เปลี่ยนตัวกรอง / แก้ประเภทเก็บเงิน)
             updateBillingExportButtonCounts();
             updateBillingReviewBar();
@@ -7005,10 +7057,6 @@
             }
 
             rows.forEach((row, idx) => {
-                const tr = document.createElement('tr');
-                tr.className = 'border-t border-slate-100';
-                tr.dataset.id = row.id;
-
                 const prevRow = idx > 0 ? rows[idx - 1] : null;
                 // เช็คว่าเป็นเลขงานเดียวกับแถวก่อนหน้าจริงๆ (ไม่ใช่แค่ค่าลำดับตรงกันเฉยๆ เพราะตอนนี้ลำดับรีเซ็ตใหม่ทุกผู้รับเหมา/รอบบิล
                 // ถ้าเช็คแค่ค่าลำดับ อาจไปซ่อนลำดับ "1" ของผู้รับเหมาคนถัดไปโดยไม่ตั้งใจ)
@@ -7121,22 +7169,39 @@
                             ? `<td class="p-1.5 whitespace-nowrap"><span class="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-600" title="คุณตีกลับรายการนี้ไปแล้ว รอบริษัทแก้และส่งกลับมาให้ตรวจอีกครั้ง ถึงจะกดได้อีก"><i class="fa-solid fa-hourglass-half"></i> รอบริษัทแก้ส่งกลับ <button type="button" onclick="openBillingReviewModal('${row.id}')" class="text-slate-400 hover:text-blood-600 ml-0.5" title="ดูคอมเมนต์ที่ตีกลับ"><i class="fa-regular fa-comment-dots"></i></button></span></td>`
                             : `<td></td>`);
                 }
-                tr.innerHTML = cellsHtml;
-                tbody.appendChild(tr);
-
-                // ผูก event lookup อะไหล่ตอนคลิกออกจากช่อง Part Code
-                const partCodeInputEl = tr.querySelector('.part-code-input');
-                if (partCodeInputEl) {
-                    partCodeInputEl.addEventListener('blur', function () { doLookupPartForBillingRow(tr); });
-                }
-
-                // คำนวณราคารวมสด ๆ ทันทีที่พิมพ์ ทั้งฝั่ง CJ และฝั่งผู้รับเหมา
-                // ไม่ต้องรอกดบันทึกแล้วค่อยเห็นว่าได้เท่าไหร่ ตรวจตัวเลขได้ตั้งแต่ยังไม่บันทึก
-                ['qty', 'unit_price', 'unit_price_contractor'].forEach(function (f) {
-                    const el = tr.querySelector('[data-field="' + f + '"]');
-                    if (el) el.addEventListener('input', function () { recalcBillingRowTotals(tr); });
-                });
+                const trHtml = '<tr class="border-t border-slate-100" data-id="' + escapeAttr(row.id) + '">' + cellsHtml + '</tr>';
+                items.push({ key: 'id:' + row.id, sig: trHtml, html: trHtml });
             });
+            // แถวที่พิมพ์แก้ค้างไว้ (ยังไม่กดบันทึก) ให้สร้างใหม่จากข้อมูลในระบบ — เหมือนพฤติกรรมเดิมตอนวาดตารางใหม่
+            renderRowsKeyed_(tbody, 'billing', items, { reuseIf: function (tr) { return tr.dataset.dirty !== '1'; } });
+        }
+
+        // v1.1.1 — ผูก event ไว้ที่ตัวตารางครั้งเดียว แทนการผูกทีละแถว (เดิม 4 ตัวต่อแถว × 672 แถว ทุกครั้งที่วาด)
+        //   คลิกออกจากช่อง Part Code -> ดึงราคาอะไหล่จากคลัง
+        //   พิมพ์จำนวน/ราคา          -> คำนวณราคารวมสด ๆ ไม่ต้องรอกดบันทึก
+        //   พิมพ์/เลือกอะไรก็ตามในแถว -> จำไว้ว่าแถวนี้ "แก้ค้างอยู่" (ใช้ตัดสินตอนวาดตารางรอบถัดไป)
+        function wireBillingBodyEvents_(tbody) {
+            if (!tbody || tbody.dataset.wired === '1') return;
+            tbody.dataset.wired = '1';
+            const rowOf = function (el) {
+                const tr = el && el.closest ? el.closest('tr') : null;
+                return tr && tr.parentNode === tbody ? tr : null;
+            };
+            tbody.addEventListener('focusout', function (e) {
+                const t = e.target;
+                if (!t || !t.classList || !t.classList.contains('part-code-input')) return;
+                const tr = rowOf(t);
+                if (tr) doLookupPartForBillingRow(tr);
+            });
+            const onEdit = function (e) {
+                const tr = rowOf(e.target);
+                if (!tr) return;
+                tr.dataset.dirty = '1';
+                const f = e.target.dataset ? e.target.dataset.field : '';
+                if (e.type === 'input' && (f === 'qty' || f === 'unit_price' || f === 'unit_price_contractor')) recalcBillingRowTotals(tr);
+            };
+            tbody.addEventListener('input', onEdit);
+            tbody.addEventListener('change', onEdit);
         }
 
         // คำนวณ "ราคารวม" ของแถวใหม่จากค่าที่กรอกอยู่บนหน้าจอ
@@ -7632,12 +7697,22 @@
         let currentOpenListData = [];
         let currentCloseListData = [];
 
+        // บังคับแสดงเป็นเวลาไทยเสมอ ไม่ให้ขึ้นกับโซนเวลาของเครื่องผู้ใช้ (กันสับสนเวลาเปิดจากคนละเครื่อง/คนละประเทศ)
+        // v1.1.1 — สร้างตัวจัดรูปครั้งเดียว + จำผลไว้
+        //   ของเดิม toLocaleString() สร้างตัวจัดรูปภาษาไทยใหม่ทุกครั้ง ตารางเดียวเรียกหลายร้อยครั้งต่อการวาด
+        //   (ผลลัพธ์เหมือนเดิมทุกตัวอักษร เพราะใช้ตัวเลือกชุดเดียวกัน)
+        const TH_TIME_FMT_ = new Intl.DateTimeFormat('th-TH', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Bangkok' });
+        const tsCache_ = new Map();
         function formatTimestamp(v) {
             if (!v) return '';
+            const hit = tsCache_.get(v);
+            if (hit !== undefined) return hit;
             const d = new Date(v);
             if (isNaN(d.getTime())) return v;
-            // บังคับแสดงเป็นเวลาไทยเสมอ ไม่ให้ขึ้นกับโซนเวลาของเครื่องผู้ใช้ (กันสับสนเวลาเปิดจากคนละเครื่อง/คนละประเทศ)
-            return d.toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Bangkok' });
+            const out = TH_TIME_FMT_.format(d);
+            if (tsCache_.size > 20000) tsCache_.clear();
+            tsCache_.set(v, out);
+            return out;
         }
 
         function loadOpenIssuesList() {
@@ -7663,14 +7738,15 @@
 
         function renderOpenIssuesList(rows) {
             const tbody = document.getElementById('openListBody');
-            if (sameAsLastRender_('openList', JSON.stringify(rows), tbody)) return;
             const fields = ['created_at','main_id','service_type','req_date','service_work','service_issue','branch','details'];
-            tbody.innerHTML = rows.map(row => {
-                return '<tr class="border-t border-slate-100">' + fields.map(f => {
+            // v1.1.1 — อัปเดตเฉพาะแถวที่เปลี่ยน (ดู renderRowsKeyed_) ใช้ HTML ของแถวเป็นตัวระบุเลย
+            renderRowsKeyed_(tbody, 'openList', rows.map(row => {
+                const html = '<tr class="border-t border-slate-100">' + fields.map(f => {
                     const v = f === 'created_at' ? formatTimestamp(row[f]) : (row[f] === null || row[f] === undefined ? '' : row[f]);
                     return `<td class="p-2 whitespace-nowrap">${v}</td>`;
                 }).join('') + '</tr>';
-            }).join('');
+                return { key: html, sig: html, html: html };
+            }));
         }
 
         function filterOpenIssuesList() {
@@ -7705,17 +7781,18 @@
 
         function renderCloseIssuesList(rows) {
             const tbody = document.getElementById('closeListBody');
-            if (sameAsLastRender_('closeList', JSON.stringify(rows), tbody)) return;
             const fields = ['created_at','job_id','branch','fix_date','parts','asset_id','action_taken','photo_form_link'];
-            tbody.innerHTML = rows.map(row => {
-                return '<tr class="border-t border-slate-100">' + fields.map(f => {
+            // v1.1.1 — อัปเดตเฉพาะแถวที่เปลี่ยน (ดู renderRowsKeyed_) ใช้ HTML ของแถวเป็นตัวระบุเลย
+            renderRowsKeyed_(tbody, 'closeList', rows.map(row => {
+                const html = '<tr class="border-t border-slate-100">' + fields.map(f => {
                     let v = f === 'created_at' ? formatTimestamp(row[f]) : (row[f] === null || row[f] === undefined ? '' : row[f]);
                     if (f === 'parts' && v) v = String(v).replace(/\n/g, ' | ');
                     if (f === 'asset_id' && v) v = v + assetEditButtonHtml(row.job_id, row.asset_id);   // v1.0.93
                     if (f === 'photo_form_link' && v) v = `<a href="${v}" target="_blank" class="text-blood-600 underline">เปิดฟอร์ม</a>`;
                     return `<td class="p-2 whitespace-nowrap">${v}</td>`;
                 }).join('') + '</tr>';
-            }).join('');
+                return { key: html, sig: html, html: html };
+            }));
         }
 
         function filterCloseIssuesList() {
@@ -7922,11 +7999,21 @@
             const rows = currentStatusReportRenderedRows || [];
             const trs = tbody.children;
             const n = Math.min(trs.length, rows.length);
+            // ทุกแถวมีคอลัมน์เรียงเหมือนกัน หาตำแหน่งช่องระยะเวลาครั้งเดียวจากแถวแรก แล้วหยิบตรง ๆ
+            // (ค้นด้วย querySelector ทีละแถวช้ากว่ามากเมื่อมีหลายร้อยแถว)
+            let col = -1;
+            if (n > 0) {
+                const first = trs[0].querySelector('td[data-col="duration"]');
+                col = first ? Array.prototype.indexOf.call(trs[0].children, first) : -1;
+            }
+            if (col < 0) return;
             for (let i = 0; i < n; i++) {
                 const row = rows[i];
                 if (!row || row.closed_at) continue;   // ปิดงานแล้ว เวลาหยุดเดินแล้ว ไม่ต้องแตะ
-                const cell = trs[i].querySelector('td[data-col="duration"]');
-                if (cell) cell.textContent = getRowDurationDisplay(row);
+                const cell = trs[i].children[col];
+                if (!cell) continue;
+                const txt = getRowDurationDisplay(row);
+                if (cell.textContent !== txt) cell.textContent = txt;   // ไม่เปลี่ยน = ไม่แตะ
             }
         }
 
@@ -7986,13 +8073,27 @@
         function renderStatusReport(rows) {
             currentStatusReportRenderedRows = rows;
             const tbody = document.getElementById('statusReportBody');
-            // ลายนิ้วมือต้องรวม "คอลัมน์ที่ซ่อนอยู่" ด้วย ไม่งั้นกดซ่อน/แสดงคอลัมน์แล้วจอไม่เปลี่ยน
-            // ไม่รวมเวลาที่เดินอยู่ (ระยะเวลาดำเนินการ) เพราะมีตัวนับเวลาอัปเดตช่องนั้นให้อยู่แล้ว
-            if (sameAsLastRender_('statusReport', JSON.stringify(rows) + '|' + JSON.stringify(statusReportColumnPrefs), tbody)) {
-                tickStatusReportDurations_();   // ข้อมูลเดิม แต่เวลาที่เดินอยู่ต้องเดินต่อ
-                return;
-            }
-            tbody.innerHTML = rows.map((row, i) => {
+            // v1.1.1 — อัปเดตเฉพาะแถวที่เปลี่ยน (ดู renderRowsKeyed_)
+            // ช่อง "ระยะเวลาดำเนินการ" เปลี่ยนทุกนาทีสำหรับงานที่ยังไม่ปิด จึงไม่เอามาเทียบ
+            // (ใส่ตัวคั่นไว้แทน แล้วเติมค่าจริงตอนสร้างแถว ส่วนแถวเดิมให้ tickStatusReportDurations_ อัปเดตช่องนั้นช่องเดียว)
+            const DUR = '\u0001DUR\u0001';
+            renderRowsKeyed_(tbody, 'statusReport', rows.map(function (row) {
+                const sig = statusReportRowHtml_(row, DUR);
+                return {
+                    key: (row.main_id || '') + '|' + (row.asset_id || '') + '|' + (row.closed_at || ''),
+                    sig: sig,
+                    html: function () { return sig.replace(DUR, getRowDurationDisplay(row)); },
+                };
+            }));
+            tickStatusReportDurations_();
+            updateStatusReportCounters_();
+        }
+
+        // HTML ของแถวเดียวในรายงานสถานะ — durationHtml = ข้อความในช่องระยะเวลาดำเนินการ
+        // ⚠ ห้ามใส่เลขลำดับแถว (index) ลงใน HTML เพราะแถวถูกหยิบไปใช้ซ้ำในตำแหน่งอื่นได้ (ตอนกรอง)
+        //    ปุ่มที่ต้องรู้ว่าเป็นแถวไหน ให้หาจากตำแหน่งของ <tr> บนจอแทน (ดู showStatusReportDetailFromBtn)
+        function statusReportRowHtml_(row, durationHtml) {
+            {
                 const hc = (key) => isStatusReportColumnHidden(key) ? ' hidden' : '';
                 // แถวเตี้ยลง (py-1.5) + ไฮไลท์ตอนเอาเมาส์ชี้ ทำให้กวาดตาตามแถวยาว ๆ ไม่หลุด
                 // เลขงานใช้ฟอนต์ความกว้างคงที่ + ตัวเข้ม เพราะเป็นตัวที่คนใช้มองหาเป็นอย่างแรก
@@ -8008,26 +8109,31 @@
                     <td data-col="opened_at" class="px-2 py-1.5 whitespace-nowrap text-slate-500 tabular-nums${hc('opened_at')}">${formatTimestamp(row.opened_at) || dash}</td>
                     <td data-col="asset_id" class="px-2 py-1.5 whitespace-nowrap tabular-nums${hc('asset_id')}">${(row.asset_id && row.asset_id !== '-') ? row.asset_id : dash}</td>
                     <td data-col="fix_date" class="px-2 py-1.5 whitespace-nowrap text-slate-500 tabular-nums${hc('fix_date')}">${row.fix_date || dash}</td>
-                    <td data-col="duration" class="px-2 py-1.5 whitespace-nowrap text-slate-600${hc('duration')}">${getRowDurationDisplay(row)}</td>
+                    <td data-col="duration" class="px-2 py-1.5 whitespace-nowrap text-slate-600${hc('duration')}">${durationHtml}</td>
                     <td data-col="sla" class="px-2 py-1.5 whitespace-nowrap${hc('sla')}">${slaBadgeHtml(row)}</td>
                     <td data-col="status" class="px-2 py-1.5 whitespace-nowrap${hc('status')}">${statusBadgeHtml(row.status)}</td>
                     <td class="px-2 py-1.5 whitespace-nowrap">
-                        <button type="button" onclick="showStatusReportDetail(${i})" class="text-blood-700 hover:text-blood-800 hover:underline text-xs font-semibold" title="ดูรายละเอียด">
+                        <button type="button" onclick="showStatusReportDetailFromBtn(this)" class="text-blood-700 hover:text-blood-800 hover:underline text-xs font-semibold" title="ดูรายละเอียด">
                             <i class="fa-solid fa-eye mr-1"></i>ดูรายละเอียด
                         </button>
                         ${statusReportRemoveBtnHtml(row)}
                     </td>
                 </tr>`;
-            }).join('');
+            }
+        }
 
+        function updateStatusReportCounters_() {
             // อัปเดตตัวนับสรุปสถานะ (นับจากข้อมูลทั้งหมดที่โหลดมา ไม่ใช่แค่หลังกรอง เพื่อให้กดการ์ดแล้วเห็นภาพรวมจริงเสมอ)
             buildStatusReportControls();
             const counts = {};
             JOB_STATUS_DEFS.forEach(function (d) { counts[d[0]] = 0; });
             currentStatusReportData.forEach(r => { if (counts[r.status] !== undefined) counts[r.status]++; });
-            document.querySelectorAll('#statusCountChips [data-status-count]').forEach(function (el) {
+            const chipsEl = document.getElementById('statusCountChips');
+            Array.prototype.forEach.call(chipsEl ? chipsEl.children : [], function (el) {
                 const k = el.getAttribute('data-status-count');
-                el.textContent = k + ': ' + (counts[k] || 0);
+                if (k === null) return;
+                const txt = k + ': ' + (counts[k] || 0);
+                if (el.textContent !== txt) el.textContent = txt;
             });
             // v1.0.71 — ตัวนับ alarm (นับจากข้อมูลทั้งหมด ไม่ใช่แค่ที่กรองอยู่ เหมือนตัวนับสถานะ)
             let overdueN = 0, warnN = 0;
@@ -8043,6 +8149,12 @@
 
         // เปิด popup อ่านรายละเอียดครบทุกฟิลด์ของงานหนึ่งแถว จากตารางรายงานสถานะ (ใช้ดูงานที่เสร็จแล้ว/สถานะอื่นๆ ได้โดยไม่ต้องเลื่อนตารางแนวนอน)
         // เพิ่มปุ่ม: ดาวน์โหลด CSV ของแถวนี้ + ดาวน์โหลด "ใบเขียว" (ใบวางบิลของผู้รับเหมา ธีมสีเขียว) ถ้างานนี้เคยส่งบิลแล้ว
+        function showStatusReportDetailFromBtn(btn) {
+            const tr = btn && btn.closest('tr');
+            const tbody = document.getElementById('statusReportBody');
+            if (!tr || !tbody) return;
+            showStatusReportDetail(Array.prototype.indexOf.call(tbody.children, tr));
+        }
         function showStatusReportDetail(idx) {
             const row = currentStatusReportRenderedRows[idx];
             if (!row) return;
@@ -8361,13 +8473,21 @@
 
         function renderSubmissions(rows) {
             const tbody = document.getElementById('submissionsBody');
-            if (sameAsLastRender_('submissions', JSON.stringify(rows), tbody)) return;
             const statusMap = {
                 pending: { cls: 'bg-amber-100 text-amber-700', text: 'รอตรวจสอบ' },
                 approved: { cls: 'bg-emerald-100 text-emerald-700', text: 'ยืนยันรูปแล้ว' },
                 rejected: { cls: 'bg-red-100 text-red-700', text: 'ตีกลับ' }
             };
-            tbody.innerHTML = rows.map(row => {
+            // v1.1.1 — อัปเดตเฉพาะแถวที่เปลี่ยน (ดู renderRowsKeyed_)
+            // แถวที่ไม่เปลี่ยนใช้ตัวเดิม = หมายเหตุที่พิมพ์ค้างไว้ไม่หายตอนรีเฟรชอัตโนมัติ
+            renderRowsKeyed_(tbody, 'submissions', rows.map(row => {
+                const html = submissionRowHtml_(row, statusMap);
+                return { key: 'id:' + row.id, sig: html, html: html };
+            }));
+        }
+
+        function submissionRowHtml_(row, statusMap) {
+            {
                 const st = statusMap[row.status] || statusMap.pending;
                 const reviewedInfo = row.reviewed_by
                     ? `<div class="text-[10px] text-slate-400 mt-1">โดย ${row.reviewed_by} • ${formatTimestamp(row.reviewed_at)}</div>`
@@ -8437,7 +8557,7 @@
                         ${historyHtml}
                     </td>
                 </tr>`;
-            }).join('');
+            }
         }
 
         // เปิดตารางวางบิลโดยค้นเฉพาะเลขงานนี้ (v1.0.72)
@@ -8637,11 +8757,18 @@
                 return;
             }
 
-            container.innerHTML = '';
-            jobs.forEach(job => {
+            // v1.1.1 — ใช้การ์ดเดิมถ้าเนื้อหาไม่เปลี่ยน (ดู renderRowsKeyed_)
+            // เดิมล้างทิ้งแล้วสร้างใหม่ทุกการ์ดทุก 30 วินาที = ไฟล์ที่เลือกไว้แต่ยังไม่กดส่งหายไปเฉย ๆ
+            renderRowsKeyed_(container, 'jobFormsPending', jobs.map(function (job) {
+                const html = jobFormCardHtml_(job);
+                return { key: 'job:' + job.customerCase, sig: html, html: html };
+            }), { onBuilt: function (card, i) { wireJobFormCard_(card, jobs[i]); } });
+        }
+
+        function jobFormCardHtml_(job) {
+            {
                 const isRejected = job.submissionStatus === 'rejected';
-                const card = document.createElement('div');
-                card.className = 'border rounded-xl p-4 ' + (isRejected ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-white');
+                const cardCls = 'border rounded-xl p-4 ' + (isRejected ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-white');
 
                 const statusBadge = isRejected
                     ? '<span class="text-xs font-semibold px-2 py-1 rounded-full bg-red-100 text-red-700">ถูกตีกลับ - กรุณาแก้ไขแล้วส่งใหม่</span>'
@@ -8651,7 +8778,7 @@
                     ? `<div class="mt-2 text-xs bg-white border border-red-200 rounded-lg p-2 text-red-700"><span class="font-semibold">หมายเหตุจากแอดมิน:</span> ${job.adminRemark}</div>`
                     : '';
 
-                card.innerHTML = `
+                return '<div class="' + cardCls + '">' + `
                     <div class="flex flex-wrap justify-between items-start gap-2 mb-1">
                         <div>
                             <div class="font-bold text-slate-800 text-sm">${job.customerCase || ''}</div>
@@ -8671,8 +8798,13 @@
                         <span class="jf-status text-xs text-slate-400"></span>
                     </div>
                     <p class="text-xs text-slate-400 mt-1">แนบเป็นไฟล์ PDF หรือ "ถ่ายรูป" ฟอร์มที่เซ็นแล้วส่งได้เลย ไม่ต้องสแกนเป็น PDF เอง (ระบบแปลงให้อัตโนมัติ)</p>
-                `;
+                ` + '</div>';
+            }
+        }
 
+        // ผูกปุ่มดาวน์โหลด/ส่งฟอร์มของการ์ดหนึ่งใบ (เรียกเฉพาะการ์ดที่เพิ่งสร้างใหม่)
+        function wireJobFormCard_(card, job) {
+            {
                 const downloadBtn = card.querySelector('.jf-download-btn');
                 const fileInput = card.querySelector('.jf-file-input');
                 const uploadBtn = card.querySelector('.jf-upload-btn');
@@ -8773,8 +8905,7 @@
                     reader.readAsDataURL(f);
                 });
 
-                container.appendChild(card);
-            });
+            }
         }
 
         // แสดงตารางเลขงานที่ส่งฟอร์มแล้ว (รอตรวจสอบ/อนุมัติแล้ว) - ดูอย่างเดียว

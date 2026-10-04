@@ -115,6 +115,22 @@ const LOGIN_LOCK_DEFAULT_MSG = 'ระบบปิดปรับปรุงช
 let loginLockCache: { on: boolean; note: string; at: number } | null = null;
 function invalidateLoginLockCache(): void { loginLockCache = null; }
 
+// ==================== พักผลตรวจ session (v1.1.1) ====================
+// ทุกคำสั่งต้องตรวจ session ก่อน = อ่านตาราง contractors 1 รอบ "ก่อน" จะเริ่มงานจริงได้
+// วัดกับระบบจริง (3 ต.ค. 2569): ฐานข้อมูลอยู่ซิดนีย์ แต่ตัวรันคำสั่งอยู่สิงคโปร์
+//   คุยกับฐานข้อมูล 1 รอบ ≈ 220–275 ms  ->  คำสั่งเล็ก ๆ ที่อ่าน 2 รอบต่อกัน ใช้ ~700 ms
+// แอปเรียกคำสั่งหลายครั้งติดกัน (เปิดหน้า · รีเฟรช · กดปุ่ม) จึงจำผลตรวจไว้ 10 วินาที
+// = คำสั่งถัด ๆ ไปของคนเดิมเร็วขึ้นราว 1 รอบฐานข้อมูล
+//
+// ความปลอดภัย:
+//   · จำเฉพาะ session ที่ถูกต้อง · token ต้องตรงตัวเดิมเป๊ะ ไม่ตรง = ไปอ่านฐานข้อมูลใหม่ทันที
+//   · ทุกจุดที่แก้ session_token ในไฟล์นี้ (ล็อกอิน · ออกจากระบบ · ล็อกระบบ) ล้างที่พักทันที
+//   · เครื่องรันคำสั่งเครื่องอื่นอาจยังจำค่าเก่าได้ไม่เกิน 10 วินาที — สั้นกว่าค่าล็อกระบบที่พักไว้ 15 วินาทีอยู่แล้ว
+//   · การตรวจล็อกระบบของคนที่ไม่ใช่แอดมินยังทำทุกครั้งเหมือนเดิม (ไม่ได้ข้าม)
+const SESSION_CACHE_MS = 10000;
+const sessionCache = new Map<string, { user: any; at: number }>();
+function invalidateSessionCache(): void { sessionCache.clear(); }
+
 function stripCjPricesForContractor(rows: any[]): any[] {
   return (rows || []).map((r: any) => {
     const copy: any = {};
@@ -2737,16 +2753,25 @@ Deno.serve(async (req: Request) => {
 
   async function verifySession(username: string, token: string): Promise<any> {
     if (!username || !token) return { valid: false };
-    const { data, error } = await supabase.from('contractors').select('*').eq('username', username).limit(1);
-    if (error || !data || data.length === 0) return { valid: false };
-    const user = data[0];
+    let user: any = null;
+    const cached = sessionCache.get(String(username));
+    if (cached && Date.now() - cached.at < SESSION_CACHE_MS && cached.user.session_token === token) {
+      user = cached.user;
+    } else {
+      const { data, error } = await supabase.from('contractors').select('*').eq('username', username).limit(1);
+      if (error || !data || data.length === 0) return { valid: false };
+      user = data[0];
+      if (!user.session_token || user.session_token !== token) { sessionCache.delete(String(username)); return { valid: false }; }
+      if (sessionCache.size > 500) sessionCache.clear();
+      sessionCache.set(String(username), { user, at: Date.now() });
+    }
     if (!user.session_token || user.session_token !== token) return { valid: false };
     // v1.0.94 — ล็อกระบบไว้ = คนที่ไม่ใช่แอดมินถือ session ต่อไม่ได้ ตัดทิ้งให้เลยตรงนี้
     // เช็คเฉพาะตอนที่ไม่ใช่แอดมิน เพื่อให้แอดมินไม่ต้องจ่ายค่าอ่านค่าล็อกเพิ่มทุกคำขอ
     if (user.role !== 'admin') {
       const lock = await loadLoginLock();
       if (lock.on) {
-        await supabase.from('contractors').update({ session_token: null }).eq('id', user.id);
+        { invalidateSessionCache(); await supabase.from('contractors').update({ session_token: null }).eq('id', user.id); }
         return { valid: false, locked: true, message: lock.note || LOGIN_LOCK_DEFAULT_MSG };
       }
     }
@@ -3627,11 +3652,12 @@ Deno.serve(async (req: Request) => {
           const lock = await loadLoginLock();
           if (lock.on && user.role !== 'admin') {
             // ตัด session เดิมที่อาจค้างอยู่ในเครื่องเขาทิ้งไปด้วย = ถูกเด้งออกทันทีไม่ต้องรอหมดอายุ
-            if (user.session_token) await supabase.from('contractors').update({ session_token: null }).eq('id', user.id);
+            if (user.session_token) { invalidateSessionCache(); await supabase.from('contractors').update({ session_token: null }).eq('id', user.id); }
             return jsonResponse({ success: false, locked: true, message: lock.note || LOGIN_LOCK_DEFAULT_MSG });
           }
         }
         const token = genToken();
+        invalidateSessionCache();
         await supabase.from('contractors').update({ session_token: token, session_created_at: new Date().toISOString() }).eq('id', user.id);
         const finalApprover = resolveIsFinalApprover(user);
         return jsonResponse({ success: true, token, username: user.username, role: user.role, displayName: user.display_name, isChecker: user.is_checker === true && !finalApprover, isFinalApprover: finalApprover });
@@ -3689,6 +3715,7 @@ Deno.serve(async (req: Request) => {
             const targets = (holders || []).filter((u: any) =>
               u.username !== username && (kickAdmins || u.role !== 'admin'));
             for (const u of targets) {
+              invalidateSessionCache();
               const { error: kErr } = await supabase.from('contractors').update({ session_token: null }).eq('id', u.id);
               if (kErr) kickError = kErr.message; else kicked++;
             }
@@ -3706,6 +3733,7 @@ Deno.serve(async (req: Request) => {
         const session = await verifySession(username, token);
         if (session.valid) {
           const { data } = await supabase.from('contractors').select('id').eq('username', username).limit(1);
+          invalidateSessionCache();
           if (data && data.length > 0) await supabase.from('contractors').update({ session_token: null }).eq('id', data[0].id);
         }
         return jsonResponse({ success: true });
@@ -5127,7 +5155,13 @@ Deno.serve(async (req: Request) => {
           .select('id,part_code,part_detail,qty,unit_price,unit_price_contractor,sent_to_contractor,completed_at,contractor,round_no,contractor_review_status')
           .eq('customer_case', jobId).eq('asset_id', assetId);
         if (roundNo !== null && !isNaN(roundNo)) q = q.eq('round_no', roundNo);
-        const { data, error } = await q;
+        // v1.1.1 — อ่านแถวบิลกับประวัติการคืนงานพร้อมกัน (เดิมรอกันทีละอย่าง = ช้าเพิ่ม 1 รอบฐานข้อมูล)
+        const [{ data, error }, h] = await Promise.all([
+          q,
+          supabase.from('billing_removed_jobs')
+            .select('id,job_id,asset_id,round_no,reason,removed_by,removed_at,rows_removed,was_sent')
+            .eq('job_id', jobId).order('removed_at', { ascending: false }).limit(20),
+        ]);
         if (error) return jsonResponse({ success: false, message: error.message });
         const rows = data || [];
         if (rows.length === 0) {
@@ -5144,9 +5178,6 @@ Deno.serve(async (req: Request) => {
         // ประวัติการคืนงานของเลขงานนี้ — ไม่มีตาราง = ยังไม่ได้รัน SQL v1.0.95
         let history: any[] = [];
         let ready = true;
-        const h = await supabase.from('billing_removed_jobs')
-          .select('id,job_id,asset_id,round_no,reason,removed_by,removed_at,rows_removed,was_sent')
-          .eq('job_id', jobId).order('removed_at', { ascending: false }).limit(20);
         if (h.error) {
           if (/relation|does not exist|schema cache|could not find/i.test(h.error.message || '')) ready = false;
           else return jsonResponse({ success: false, message: h.error.message });
