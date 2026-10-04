@@ -2375,6 +2375,18 @@
     </div>
 
     <script>
+        // ==================== กล่องยืนยันที่ไม่ทำให้พิมพ์ไม่ได้ (v1.1.2) ====================
+        // กล่อง confirm()/alert() ของหน้าเว็บใน Electron บน Windows ทำให้หน้าต่างเสียโฟกัสคีย์บอร์ดหลังกล่องปิด
+        // (อาการ: คืนงาน/ออกจากระบบแล้ว พิมพ์ช่องไหนก็ไม่ได้ ต้องรอหรือปิดเปิดโปรแกรมใหม่ — รายละเอียดที่ main.js)
+        // ในแอปเดสก์ท็อปจึงให้ไปใช้กล่องของตัวโปรแกรมหลักแทน ซึ่งคืนโฟกัสให้ทันที
+        // เปิดผ่านเว็บเบราว์เซอร์ธรรมดา (ไม่มี window.cp9x) ยังใช้กล่องของเบราว์เซอร์ตามเดิม
+        if (window.cp9x && typeof window.cp9x.confirmSync === 'function') {
+            window.confirm = function (message) { return window.cp9x.confirmSync(message == null ? '' : String(message)) === true; };
+        }
+        if (window.cp9x && typeof window.cp9x.alertSync === 'function') {
+            window.alert = function (message) { window.cp9x.alertSync(message == null ? '' : String(message)); };
+        }
+
         // ==================== เปิดจากไอคอนหน้าจอโฮม (iOS / Android) ====================
         //
         // ติดคลาส .pwa-standalone ให้ <html> เพื่อให้ CSS ด้านบนเว้นที่ให้แถบสถานะได้ถูก

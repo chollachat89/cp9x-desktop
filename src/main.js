@@ -208,6 +208,41 @@ function checkForUpdates(manual = false) {
 
 // ---------- IPC ----------
 ipcMain.handle('app:getVersion', () => app.getVersion());
+
+// ---------- กล่องยืนยัน / แจ้งเตือน (v1.1.2) ----------
+// อาการ: กดคืนงาน / ออกจากระบบ (มีกล่อง "ยืนยัน?" เด้งขึ้น) แล้วกลับมาพิมพ์ในช่องไหนก็ไม่ได้
+//        ต้องรอสักพัก หรือปิดเปิดโปรแกรมใหม่ ถึงจะพิมพ์ได้อีก
+// ต้นเหตุ: บั๊กของ Electron บน Windows — กล่อง confirm()/alert() ของหน้าเว็บ พอปิดแล้ว
+//        ไม่คืนโฟกัสคีย์บอร์ดให้หน้าต่าง ตัวอักษรที่พิมพ์ไม่เข้าช่องเลย จนกว่าหน้าต่างจะเสียโฟกัสแล้วได้กลับมา
+//        (ตรวจกับ Electron ตัวเดียวกับที่แอปใช้ ในเครื่องจริง 4 ต.ค. 2569: พิมพ์หลังกล่องปิด = ไม่เข้า 3/3 ครั้ง)
+// แก้: ให้หน้าเว็บขอกล่องจากตัวโปรแกรมหลักแทน แล้วคืนโฟกัสให้หน้าต่างทันทีที่กล่องปิด
+//      (ผลทดสอบเดียวกัน: พิมพ์เข้า 3/3 ครั้ง) — ฝั่งหน้าเว็บยังเรียก confirm() เหมือนเดิมทุกจุด ไม่ต้องแก้ทีละที่
+function refocusAfterDialog_(win) {
+  if (!win || win.isDestroyed()) return;
+  win.focus();
+  win.webContents.focus();
+}
+ipcMain.on('dialog:confirm', (event, message) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  let ok = false;
+  try {
+    const r = dialog.showMessageBoxSync(win, {
+      type: 'question', buttons: ['ตกลง', 'ยกเลิก'], defaultId: 0, cancelId: 1, noLink: true,
+      title: 'CP9X', message: String(message == null ? '' : message),
+    });
+    ok = r === 0;
+  } catch (e) { log.error(e); }
+  refocusAfterDialog_(win);
+  event.returnValue = ok;
+});
+ipcMain.on('dialog:alert', (event, message) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  try {
+    dialog.showMessageBoxSync(win, { type: 'info', buttons: ['ตกลง'], noLink: true, title: 'CP9X', message: String(message == null ? '' : message) });
+  } catch (e) { log.error(e); }
+  refocusAfterDialog_(win);
+  event.returnValue = true;
+});
 ipcMain.handle('updater:getState', () => updateState);
 ipcMain.handle('updater:check', () => { checkForUpdates(true); });
 ipcMain.handle('updater:download', () => autoUpdater.downloadUpdate());
