@@ -61,6 +61,16 @@ function isManualPartCode(code: any): boolean {
 const BILLING_TYPE_VALUES = ['normal', 'claim', 'contractor_cr', 'quotation'];
 // ประเภทที่ต้องไม่ปรากฏในเอกสาร/ยอดของแต่ละฝั่ง
 const BILLING_TYPES_EXCLUDED_FROM_CJ = ['claim', 'contractor_cr'];
+
+// ==================== ปัดยอดเงินเป็นสตางค์ (v1.1.3) ====================
+// จำนวน × ราคา ด้วยเลขทศนิยมของคอมพิวเตอร์ ได้เศษแปลก ๆ เช่น 8.37 × 400 = 3347.9999999999995
+// เดิมเก็บค่านี้ลงฐานข้อมูลตรง ๆ หน้าจอจึงโชว์ "3347.9999999999995" ขณะที่ตอนพิมพ์ (คำนวณบนจอ) โชว์ 3348
+// และเอกสาร/สรุปยอดแต่ละที่ปัดคนละแบบ = เห็นตัวเลขไม่ตรงกันระหว่างหน้าจอแต่ละฝั่ง
+// ปัดเป็น 2 ตำแหน่งเหมือนสูตรบนหน้าจอ (recalcBillingRowTotals) ทุกจุดที่คำนวณยอดรวมก่อนบันทึก
+function money2(n: number): number {
+  const v = Number(n);
+  return isFinite(v) ? Math.round(v * 100) / 100 : 0;
+}
 // quotation (ใบเสนอราคา) ไม่เก็บเงินฝั่งผู้รับเหมา จึงต้องหายไปจากทุกอย่างของฝั่งผู้รับเหมา
 // รวมถึงแท็บ "ฟอร์มวางบิล" ด้วย = ผู้รับเหมาไม่ต้องส่งฟอร์มแนบรูปกลับสำหรับงานประเภทนี้
 const BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR = ['claim', 'quotation'];
@@ -1634,10 +1644,12 @@ async function generateAllBillingXlsxBase64(rows: any[]): Promise<any> {
       row.getCell('cj').numFmt = '#,##0.00';
       row.getCell('ct').numFmt = '#,##0.00';
     });
+    // v1.1.3 — ยอดรวมต้องนับเฉพาะประเภทที่ "เก็บเงินจริง" ของแต่ละฝั่ง (ตรงกับหน้าจอและประวัติรอบบิล)
+    //   เดิมบวกทุกแถว รวมเคลม 3 เดือน/เคลมอะไหล่/ใบเสนอราคา ยอดในไฟล์จึงสูงกว่ายอดที่ผู้รับเหมาเห็นในแอป
     const totalRow = summary.addRow({
-      type: 'รวมทั้งหมด', rows: rows.length,
-      cj: rows.reduce((a: number, r: any) => a + (parseFloat(r.total_price) || 0), 0),
-      ct: rows.reduce((a: number, r: any) => a + (parseFloat(r.total_price_contractor) || 0), 0),
+      type: 'รวมที่เก็บเงินจริง', rows: rows.length,
+      cj: money2(rows.reduce((a: number, r: any) => a + (BILLING_TYPES_EXCLUDED_FROM_CJ.indexOf(normalizeBillingType(r.billing_type)) === -1 ? (parseFloat(r.total_price) || 0) : 0), 0)),
+      ct: money2(rows.reduce((a: number, r: any) => a + (BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR.indexOf(normalizeBillingType(r.billing_type)) === -1 ? (parseFloat(r.total_price_contractor) || 0) : 0), 0)),
       sideCj: '', sideCt: '',
     });
     totalRow.eachCell((cell: any) => { cell.font = { name: 'Tahoma', size: 10, bold: true }; });
@@ -3014,8 +3026,8 @@ Deno.serve(async (req: Request) => {
         warranty_months: part ? part.warranty_months : '-',
         qty,
         unit: part ? part.unit : '-',
-        unit_price: unitPrice, total_price: qty * unitPrice,
-        unit_price_contractor: unitPriceContractor, total_price_contractor: qty * unitPriceContractor,
+        unit_price: unitPrice, total_price: money2(qty * unitPrice),
+        unit_price_contractor: unitPriceContractor, total_price_contractor: money2(qty * unitPriceContractor),
         quotation_ref: '-',
         return_old_part: part ? part.return_old_part : '-',
         company: part ? part.company : '-',
@@ -4975,15 +4987,28 @@ Deno.serve(async (req: Request) => {
           const n = typeof v === 'number' ? v : parseFloat(v);
           return isFinite(n) ? n : 0;
         };
+        // v1.1.3 — ค่าที่ไม่ได้ส่งมา ต้องใช้ค่าเดิมของแถวนี้ ไม่ใช่ถือว่าเป็น 0
+        //   บั๊กเดิม: ปุ่ม "บันทึกจำนวน" ในหน้าต่างเพิ่มอะไหล่ ส่งมาแค่ { qty }
+        //   ราคาต่อหน่วยไม่มีในคำขอ -> num(undefined) = 0 -> ราคารวมทั้ง CJ และผู้รับเหมากลายเป็น 0
+        //   ทั้งที่ราคาต่อหน่วยยังอยู่ = ราคารวมไม่ตรงกับ จำนวน × ราคา และยอดรอบบิลหายไปเงียบ ๆ
+        const touchesTotals = clean.qty !== undefined || clean.unit_price !== undefined || clean.unit_price_contractor !== undefined;
+        const missingBase = clean.qty === undefined || clean.unit_price === undefined || clean.unit_price_contractor === undefined;
+        let priceBase: any = {};
+        if (touchesTotals && missingBase) {
+          const { data: pb, error: pbErr } = await supabase.from('billing_documents')
+            .select('qty,unit_price,unit_price_contractor').eq('id', id).limit(1);
+          if (pbErr) return jsonResponse({ success: false, message: pbErr.message });
+          if (!pb || pb.length === 0) return jsonResponse({ success: false, message: 'ไม่พบแถวนี้แล้ว (อาจถูกลบไปก่อนหน้า) — กดโหลดตารางใหม่' });
+          priceBase = pb[0];
+        }
+        const pick = (k: string): any => (clean[k] !== undefined ? clean[k] : priceBase[k]);
+        const isBlank = (v: any): boolean => v === null || v === undefined || v === '';
+        // ราคาต่อหน่วยว่าง = ยังไม่ได้ตั้งราคา -> ราคารวมว่างตาม (ไม่ใช่ 0 ซึ่งแปลว่าตั้งราคา 0 บาทจริง ๆ) — ตรงกับสูตรบนหน้าจอ
         if (clean.qty !== undefined || clean.unit_price !== undefined) {
-          const qty = num(clean.qty !== undefined ? clean.qty : fields.qty);
-          const unitPrice = num(clean.unit_price !== undefined ? clean.unit_price : fields.unit_price);
-          clean.total_price = qty * unitPrice;
+          clean.total_price = isBlank(pick('unit_price')) ? null : money2(num(pick('qty')) * num(pick('unit_price')));
         }
         if (clean.qty !== undefined || clean.unit_price_contractor !== undefined) {
-          const qty = num(clean.qty !== undefined ? clean.qty : fields.qty);
-          const unitPriceContractor = num(clean.unit_price_contractor !== undefined ? clean.unit_price_contractor : fields.unit_price_contractor);
-          clean.total_price_contractor = qty * unitPriceContractor;
+          clean.total_price_contractor = isBlank(pick('unit_price_contractor')) ? null : money2(num(pick('qty')) * num(pick('unit_price_contractor')));
         }
         // billing_type เป็นคอลัมน์ NOT NULL และมี CHECK ให้รับแค่ 'normal'/'claim'/'contractor_cr'
         // ถ้าปล่อยค่าว่างหรือค่าแปลกผ่านไป การอัปเดตจะพังทั้งแถว จึงบังคับให้ลงที่ 'normal' เสมอเมื่อไม่ใช่ค่าที่รู้จัก
@@ -5765,6 +5790,8 @@ Deno.serve(async (req: Request) => {
           // หน้าจอเขาซ่อนคอลัมน์นี้อยู่แล้ว แต่ตัวเลขยังถูกส่งไปถึงเครื่องเขาจริง ๆ
           // ตั้งเป็น 0 แทนการลบทิ้ง เพื่อให้หน้าจอเก่าที่อ่านค่านี้ตรง ๆ ไม่พัง
           if (session.role !== 'admin') g.total_cj = 0;
+          g.total_cj = money2(g.total_cj);
+          g.total_contractor = money2(g.total_contractor);
           return g;
         });
         list.sort((a: any, b: any) => b.round_no - a.round_no || (a.contractor || '').localeCompare(b.contractor || '', 'th'));
@@ -6323,9 +6350,9 @@ Deno.serve(async (req: Request) => {
               qty,
               unit: (item.unit || '').toString().trim() || '-',
               unit_price: manualUnitPrice,
-              total_price: qty * manualUnitPrice,
+              total_price: money2(qty * manualUnitPrice),
               unit_price_contractor: manualUnitPriceContractor,
-              total_price_contractor: qty * manualUnitPriceContractor,
+              total_price_contractor: money2(qty * manualUnitPriceContractor),
               quotation_ref: item.quotationRef || '-',
               // อะไหล่เก่าคืน CJ รับได้แค่ YES/NO เท่านั้น ค่าอื่นถือเป็น NO
               return_old_part: ((item.returnOldPart || '').toString().trim().toUpperCase() === 'YES') ? 'YES' : 'NO',
@@ -6343,8 +6370,8 @@ Deno.serve(async (req: Request) => {
               part_code: partCode,
               part_detail: part ? [part.name, part.brand, part.model].filter(Boolean).join(' - ') : '-',
               warranty_months: part ? part.warranty_months : '-', qty, unit: part ? part.unit : '-',
-              unit_price: unitPrice, total_price: qty * unitPrice, unit_price_contractor: unitPriceContractor,
-              total_price_contractor: qty * unitPriceContractor, quotation_ref: item.quotationRef || '-',
+              unit_price: unitPrice, total_price: money2(qty * unitPrice), unit_price_contractor: unitPriceContractor,
+              total_price_contractor: money2(qty * unitPriceContractor), quotation_ref: item.quotationRef || '-',
               return_old_part: part ? part.return_old_part : '-', company: part ? part.company : '-',
               // ประเภทการเก็บเงินของอะไหล่ชิ้นนี้ - 'claim' = ไม่เก็บเงินทั้ง CJ และผู้รับเหมา
               // 'contractor_cr' = เคลมอะไหล่ (ขึ้นเฉพาะบิลผู้รับเหมา ฝั่ง CJ ไม่เก็บ)
@@ -6376,19 +6403,26 @@ Deno.serve(async (req: Request) => {
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ error: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ error: 'เฉพาะแอดมินเท่านั้นที่ดูรายการนี้ได้' });
-        const { data, error } = await selectAll(() => supabase.from('billing_documents').select('round_no,round_period,contractor,total_price,total_price_contractor,completed_at').not('completed_at', 'is', null).order('completed_at', { ascending: false }));
+        const { data, error } = await selectAll(() => supabase.from('billing_documents').select('round_no,round_period,contractor,total_price,total_price_contractor,completed_at,billing_type').not('completed_at', 'is', null).order('completed_at', { ascending: false }));
         if (error) return jsonResponse({ error: error.message });
         const groups: Record<string, any> = {};
         (data || []).forEach((r: any) => {
+          // v1.1.3 — กติกาเดียวกับ getBillingRoundsHistory (หน้าประวัติรอบบิลที่ผู้รับเหมาเห็น) เป๊ะ ๆ
+          //   เดิมหน้านี้บวกทุกแถวไม่ดูประเภทเก็บเงินเลย ยอดฝั่งแอดมินจึงไม่ตรงกับยอดที่ผู้รับเหมาเห็น
+          //   เช่น รอบ 74 ทีมพี่ยู: งานเคลม 3 เดือน 1 แถว แอดมินเห็นยอดผู้รับเหมา 1,500 แต่ผู้รับเหมาเห็น 0
+          //        รอบ 73 ทีมพี่เชษฐ์: ยอด CJ แอดมินเห็น 19,450 แต่ที่เก็บ CJ จริงคือ 7,700 (ที่เหลือเป็นเคลมอะไหล่)
+          const bType = normalizeBillingType(r.billing_type);
+          if (bType === 'claim') return;   // เคลมประกัน 3 เดือน = ไม่เก็บเงินทั้ง 2 ฝั่ง
           const key = r.round_no + '||' + (r.contractor || '');
           if (!groups[key]) groups[key] = { round_no: r.round_no, round_period: r.round_period || '', contractor: r.contractor || '', item_count: 0, total_cj: 0, total_contractor: 0, completed_at: r.completed_at };
           const g = groups[key];
           g.item_count++;
-          g.total_cj += parseFloat(r.total_price) || 0;
-          g.total_contractor += parseFloat(r.total_price_contractor) || 0;
+          if (BILLING_TYPES_EXCLUDED_FROM_CJ.indexOf(bType) === -1) g.total_cj += parseFloat(r.total_price) || 0;
+          if (BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR.indexOf(bType) === -1) g.total_contractor += parseFloat(r.total_price_contractor) || 0;
           if (r.completed_at && r.completed_at > g.completed_at) g.completed_at = r.completed_at;
         });
         const list = Object.values(groups);
+        list.forEach((g: any) => { g.total_cj = money2(g.total_cj); g.total_contractor = money2(g.total_contractor); });
         list.sort((a: any, b: any) => b.round_no - a.round_no || (a.contractor || '').localeCompare(b.contractor || '', 'th'));
         return jsonResponse(list);
       }
