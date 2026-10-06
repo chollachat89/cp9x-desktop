@@ -9303,6 +9303,8 @@
                         document.body.removeChild(a);
                         URL.revokeObjectURL(url);
                         showAlert('success', 'ดาวน์โหลดสำเร็จ ' + (res.rowCount || 0) + ' แถว (ราคาผู้รับเหมาล้วน)');
+                        // v1.1.4 — มีเลขงานที่อ่านวันที่ไม่ออก = ไม่อยู่ในไฟล์ ต้องบอกให้รู้ ไม่ใช่หายเงียบ ๆ
+                        if (res.warning) showWarningPopup(res.warning);
                     } catch (e) {
                         showAlert('error', 'ประมวลผลไฟล์ PDF ล้มเหลว: ' + e.message);
                     }

@@ -546,16 +546,26 @@ function isValidJobNumber(jobId: any): boolean {
 // "วันที่ร้องขอ" (req_date) ที่เก็บใน open_issues เป็นข้อความรูปแบบ "DD/MM/YYYY, HH:MM"
 // (ตรวจจากข้อมูลจริงทั้ง 195 แถวแล้ว เป็นรูปแบบนี้ทั้งหมด)
 // คืนค่าเป็นวันที่อย่างเดียว ตัดเวลาทิ้ง เพราะใช้เทียบกับ fix_date ที่มีแค่วันที่
+// v1.1.4 — รับปี 2 หลักด้วย (เช่น "6-9-26" = 6 ก.ย. 2026) และปี พ.ศ.
+//   บั๊กเดิม: รับเฉพาะปี 4 หลัก แต่ "วันที่เข้างาน" ในตารางวางบิลลอกมาจาก "วันที่เข้าแก้ไข" ตอนปิดงาน
+//   ซึ่งด่านตอนปิดงาน (validateFixDate) กับตอนดึงเข้ารอบบิล (parseFixDateString) ยอมให้กรอกปี 2 หลักได้
+//   = งานเข้ารอบบิล ส่งบิล ตัดบิลได้ครบ แต่ "ใบเขียวผู้รับเหมา ตามช่วงวันที่" อ่านวันที่ไม่ออก แล้วตัดทิ้งเงียบ ๆ
+//   เคสจริง 6 ต.ค. 2569: CM20260905-0289 (ทีมพี่เมธา รอบ 64) วันที่เข้างาน "6-9-26" ดึงใบเขียวแล้วไม่เห็น
+//   กติกาตอนนี้ตรงกับ parseFixDateString: ปี < 100 = +2000 · เพิ่มแปลงปี พ.ศ. (> 2400) เป็น ค.ศ.
+//   และต้องเป็นวันที่มีจริงในปฏิทิน (31/02 = อ่านไม่ออก ไม่ปัดไปเดือนถัดไปเงียบ ๆ)
 function parseReqDateString(str: string | null): Date | null {
   if (!str) return null;
-  const m = str.toString().trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  const m = str.toString().trim().match(/^(\d{1,2})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{2}|\d{4})(?!\d)/);
   if (!m) return null;
   const day = parseInt(m[1], 10);
   const month = parseInt(m[2], 10);
-  const year = parseInt(m[3], 10);
-  if (!day || !month || !year) return null;
+  let year = parseInt(m[3], 10);
+  if (!day || !month || isNaN(year)) return null;
+  if (year < 100) year += 2000;
+  if (year > 2400) year -= 543;
   const d = new Date(year, month - 1, day);
-  return isNaN(d.getTime()) ? null : d;
+  if (isNaN(d.getTime()) || d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) return null;
+  return d;
 }
 
 // ==================== ด่านกันวันที่เข้าแก้ไขผิด (v1.0.92) ====================
@@ -5138,18 +5148,27 @@ Deno.serve(async (req: Request) => {
 
         // วันที่ในตารางเก็บเป็นข้อความ DD/MM/YYYY กรองใน SQL ไม่ได้ ต้องแปลงแล้วเทียบฝั่งนี้
         // แถวที่อ่านวันที่ไม่ออก (ข้อมูลเก่ารูปแบบเพี้ยน) จะไม่ถูกนับเข้าช่วง — ไม่เดาให้
+        // v1.1.4 — แถวที่อ่านวันที่ไม่ออก ต้องบอกให้รู้ (เดิมตัดทิ้งเงียบ ๆ = งานหายจากใบเขียวโดยไม่มีใครรู้)
+        const unreadable: string[] = [];
         const rows = allRows.filter((r: any) => {
           const d = parseReqDateString(r[dateField]);
-          if (!d) return false;
+          if (!d) {
+            if (unreadable.indexOf(r.customer_case) === -1) unreadable.push(r.customer_case);
+            return false;
+          }
           return d.getTime() >= startD.getTime() && d.getTime() <= endD.getTime();
         });
+        const unreadableNote = unreadable.length
+          ? (' · ⚠ มี ' + unreadable.length + ' เลขงานที่' + dateFieldLabel + 'อ่านไม่ออก จึงไม่ถูกนับ: '
+            + unreadable.slice(0, 10).join(', ') + (unreadable.length > 10 ? ' ...' : '') + ' — แก้วันที่ในตารางวางบิลก่อน')
+          : '';
 
         if (rows.length === 0) {
           return jsonResponse({
             success: false,
             message: 'ไม่พบรายการในช่วง ' + startDate + ' ถึง ' + endDate + ' (กรองด้วย' + dateFieldLabel + ')'
               + (contractorName ? (' ของผู้รับเหมา "' + contractorName + '"') : '')
-              + ' — ลองขยายช่วงวันที่ หรือเปลี่ยนไปกรองด้วยวันอีกแบบ',
+              + ' — ลองขยายช่วงวันที่ หรือเปลี่ยนไปกรองด้วยวันอีกแบบ' + unreadableNote,
           });
         }
 
@@ -5159,6 +5178,7 @@ Deno.serve(async (req: Request) => {
         result.filename = 'ใบเขียวผู้รับเหมา_' + (contractorName ? (safe(contractorName) + '_') : '')
           + safe(startDate) + '_ถึง_' + safe(endDate) + '.pdf';
         result.rowCount = rows.length;
+        result.warning = unreadableNote.replace(/^ · /, '');
         return jsonResponse(result);
       }
 
