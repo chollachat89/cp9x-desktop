@@ -3144,7 +3144,32 @@ Deno.serve(async (req: Request) => {
         .select('customer_case,asset_id,billing_type,completed_at').in('customer_case', chunk));
       (data || []).forEach((b: any) => billingRows.push(b));
     }
-    return makeNeedsPhotoFn(billingRows);
+    // ==================== งานที่คืนแล้ว = ไม่ต้องส่งรูป (v1.1.5) ====================
+    // บั๊กเดิม: กดคืนงานแล้ว แถวบิลถูกตัดออก -> กฎ "ดูจากตารางบิล" ใช้ไม่ได้ -> ถอยไปดูอะไหล่ตอนปิดงาน
+    //   งานคืนส่วนใหญ่ปิดแบบไม่มีอะไหล่ ("1. -" เช่น ยกเลิก / แจ้งซ้ำ / ตู้ปกติ) ซึ่งกฎเดิมถือว่า "ต้องส่งรูป"
+    //   = ผู้รับเหมาเห็นงานที่บริษัทคืนไปแล้ว ค้างให้ส่งรูปในแท็บฟอร์มวางบิลตลอดไป
+    //   ตรวจข้อมูลจริง 6 ต.ค. 2569: 11 งาน 8 ทีม (เช่น CM20260923-0054 ทีมพี่เชษฐ์ · CM20260914-0156 ทีมพี่เมธา)
+    // คืนงานเป็นรายคู่ (เลขงาน + เลขทรัพย์สิน) จึงตัดเฉพาะคู่ที่คืน ทรัพย์สินอื่นของเลขงานเดียวกันยังเป็นไปตามกฎเดิม
+    // (ยังไม่ได้รัน SQL v1.0.95 = ไม่มีตารางนี้ -> ข้ามไป ทำงานเหมือนเดิม)
+    const removedPairs = new Set<string>();
+    const removedWholeJob = new Set<string>();
+    for (let i = 0; i < jobsToAsk.length; i += 200) {
+      const chunk = jobsToAsk.slice(i, i + 200);
+      const { data: rm, error: rmErr } = await supabase.from('billing_removed_jobs').select('job_id,asset_id').in('job_id', chunk);
+      if (rmErr) break;
+      (rm || []).forEach((r: any) => {
+        const asset = (r.asset_id === null || r.asset_id === undefined) ? '' : String(r.asset_id).trim();
+        if (asset) removedPairs.add(jobAssetKey(r.job_id, asset));
+        else removedWholeJob.add(String(r.job_id || '').trim());
+      });
+    }
+    const byBilling = makeNeedsPhotoFn(billingRows);
+    if (removedPairs.size === 0 && removedWholeJob.size === 0) return byBilling;
+    return (row: any) => {
+      if (row && removedWholeJob.has(String(row.job_id || '').trim())) return false;
+      if (row && removedPairs.has(jobAssetKey(row.job_id, row.asset_id))) return false;
+      return byBilling(row);
+    };
   }
 
   async function jobPhotoRequirementMet(jobId: string): Promise<boolean> {
