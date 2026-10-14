@@ -4159,8 +4159,15 @@
 
         // ==================== v1.0.81 — พรีวิวอะไหล่ตอนปิดงาน (รหัส/รายละเอียด/จำนวน/หน่วย) ====================
         // แกะรหัสสินค้าจากข้อความ 1 บรรทัด — ต้องให้ผลตรงกับ parsePartLineText ฝั่งเซิร์ฟเวอร์เป๊ะ ๆ
+        // v1.1.6 — ตัดเลขลำดับนำหน้า ("1. P190" / "1.P190" / "1) P190") ให้ตรงกับ stripPartLineNo ฝั่งเซิร์ฟเวอร์
+        // ตัดเฉพาะตอนหลังเลขลำดับไม่ใช่ตัวเลข จึงไม่แตะข้อความอย่าง "2.5 นิ้ว"
+        function clStripPartLineNo(text) {
+            const s = (text === null || text === undefined) ? '' : String(text).trim();
+            return s.replace(/^(?:\s*\d+\s*[.)]\s*)+(?=[^\d\s])/, '');
+        }
+
         function clParsePartCode(text) {
-            const str = (text || '').toString();
+            const str = clStripPartLineNo(text);
             const eq = str.lastIndexOf('=');
             const head = (eq === -1) ? str : str.slice(0, eq);
             const m = head.match(/^\s*([A-Za-z]{1,4}\s*\d[A-Za-z0-9]*)/);
@@ -4208,6 +4215,10 @@
         // พอพิมพ์รหัส (เช่น "P004 = 1") แล้วออกจากช่อง ดึงรายละเอียด+หน่วยจากคลังมาโชว์ในพรีวิว
         // ใช้ lookupPart ตัวเดียวกับตารางวางบิล จึงได้รายละเอียด/หน่วยตรงกับที่จะขึ้นในบิลจริง
         function lookupBlockPartCode(itemEl) {
+            // v1.1.6 — วางข้อความที่มีเลขลำดับมา ("1. P190 = 2") ให้ล้างทิ้งตรงนี้เลย
+            // ผู้ใช้จะเห็นข้อความที่สะอาดตรงกับที่ระบบจะบันทึก ไม่ต้องเดาว่าทำไมรหัสไม่ขึ้น
+            const cleaned = clStripPartLineNo(itemEl.value);
+            if (cleaned !== (itemEl.value || '').trim()) itemEl.value = cleaned;
             renderBlockPartPreview(itemEl);      // อัปเดตพรีวิวทันที (รหัส+จำนวน+ชื่อที่พิมพ์)
             const text = (itemEl.value || '').trim();
             if (!text) return;
@@ -7291,6 +7302,9 @@
         function doLookupPartForBillingRow(tr) {
             const codeInput = tr.querySelector('[data-field="part_code"]');
             if (!codeInput) return;
+            // v1.1.6 — วาง "1.P190" ลงช่องรหัสตรง ๆ ก็ใช้ได้ (ตัดเลขลำดับให้ก่อนค้นคลัง)
+            const cleanedCode = clStripPartLineNo(codeInput.value);
+            if (cleanedCode !== (codeInput.value || '').trim()) codeInput.value = cleanedCode;
             const code = codeInput.value.trim();
             if (!code) return;
 
@@ -7663,7 +7677,7 @@
             const items = [];
 
             for (const row of rows) {
-                const partCode = row.querySelector('.modal_partCode').value.trim();
+                const partCode = clStripPartLineNo(row.querySelector('.modal_partCode').value);
                 const qty = row.querySelector('.modal_qty').value;
                 const quotationRef = row.querySelector('.modal_quotationRef').value.trim();
                 const billingTypeEl = row.querySelector('.modal_billingType');
