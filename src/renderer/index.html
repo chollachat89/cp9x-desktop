@@ -24,7 +24,9 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;800;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- v1.3.7 — เก็บไฟล์ไว้ในเครื่องแทนการโหลดจาก cdnjs สด ๆ ทุกครั้งที่เปิดแอป
+         ถ้าเครื่องไม่มีเน็ต/เน็ตองค์กรบล็อก cdnjs ตอนเปิดแอป ไอคอนทั้งแอปจะหายไปเงียบ ๆ (เหลือแค่พื้นหลังสี่เหลี่ยมมุมมนที่เป็นสีพื้นหลังของปุ่ม โดยไม่มีรูปไอคอนตรงกลาง) -->
+    <link rel="stylesheet" href="./vendor/fontawesome/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
     <style>
@@ -488,7 +490,7 @@
                 <div class="flex flex-col gap-3">
                     <textarea id="rawTextOpen" rows="8"
                         class="w-full px-4 py-3 rounded-lg border border-blood-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-200 outline-none transition-all text-sm font-mono text-slate-700 resize-y"
-                        placeholder="วางข้อความที่นี่ เช่น:&#10;(เลขที่ใบแจ้งซ่อมบำรุง)&#10;CM20260722-0119&#10;(Service Type)&#10;งานเครื่องเย็น..."></textarea>
+                        placeholder="วางข้อความที่นี่ — รับทั้ง 2 แบบ&#10;&#10;แบบ CJ:&#10;(เลขที่ใบแจ้งซ่อมบำรุง)&#10;CM20260722-0119&#10;(Service Type)&#10;งานเครื่องเย็น...&#10;&#10;แบบใบแจ้งจากระบบ CM-PM:&#10;เลขที่ใบแจ้ง: RE-202610-0025&#10;สถานที่: 0965-ถนนบ้านกลาง(พนัสนิคม) - ชลบุรี&#10;ประเภทปัญหา: 3.ตู้แช่ Under Counter(PlugIn)&#10;สาเหตุที่ตรวจพบ : ..."></textarea>
                     <div class="flex gap-2">
                         <button type="button" onclick="parseText('open')" class="flex-1 bg-blood-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-blood-700 transition-colors shadow-sm">
                             แยกข้อมูลลงฟอร์ม
@@ -518,7 +520,15 @@
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">Service Type <span class="text-red-500">*</span></label>
-                                <input type="text" id="op_serviceType" required class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                                <!-- v1.2.0 — เลือกจากรายการแทนการพิมพ์ กันพิมพ์ไม่ตรงกันจนรายงานแยกกลุ่มผิด
+                                     ยังเพิ่มค่าใหม่ได้ด้วย "อื่น ๆ" และข้อความที่วางมาก็ยังเติมได้เหมือนเดิม -->
+                                <select id="op_serviceType" required onchange="onServiceTypeChange()" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                                    <option value="">-- เลือก Service Type --</option>
+                                    <option value="งานเครื่องเย็น">งานเครื่องเย็น</option>
+                                    <option value="__other__">อื่น ๆ (พิมพ์เอง)</option>
+                                </select>
+                                <input type="text" id="op_serviceTypeOther" placeholder="พิมพ์ Service Type ที่ต้องการ"
+                                    class="hidden mt-2 w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">ประเภทสัญญา</label>
@@ -845,19 +855,32 @@
                 </div>
 
                 <!-- ตัวกรองรอบบิล - เลือก "ทุกรอบ" = งานที่ค้างอยู่ปัจจุบัน (เหมือนเดิม) หรือเลือกรอบใดรอบหนึ่ง = โหลดข้อมูลย้อนหลังของรอบนั้นจริง ๆ จากเซิร์ฟเวอร์ (ทั้งที่ส่งแล้ว/ตัดบิลแล้ว) เพื่อเช็คข้อมูลย้อนหลังและ export ได้ -->
+                <!-- v1.2.0 — งาน CM กับงาน RE เก็บคนละตาราง และมีชุดเลขรอบบิลของตัวเอง
+                     ตารางนี้จึงแสดงทีละชนิด ไม่ปนกัน สลับที่ปุ่มนี้ -->
                 <div class="mb-4">
-                    <label class="block text-slate-700 text-xs font-semibold mb-1">กรองตามรอบบิล (เลือกรอบใดรอบหนึ่งเพื่อดูข้อมูลย้อนหลังของรอบนั้น)</label>
+                    <label class="block text-slate-700 text-xs font-semibold mb-1">ชนิดงาน</label>
+                    <div class="inline-flex rounded-lg border border-slate-300 overflow-hidden bg-white">
+                        <button type="button" id="billingKindBtnCM" onclick="setBillingKind('CM')"
+                            class="px-4 py-2 text-sm font-semibold bg-blood-600 text-white">งาน CM</button>
+                        <button type="button" id="billingKindBtnRE" onclick="setBillingKind('RE')"
+                            class="px-4 py-2 text-sm font-semibold bg-white text-slate-600 hover:bg-slate-50">งาน RE</button>
+                    </div>
+                    <span class="ml-2 text-[11px] text-slate-400">งานสองชนิดแยกบิลกันคนละชุด</span>
+                </div>
+
+                <div class="mb-4">
+                    <label class="block text-slate-700 text-xs font-semibold mb-1">กรองตามเดือน (เลือกเดือนใดเดือนหนึ่งเพื่อดูข้อมูลย้อนหลังของเดือนนั้น)</label>
                     <select id="billingRoundFilter" onchange="loadBillingDocuments()" class="px-4 py-2 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm bg-white min-w-[240px]">
-                        <option value="">ทุกรอบ (แสดงงานที่ค้างอยู่ปัจจุบัน)</option>
+                        <option value="">ทุกเดือน (แสดงงานที่ค้างอยู่ปัจจุบัน)</option>
                     </select>
                 </div>
 
                 <!-- ค้นหาทั้งระบบ — พิมพ์แล้วได้ข้อมูลเลย ไม่ต้องเลือกรอบบิลก่อน
-                     ยิงไปค้นที่เซิร์ฟเวอร์ ค้นข้ามทุกรอบบิลและทุกสถานะ (รวมงานที่ตัดบิลไปแล้ว)
+                     ยิงไปค้นที่เซิร์ฟเวอร์ ค้นข้ามทุกเดือนและทุกสถานะ (รวมงานที่ตัดบิลไปแล้ว)
                      ⚠ ผลการค้นกลายเป็น "ข้อมูลที่โหลดอยู่" จึงมีผลกับปุ่มดาวน์โหลดด้วย
                         ป้ายเตือนสีเหลืองข้าง ๆ จะขึ้นตลอดเวลาที่ยังค้นอยู่ กันลืมล้างแล้วออกบิลไม่ครบ -->
                 <div class="mb-4">
-                    <label class="block text-slate-700 text-xs font-semibold mb-1">ค้นหาทั้งระบบ (เลขงาน / เลขทรัพย์สิน / รหัสอะไหล่ / ชื่อสาขา) — ไม่ต้องเลือกรอบบิลก่อน</label>
+                    <label class="block text-slate-700 text-xs font-semibold mb-1">ค้นหาทั้งระบบ (เลขงาน / เลขทรัพย์สิน / รหัสอะไหล่ / ชื่อสาขา) — ไม่ต้องเลือกเดือนก่อน</label>
                     <div class="flex flex-wrap items-center gap-2">
                         <div class="relative">
                             <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
@@ -916,7 +939,7 @@
                         <!-- v1.0.76 — ผังที่ผู้ใช้เลือก: รวมปุ่มการทำงานทั้งหมดไว้แถวเดียว เรียงตามลำดับที่กำหนด -->
                         <div class="flex gap-2 flex-wrap items-center">
                             <button type="button" onclick="previewBillingRound()" id="btn_generateBilling" class="bg-blood-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-blood-700 transition-colors">
-                                <i class="fa-solid fa-magnifying-glass mr-1"></i> ดูตัวอย่างก่อนบันทึกรอบบิล
+                                <i class="fa-solid fa-magnifying-glass mr-1"></i> ดูตัวอย่างก่อนดึงเข้าบิล
                             </button>
                             <button type="button" onclick="sendBillToContractor()" id="btn_sendBill" class="bg-emerald-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-emerald-700 transition-colors">
                                 <i class="fa-solid fa-paper-plane mr-1"></i> ส่งบิลให้ผู้รับเหมา
@@ -928,7 +951,7 @@
                                 <i class="fa-solid fa-list-ol mr-1"></i> จัดลำดับใหม่
                             </button>
                             <button type="button" onclick="openBillingHistoryModal()" id="btn_billingHistory" class="bg-indigo-600 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-indigo-700 transition-colors">
-                                <i class="fa-solid fa-clock-rotate-left mr-1"></i> ประวัติรอบบิล
+                                <i class="fa-solid fa-clock-rotate-left mr-1"></i> ประวัติบิลรายเดือน
                             </button>
                             <button type="button" onclick="loadBillingDocuments()" class="bg-slate-700 text-white text-sm font-semibold py-1.5 px-3.5 rounded-md hover:bg-slate-800 transition-colors">
                                 <i class="fa-solid fa-rotate mr-1"></i> โหลด/รีเฟรช
@@ -1021,28 +1044,39 @@
                     <div class="border border-emerald-300 rounded-xl px-4 py-3 bg-emerald-50/70">
                         <div class="flex flex-wrap items-center justify-between gap-3">
                             <span class="text-xs font-bold text-emerald-800"><i class="fa-solid fa-file-excel mr-1.5"></i>ไฟล์ Excel รวม <span class="font-normal text-emerald-600">· คอลัมน์ครบเหมือนตารางในแอป · กรองต่อในไฟล์ได้</span></span>
-                            <button type="button" id="btn_downloadAllBillingXlsx" onclick="downloadAllBillingXlsx(this)" title="ดาวน์โหลด Excel ตามรอบบิลและประเภทที่เลือก" class="bg-emerald-700 text-white text-sm font-semibold py-2 px-5 rounded-lg hover:bg-emerald-800 transition-colors">
+                            <button type="button" id="btn_downloadAllBillingXlsx" onclick="downloadAllBillingXlsx(this)" title="ดาวน์โหลด Excel ตามเดือนและประเภทที่เลือก" class="bg-emerald-700 text-white text-sm font-semibold py-2 px-5 rounded-lg hover:bg-emerald-800 transition-colors">
                                 <i class="fa-solid fa-download mr-1.5"></i> ดาวน์โหลด Excel
                             </button>
                         </div>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3 pt-3 border-t border-emerald-200">
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3 pt-3 border-t border-emerald-200">
+                            <!-- v1.2.2 — เลือกชนิดงานตรงนี้ได้เลย ไม่ต้องสลับแท็บทั้งหน้า
+                                 บิลของสองชนิดแยกกัน รายการเดือนด้านซ้ายจึงเปลี่ยนตามช่องนี้ -->
                             <div>
-                                <span class="block text-[11px] font-bold text-emerald-800 mb-1.5">เลือกรอบบิล (ติ๊กได้หลายรอบ)</span>
+                                <span class="block text-[11px] font-bold text-emerald-800 mb-1.5">ชนิดงาน</span>
+                                <select id="xlsxKind" onchange="onXlsxKindChange()"
+                                    class="w-full px-3 py-2 rounded-lg border border-emerald-300 text-xs bg-white outline-none focus:border-emerald-500">
+                                    <option value="CM">งาน CM</option>
+                                    <option value="RE">งาน RE</option>
+                                </select>
+                                <span class="block text-[10px] text-emerald-700 mt-1">ไฟล์ของงาน RE จะมีคำว่า RE ในชื่อไฟล์</span>
+                            </div>
+                            <div>
+                                <span class="block text-[11px] font-bold text-emerald-800 mb-1.5">เลือกเดือน (ติ๊กได้หลายเดือน)</span>
                                 <!-- dropdown แบบติ๊กหลายรอบ: ปุ่มสรุปว่าเลือกอะไรไว้ กดแล้วค่อยกางรายชื่อรอบออกมา
                                      ใช้พาเนลกางเองแทน <select multiple> เพราะ select multiple ต้องกด Ctrl ค้างถึงจะเลือกหลายอันได้ ผู้ใช้พลาดง่าย -->
                                 <div class="relative">
                                     <button type="button" id="xlsxRoundDropdownBtn" onclick="toggleXlsxRoundDropdown()" class="w-full flex items-center justify-between gap-2 bg-white border border-emerald-300 rounded-lg px-3 py-2 text-xs text-slate-700 hover:bg-emerald-50 transition-colors">
-                                        <span id="xlsxRoundSummary" class="truncate text-left">ทุกรอบบิล</span>
+                                        <span id="xlsxRoundSummary" class="truncate text-left">ทุกเดือน</span>
                                         <i class="fa-solid fa-chevron-down text-emerald-600 text-[10px] flex-shrink-0"></i>
                                     </button>
                                     <div id="xlsxRoundDropdownPanel" class="hidden absolute left-0 right-0 mt-1 z-40 bg-white border border-emerald-300 rounded-xl shadow-2xl p-2">
                                         <div class="flex gap-2 pb-2 mb-1 border-b border-emerald-100">
-                                            <button type="button" onclick="setAllXlsxRounds(true)" class="text-[11px] text-emerald-700 underline hover:text-emerald-900">เลือกทุกรอบ</button>
+                                            <button type="button" onclick="setAllXlsxRounds(true)" class="text-[11px] text-emerald-700 underline hover:text-emerald-900">เลือกทุกเดือน</button>
                                             <button type="button" onclick="setAllXlsxRounds(false)" class="text-[11px] text-slate-500 underline hover:text-slate-700">ล้างที่เลือก</button>
                                         </div>
                                         <!-- ไม่ติ๊กรอบไหนเลย = เอาทุกรอบ (พฤติกรรมเดิม) เพื่อไม่ให้ต้องติ๊กทีละรอบตอนอยากได้ทั้งหมด -->
                                         <div id="xlsxRoundCheckboxes" class="max-h-52 overflow-y-auto">
-                                            <span class="text-[11px] text-slate-400">กด "โหลด/รีเฟรช" เพื่อดึงรายชื่อรอบบิล</span>
+                                            <span class="text-[11px] text-slate-400">กด "โหลด/รีเฟรช" เพื่อดึงรายชื่อเดือน</span>
                                         </div>
                                     </div>
                                 </div>
@@ -1072,12 +1106,21 @@
                          ⚠ เอกสารนี้เป็นของฝั่งผู้รับเหมาเสมอ ต่อให้แอดมินเป็นคนกด ราคา CJ จะไม่ปนออกไปเด็ดขาด -->
                     <div class="border border-teal-300 rounded-xl px-4 py-3 bg-teal-50/70 mt-3">
                         <div class="flex flex-wrap items-center justify-between gap-3">
-                            <span class="text-xs font-bold text-teal-800"><i class="fa-solid fa-file-pdf mr-1.5"></i>ใบเขียวผู้รับเหมา ตามช่วงวันที่ <span class="font-normal text-teal-600">· ข้ามรอบบิลได้ · ใช้ราคาผู้รับเหมาล้วน</span></span>
+                            <span class="text-xs font-bold text-teal-800"><i class="fa-solid fa-file-pdf mr-1.5"></i>ใบเขียวผู้รับเหมา ตามช่วงวันที่ <span class="font-normal text-teal-600">· ข้ามเดือนได้ · ใช้ราคาผู้รับเหมาล้วน</span></span>
                             <button type="button" id="btn_downloadContractorRangePdf" onclick="downloadContractorRangePdf(this)" class="bg-teal-700 text-white text-sm font-semibold py-2 px-5 rounded-lg hover:bg-teal-800 transition-colors">
                                 <i class="fa-solid fa-download mr-1.5"></i> ดาวน์โหลดใบเขียว
                             </button>
                         </div>
                         <div class="flex flex-wrap items-end gap-3 mt-3 pt-3 border-t border-teal-200">
+                            <!-- v1.3.3 — เลือกชนิดงานตรงนี้ได้เลย ไม่ต้องสลับแท็บทั้งหน้า
+                                 งาน CM กับงาน RE อยู่คนละตาราง ใบเขียวจึงต้องออกแยกใบกันเสมอ -->
+                            <div>
+                                <label class="block text-[11px] font-bold text-teal-800 mb-1">ชนิดงาน</label>
+                                <select id="contractorRangeKind" class="px-3 py-2 rounded-lg border border-teal-300 text-xs bg-white outline-none focus:border-teal-500">
+                                    <option value="CM">งาน CM</option>
+                                    <option value="RE">งาน RE</option>
+                                </select>
+                            </div>
                             <div>
                                 <label class="block text-[11px] font-bold text-teal-800 mb-1">กรองด้วยวัน</label>
                                 <select id="contractorRangeDateField" class="px-3 py-2 rounded-lg border border-teal-300 text-xs bg-white outline-none focus:border-teal-500">
@@ -1115,17 +1158,17 @@
                      ปุ่มจับคู่ข้อมูลปกติจะสร้างรอบใหม่เสมอ ใส่งานที่ตกหล่นเข้ารอบเดิมไม่ได้ จึงต้องมีช่องนี้ -->
                 <div id="billingAddJobToRoundBox" class="flex flex-wrap items-end gap-2 mb-4 p-3 bg-indigo-50 border border-indigo-200 rounded-xl">
                     <div>
-                        <label class="block text-indigo-900 text-xs font-bold mb-1">เพิ่มเลขงานเข้ารอบบิลที่มีอยู่แล้ว</label>
+                        <label class="block text-indigo-900 text-xs font-bold mb-1">เพิ่มเลขงานเข้าเดือนที่มีบิลอยู่แล้ว</label>
                         <div class="flex gap-2 items-center flex-wrap">
                             <select id="addJobRoundNo" class="px-3 py-2 rounded-lg border border-indigo-300 text-sm bg-white outline-none focus:border-indigo-500 min-w-[150px]">
-                                <option value="">-- เลือกรอบบิล --</option>
+                                <option value="">-- เลือกเดือน --</option>
                             </select>
                             <input type="text" id="addJobToRoundInput" placeholder="เช่น CM20260904-0169" class="px-3 py-2 rounded-lg border border-indigo-300 text-sm bg-white outline-none focus:border-indigo-500 w-56">
                             <button type="button" id="btn_addJobToRound" onclick="addJobToBillingRound(this)" class="bg-indigo-600 text-white text-sm font-semibold py-2 px-3.5 rounded-lg hover:bg-indigo-700 transition-colors">
-                                <i class="fa-solid fa-plus mr-1"></i> เพิ่มเข้ารอบบิล
+                                <i class="fa-solid fa-plus mr-1"></i> เพิ่มเข้าเดือนนี้
                             </button>
                         </div>
-                        <p class="text-[11px] text-indigo-700 mt-1.5">งานจะถูกต่อท้ายรายการของรอบนั้น · ต้องเปิดงานและปิดงานแล้ว · เลขทรัพย์สินที่มีบิลอยู่แล้วจะถูกข้ามให้อัตโนมัติ</p>
+                        <p class="text-[11px] text-indigo-700 mt-1.5">งานจะถูกต่อท้ายรายการของเดือนนั้น · ต้องเปิดงานและปิดงานแล้ว · เลขทรัพย์สินที่มีบิลอยู่แล้วจะถูกข้ามให้อัตโนมัติ</p>
                     </div>
                 </div>
                 <!-- ==================== v1.0.69 — แถบตรวจรับบิลของผู้รับเหมา ====================
@@ -1178,8 +1221,8 @@
                                      ซึ่งฝั่งผู้รับเหมาจะไม่มี td ถูกสร้างขึ้นมาเลย ถ้าวางสลับกันหัวตารางกับข้อมูลจะเหลื่อมกันทันที -->
                                 <th id="thReviewStatus" data-col="contractor_review_status" class="p-2 text-left font-semibold min-w-[130px]">ผรม. ตรวจบิล</th>
                                 <th id="thContractor" data-col="contractor" class="p-2 text-left font-semibold min-w-[100px]">ผู้รับเหมา</th>
-                                <th id="thRoundNo" data-col="round_no" class="p-2 text-left font-semibold w-16">รอบบิลที่</th>
-                                <th id="thRoundPeriod" data-col="round_period" class="p-2 text-left font-semibold min-w-[140px]">ช่วงรอบบิล</th>
+                                <th id="thRoundNo" data-col="round_no" class="p-2 text-left font-semibold w-28">รอบบิล</th>
+                                <th id="thRoundPeriod" data-col="round_period" class="p-2 text-left font-semibold min-w-[140px]">ช่วงวันที่ (รอบเก่า)</th>
                                 <th id="thSentStatus" data-col="sent_to_contractor" class="p-2 text-left font-semibold w-20">สถานะ</th>
                                 <th id="thUnitPriceContractor" data-col="unit_price_contractor" class="p-2 text-left font-semibold">ราคา/หน่วย (ผู้รับเหมา)</th>
                                 <th id="thTotalPriceContractor" data-col="total_price_contractor" class="p-2 text-left font-semibold">ราคา/รวม (ผู้รับเหมา)</th>
@@ -1238,8 +1281,16 @@
                         <i class="fa-solid fa-rotate mr-1"></i> โหลด/รีเฟรชข้อมูล
                     </button>
                 </div>
+                <div class="flex flex-wrap gap-3">
                 <input type="text" id="openListFilter" oninput="debouncedFilterOpenIssuesList()" placeholder="พิมพ์คำค้น เพื่อกรองข้อมูลทุกคอลัมน์ (เลขที่ใบแจ้ง, สาขา, Service Type, รายละเอียด ฯลฯ)"
-                    class="w-full px-4 py-2.5 mb-3 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
+                    class="flex-1 min-w-[240px] px-4 py-2.5 mb-3 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
+                <select id="openListFilterKind" onchange="filterOpenIssuesList()" title="แยกดูระหว่างงานซ่อมบำรุง (CM) กับใบแจ้งซ่อมจากระบบ CM-PM (RE)"
+                    class="px-3 py-2.5 mb-3 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm bg-white">
+                    <option value="">ทั้งหมด (CM + RE)</option>
+                    <option value="CM">เฉพาะงาน CM</option>
+                    <option value="RE">เฉพาะงาน RE</option>
+                </select>
+                </div>
                 <p id="openListStatus" class="text-sm text-slate-400 mb-3">กดปุ่ม "โหลด/รีเฟรชข้อมูล" เพื่อดึงรายการเปิดงานทั้งหมดมาแสดง</p>
                 <div class="table-scroll overflow-x-auto border border-slate-200 rounded-xl">
                     <table class="w-full text-xs">
@@ -1270,8 +1321,16 @@
                         <i class="fa-solid fa-rotate mr-1"></i> โหลด/รีเฟรชข้อมูล
                     </button>
                 </div>
+                <div class="flex flex-wrap gap-3">
                 <input type="text" id="closeListFilter" oninput="debouncedFilterCloseIssuesList()" placeholder="พิมพ์คำค้น เพื่อกรองข้อมูลทุกคอลัมน์ (เลขงาน, สาขา, เลขทรัพย์สิน, รายการอะไหล่ ฯลฯ)"
-                    class="w-full px-4 py-2.5 mb-3 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
+                    class="flex-1 min-w-[240px] px-4 py-2.5 mb-3 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm">
+                <select id="closeListFilterKind" onchange="filterCloseIssuesList()" title="แยกดูระหว่างงานซ่อมบำรุง (CM) กับใบแจ้งซ่อมจากระบบ CM-PM (RE)"
+                    class="px-3 py-2.5 mb-3 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm bg-white">
+                    <option value="">ทั้งหมด (CM + RE)</option>
+                    <option value="CM">เฉพาะงาน CM</option>
+                    <option value="RE">เฉพาะงาน RE</option>
+                </select>
+                </div>
                 <p id="closeListStatus" class="text-sm text-slate-400 mb-3">กดปุ่ม "โหลด/รีเฟรชข้อมูล" เพื่อดึงรายการปิดงานทั้งหมดมาแสดง</p>
                 <div class="table-scroll overflow-x-auto border border-slate-200 rounded-xl">
                     <table class="w-full text-xs">
@@ -1351,6 +1410,13 @@
                          เพื่อให้รายชื่อสถานะมีที่มาที่เดียว ไม่มีวันหลุดไม่ตรงกับป้ายสีหรือตัวนับ -->
                     <select id="statusReportFilterStatus" onchange="filterStatusReport()" class="px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm bg-white">
                         <option value="">ทุกสถานะ</option>
+                    </select>
+                    <!-- v1.2.0 — แยกดูงาน CM กับงาน RE (คนละตารางในฐานข้อมูล) -->
+                    <select id="statusReportFilterKind" onchange="filterStatusReport()" title="แยกดูระหว่างงานซ่อมบำรุง (CM) กับใบแจ้งซ่อมจากระบบ CM-PM (RE)"
+                        class="px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm bg-white">
+                        <option value="">ทั้งหมด (CM + RE)</option>
+                        <option value="CM">เฉพาะงาน CM</option>
+                        <option value="RE">เฉพาะงาน RE</option>
                     </select>
                 </div>
 
@@ -1695,8 +1761,8 @@
                     <table class="w-full text-xs">
                         <thead class="bg-slate-100 text-slate-600">
                             <tr>
-                                <th class="p-2 text-left font-semibold whitespace-nowrap">รอบบิลที่</th>
-                                <th class="p-2 text-left font-semibold whitespace-nowrap">ช่วงรอบบิล</th>
+                                <th class="p-2 text-left font-semibold whitespace-nowrap">รอบบิล</th>
+                                <th class="p-2 text-left font-semibold whitespace-nowrap">ช่วงวันที่ (รอบเก่า)</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">ผู้รับเหมา</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">จำนวนรายการ</th>
                                 <th class="p-2 text-left font-semibold whitespace-nowrap">ยอดรวม (CJ)</th>
@@ -2026,8 +2092,8 @@
 
                 <div class="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900 space-y-1">
                     <p class="font-semibold"><i class="fa-solid fa-triangle-exclamation mr-1"></i> กดแล้วเกิดอะไรขึ้น</p>
-                    <p>· ตัด <b>ทุกแถว</b> ของเลขทรัพย์สินนี้ในรอบบิลนี้ออกจากตารางวางบิล</p>
-                    <p>· งานนี้จะ <b>ไม่ถูกดึงเข้ารอบบิลอีก</b> (ตัดออกจากระบบวางบิลถาวร)</p>
+                    <p>· ตัด <b>ทุกแถว</b> ของเลขทรัพย์สินนี้ในเดือนนี้ออกจากตารางวางบิล</p>
+                    <p>· งานนี้จะ <b>ไม่ถูกดึงเข้าบิลอีก</b> (ตัดออกจากระบบวางบิลถาวร)</p>
                     <p>· เก็บสำเนาไว้ครบทุกแถว ถ้ากดผิดแจ้งแอดมินให้กู้คืนได้</p>
                     <p>· สถานะของงานจะเปลี่ยนเป็น <b>"คืนงานแล้ว (ตัดออกจากบิล)"</b></p>
                 </div>
@@ -2166,22 +2232,22 @@
                 <p class="text-sm text-slate-500 mb-3">เลือกตารางที่ต้องการซิงค์ (เลือกน้อยตารางลง ถ้าต้องการซิงค์เฉพาะบางส่วนเร็วขึ้น ลดโอกาสชนกับคนอื่นที่กำลังซิงค์อยู่)</p>
                 <div class="space-y-2" id="syncTablesCheckboxList">
                     <label class="flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50 cursor-pointer">
-                        <input type="checkbox" class="syncTableCheckbox" value="open_issues" checked> <span class="text-sm text-slate-700">เปิดงาน</span>
+                        <input type="checkbox" class="syncTableCheckbox" value="open_issues" checked> <span class="text-sm text-slate-700">เปิดงาน <span class="text-xs text-slate-400">(แยกแท็บ CM และ RE ให้อัตโนมัติ)</span></span>
                     </label>
                     <label class="flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50 cursor-pointer">
-                        <input type="checkbox" class="syncTableCheckbox" value="close_issues" checked> <span class="text-sm text-slate-700">ปิดงาน</span>
+                        <input type="checkbox" class="syncTableCheckbox" value="close_issues" checked> <span class="text-sm text-slate-700">ปิดงาน <span class="text-xs text-slate-400">(แยกแท็บ CM และ RE ให้อัตโนมัติ)</span></span>
                     </label>
                     <label class="flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50 cursor-pointer">
                         <input type="checkbox" class="syncTableCheckbox" value="quotations" checked> <span class="text-sm text-slate-700">ใบเสนอราคา</span>
                     </label>
                     <label class="flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50 cursor-pointer">
-                        <input type="checkbox" class="syncTableCheckbox" value="billing_documents" checked> <span class="text-sm text-slate-700">ตารางวางบิล</span>
+                        <input type="checkbox" class="syncTableCheckbox" value="billing_documents" checked> <span class="text-sm text-slate-700">ตารางวางบิล <span class="text-xs text-slate-400">(แยกแท็บ CM และ RE ให้อัตโนมัติ)</span></span>
                     </label>
                     <label class="flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50 cursor-pointer">
-                        <input type="checkbox" class="syncTableCheckbox" value="pause_records" checked> <span class="text-sm text-slate-700">พักงาน</span>
+                        <input type="checkbox" class="syncTableCheckbox" value="pause_records" checked> <span class="text-sm text-slate-700">พักงาน <span class="text-xs text-slate-400">(แยกแท็บ CM และ RE ให้อัตโนมัติ)</span></span>
                     </label>
                     <label class="flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50 cursor-pointer">
-                        <input type="checkbox" class="syncTableCheckbox" value="__status_report__" checked> <span class="text-sm text-slate-700">รายงานสถานะดำเนินการ <span class="text-xs text-slate-400">(ช้าที่สุด - รวมข้อมูลหลายตาราง)</span></span>
+                        <input type="checkbox" class="syncTableCheckbox" value="__status_report__" checked> <span class="text-sm text-slate-700">รายงานสถานะดำเนินการ <span class="text-xs text-slate-400">(ช้าที่สุด - รวมข้อมูลหลายตาราง, แยกแท็บ CM และ RE ให้อัตโนมัติ)</span></span>
                     </label>
                 </div>
                 <div class="flex gap-3 mt-3 text-xs">
@@ -2205,20 +2271,20 @@
     <div id="billingHistoryModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[85vh] overflow-y-auto">
             <div class="flex items-center justify-between p-5 border-b border-slate-200 sticky top-0 bg-white z-10">
-                <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-clock-rotate-left mr-2 text-indigo-600"></i>ประวัติรอบบิล</h3>
+                <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-clock-rotate-left mr-2 text-indigo-600"></i>ประวัติบิลรายเดือน</h3>
                 <button type="button" onclick="closeBillingHistoryModal()" class="text-slate-400 hover:text-slate-700 text-xl leading-none">
                     <i class="fa-solid fa-xmark"></i>
                 </button>
             </div>
             <div class="p-5">
                 <div id="billingHistoryLoading" class="text-center text-slate-400 text-sm py-8">กำลังโหลดข้อมูล...</div>
-                <div id="billingHistoryEmpty" class="hidden text-center text-slate-400 text-sm py-8">ยังไม่มีประวัติรอบบิล</div>
+                <div id="billingHistoryEmpty" class="hidden text-center text-slate-400 text-sm py-8">ยังไม่มีประวัติบิล</div>
                 <div id="billingHistoryTableWrap" class="hidden overflow-x-auto">
                     <table class="w-full text-sm border-collapse">
                         <thead>
                             <tr class="bg-slate-100 text-slate-600 text-xs">
-                                <th class="p-2 text-left border-b border-slate-200">รอบบิลที่</th>
-                                <th class="p-2 text-left border-b border-slate-200">ช่วงรอบบิล</th>
+                                <th class="p-2 text-left border-b border-slate-200">รอบบิล</th>
+                                <th class="p-2 text-left border-b border-slate-200">ช่วงวันที่ (รอบเก่า)</th>
                                 <th id="thHistContractor" class="p-2 text-left border-b border-slate-200">ผู้รับเหมา</th>
                                 <th class="p-2 text-right border-b border-slate-200">จำนวนรายการ</th>
                                 <th id="thHistTotalCJ" class="p-2 text-right border-b border-slate-200">ยอดรวม (CJ)</th>
@@ -2243,7 +2309,7 @@
     <div id="billingPreviewModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[85vh] overflow-y-auto">
             <div class="flex items-center justify-between p-5 border-b border-slate-200 sticky top-0 bg-white z-10">
-                <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-magnifying-glass mr-2 text-blood-600"></i>ดูตัวอย่างก่อนบันทึกรอบบิล</h3>
+                <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-magnifying-glass mr-2 text-blood-600"></i>ดูตัวอย่างก่อนดึงเข้าบิล</h3>
                 <button type="button" onclick="closeBillingPreviewModal()" class="text-slate-400 hover:text-slate-700 text-xl leading-none">
                     <i class="fa-solid fa-xmark"></i>
                 </button>
@@ -2256,7 +2322,7 @@
                 <div id="billingPreviewEmpty" class="hidden text-center text-slate-400 text-sm py-8">ไม่พบข้อมูลใหม่ที่ยังไม่เคยบันทึกรอบบิลในช่วง/เลขงานที่เลือก</div>
                 <div id="billingPreviewContent" class="hidden">
                     <div class="flex flex-wrap gap-3 mb-3 text-xs">
-                        <span class="font-semibold px-3 py-1.5 rounded-full bg-blood-100 text-blood-700">ช่วงรอบบิล: <span id="billingPreviewRoundPeriod">-</span></span>
+                        <span class="font-semibold px-3 py-1.5 rounded-full bg-blood-100 text-blood-700">ช่วงวันที่ที่ดึง: <span id="billingPreviewRoundPeriod">-</span></span>
                         <span class="font-semibold px-3 py-1.5 rounded-full bg-emerald-100 text-emerald-700">ข้อมูลใหม่ที่จะบันทึก: <span id="billingPreviewNewCount">0</span> รายการ</span>
                         <span id="billingPreviewAlreadyBadge" class="hidden font-semibold px-3 py-1.5 rounded-full bg-slate-100 text-slate-500">บันทึกไปแล้วก่อนหน้านี้ (ข้ามอัตโนมัติ): <span id="billingPreviewAlreadyCount">0</span> รายการ</span>
                 <!-- v1.0.72 — งานพวกนี้ดึงเข้ารอบบิลได้ แต่จะยังกดส่งให้ผู้รับเหมาไม่ได้จนกว่าจะยืนยันรูป
@@ -2288,7 +2354,7 @@
                     ยกเลิก
                 </button>
                 <button type="button" id="btn_confirmBillingRound" onclick="confirmBillingRound()" class="bg-blood-700 text-white font-semibold py-2 px-5 rounded-lg hover:bg-blood-800 transition-colors flex items-center gap-2">
-                    <i class="fa-solid fa-check"></i> <span id="text_confirmBillingRound">ยืนยันบันทึกรอบบิล</span>
+                    <i class="fa-solid fa-check"></i> <span id="text_confirmBillingRound">ยืนยันดึงเข้าบิล</span>
                 </button>
             </div>
         </div>
@@ -2786,7 +2852,7 @@
         function renderRemoveJobImpact_(res) {
             const money = function (n) { return (Number(n) || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
             let html = '<p><b>จะตัดออก ' + (res.rows || 0) + ' แถว</b>'
-                + (res.roundNo ? ' · รอบบิลที่ ' + escapeAttr(res.roundNo) : '')
+                + (res.roundNo ? ' · ' + escapeAttr(clRoundLabel(res.roundNo)) : '')
                 + (res.contractor ? ' · ผู้รับเหมา: ' + escapeAttr(res.contractor) : '') + '</p>';
             html += '<p class="mt-1">ยอดฝั่งผู้รับเหมาที่หายไปจากบิล: <b>' + money(res.sumContractor) + '</b> บาท'
                 + ' · ยอดฝั่ง CJ: <b>' + money(res.sumCj) + '</b> บาท</p>';
@@ -4339,6 +4405,142 @@
             return { ok: true, assets: out };
         }
         // ตั้งค่าช่องรหัสสาขาจากข้อความที่ parse มา แล้วสั่ง lookup ทันที (ใช้ตอน Auto-Parse)
+        // ==================== v1.2.0 — ใบแจ้งซ่อมจากระบบ CM-PM (FixIt Helpdesk) ====================
+        // ข้อความที่คัดมาจากเว็บ Helpdesk เป็นคนละรูปแบบกับใบแจ้งของ CJ โดยสิ้นเชิง
+        // จึงแยกตัวแกะออกมาต่างหาก แล้วค่อยเลือกใช้ตามรูปแบบที่ตรวจเจอ
+        // ของเดิม (รูปแบบ CJ) ไม่ถูกแตะเลยแม้แต่บรรทัดเดียว — วางของเดิมมาก็ยังได้ผลเท่าเดิมเป๊ะ
+
+        // ตรวจว่าข้อความที่วางมาเป็นใบแจ้งจาก Helpdesk หรือเปล่า
+        function clLooksLikeHelpdeskTicket(text) {
+            const t = String(text || '');
+            if (/\bRE[-\s]?\d{4,6}[-\s]?\d{2,}/i.test(t)) return true;   // เลขใบแจ้ง เช่น RE-202610-0025
+            if (/แจ้งขออนุมัติซ่อม/.test(t)) return true;
+            if (/เลขที่ใบแจ้ง(?!ซ่อมบำรุง)/.test(t)) return true;          // "เลขที่ใบแจ้ง" เฉย ๆ (ของ CJ มีคำว่าซ่อมบำรุงต่อท้าย)
+            return false;
+        }
+
+        // รหัสสาขา — ใบแจ้งเขียนได้หลายแบบ "0965-ถนนบ้านกลาง(พนัสนิคม) - ชลบุรี" หรือ "CJ 0965 ถนนบ้านกลางพนัสนิคม"
+        // เอาเลข 4 หลักออกมาอย่างเดียว เพราะฝั่งเซิร์ฟเวอร์ค้นสาขาด้วยรหัสเท่านั้น
+        function clHelpdeskBranchCode(raw) {
+            const t = String(raw || '').trim();
+            const m = t.match(/(?:^|[^\d])(\d{4})(?![\d])/);
+            return m ? m[1] : t;
+        }
+
+        // วันที่แจ้ง "15/10/2026 10:47" -> "15/10/2026, 10:47" (รูปแบบที่ระบบเก็บใน req_date)
+        function clHelpdeskReqDate(raw) {
+            const t = String(raw || '').trim();
+            const m = t.match(/^(\d{1,2}\/\d{1,2}\/\d{4})(?:[,\s]+(\d{1,2}:\d{2}))?/);
+            if (!m) return t;
+            return m[2] ? (m[1] + ', ' + m[2]) : m[1];
+        }
+
+        // แกะใบแจ้ง 1 ใบออกมาเป็นค่าของแต่ละช่อง
+        // รองรับทั้งแบบ "หัวข้อ: ค่า" บรรทัดเดียว และแบบหัวข้ออยู่บรรทัดบน ค่าอยู่บรรทัดล่าง
+        // (คัดจากหน้าเว็บมาได้ทั้งสองแบบ แล้วแต่ว่าลากคลุมยังไง)
+        function clParseHelpdeskTicket(rawText, lines) {
+            const out = { mainId: '', branch: '', reqDate: '', serviceWork: '', serviceIssue: '', details: '', assetId: '' };
+
+            // เลขใบแจ้งกับเลขทรัพย์สิน หาจากทั้งก้อน ไม่พึ่งว่าหัวข้อจะเขียนยังไง
+            const mId = rawText.match(/\bRE[-\s]?\d{4,6}[-\s]?\d{2,}/i);
+            if (mId) out.mainId = mId[0].replace(/\s+/g, '').toUpperCase();
+            const mAsset = rawText.match(/Asset\s*[:：]?\s*(\d{6,})/i);
+            if (mAsset) out.assetId = mAsset[1];
+
+            const valueAt = function (i) {
+                const line = lines[i];
+                const next = (i + 1 < lines.length) ? lines[i + 1] : '';
+                const idx = line.search(/[:：]/);
+                if (idx !== -1 && line.slice(idx + 1).trim() !== '') return line.slice(idx + 1).trim();
+                return next || '';
+            };
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                // สาขา: "สถานที่" ของใบแจ้งตรงกว่า "ชื่อสาขา" ที่พิมพ์ไว้ในรายละเอียด จึงให้มาก่อน
+                if (line.indexOf('สถานที่') !== -1) out.branch = valueAt(i) || out.branch;
+                else if (line.indexOf('ชื่อสาขา') !== -1 && !out.branch) out.branch = valueAt(i);
+                else if (line.indexOf('ประเภทปัญหา') !== -1) out.serviceWork = valueAt(i) || out.serviceWork;
+                else if (line.indexOf('ประเภทงาน') !== -1 && !out.serviceWork) out.serviceWork = valueAt(i);
+                else if (line.indexOf('สาเหตุที่ตรวจพบ') !== -1) out.serviceIssue = valueAt(i) || out.serviceIssue;
+                else if (line.indexOf('วันที่แจ้ง') !== -1) out.reqDate = valueAt(i) || out.reqDate;
+            }
+
+            // "3.ตู้แช่ Under Counter(PlugIn)" -> "ตู้แช่ Under Counter(PlugIn)"
+            // ใช้กติกาตัดเลขลำดับตัวเดียวกับอะไหล่ (v1.1.6) จึงไม่ไปตัด "2.5 นิ้ว" ที่เป็นเลขจริง
+            out.serviceWork = clStripPartLineNo(out.serviceWork);
+            out.serviceIssue = clStripPartLineNo(out.serviceIssue);
+            out.branch = clHelpdeskBranchCode(out.branch);
+            out.reqDate = clHelpdeskReqDate(out.reqDate);
+
+            // รายละเอียด: ตัดเอาตั้งแต่หัวข้อ "รายละเอียด" ไปจนถึงหัวข้อถัดไปของใบแจ้ง
+            // ในก้อนนี้มีทั้งเลขทรัพย์สิน สาเหตุ และรายการอะไหล่ที่ขออนุมัติ ซึ่งฟอร์มเปิดงานไม่มีช่องรองรับ
+            // จึงต้องเก็บไว้ทั้งก้อน ถ้าตัดทิ้งข้อมูลจะหายไปเลยโดยไม่มีใครรู้
+            // หาไม่เจอก็ใช้ทั้งข้อความแทน (ได้ของเกินมาหน่อย ดีกว่าได้ช่องว่าง)
+            const stopLabel = /^(วันที่แจ้ง|ความสำคัญ|ผู้รับผิดชอบ|ค่าใช้จ่าย|สถานะ|วันที่ซ่อมเสร็จ|รูปแจ้งซ่อม)/;
+            let di = -1;
+            for (let k = 0; k < lines.length; k++) {
+                // ต้องเป็นหัวข้อ "รายละเอียด" จริง ๆ ไม่ใช่ชื่อหน้าต่าง "รายละเอียดงานซ่อม"
+                if (/^รายละเอียด\s*[:：]?\s*$/.test(lines[k]) || /^รายละเอียด\s*[:：]/.test(lines[k])) { di = k; break; }
+            }
+            if (di !== -1) {
+                const body = [];
+                const firstPart = lines[di].replace(/^รายละเอียด\s*[:：]?\s*/, '').trim();
+                if (firstPart) body.push(firstPart);
+                for (let k = di + 1; k < lines.length; k++) {
+                    if (stopLabel.test(lines[k])) break;
+                    body.push(lines[k]);
+                }
+                out.details = body.join('\n').trim();
+            }
+            if (!out.details) out.details = lines.join('\n').trim();
+            return out;
+        }
+
+        // ==================== v1.2.0 — Service Type แบบเลือกจากรายการ ====================
+        // ค่าที่ใช้จริงอาจมาจากช่องเลือก หรือช่องพิมพ์ (ตอนเลือก "อื่น ๆ")
+        // ทุกที่ที่อ่านค่านี้ต้องผ่าน getServiceTypeValue() เท่านั้น ห้ามอ่าน .value ตรง ๆ
+        // ไม่งั้นจะได้คำว่า "__other__" ไปบันทึกลงฐานข้อมูลโดยไม่มีใครทันสังเกต
+        function getServiceTypeValue() {
+            const sel = document.getElementById('op_serviceType');
+            if (!sel) return '';
+            if (sel.value === '__other__') {
+                const other = document.getElementById('op_serviceTypeOther');
+                return other ? (other.value || '').trim() : '';
+            }
+            return (sel.value || '').trim();
+        }
+
+        // ใส่ค่าลงช่อง — ถ้าค่านั้นยังไม่มีในรายการ ให้เพิ่มเข้าไปแล้วเลือกให้เลย
+        // (ข้อความที่วางมาอาจมี Service Type ที่ยังไม่เคยมีในระบบ ถ้าไม่เพิ่มให้ ค่าจะหายเงียบ ๆ)
+        function setServiceTypeValue(v) {
+            const sel = document.getElementById('op_serviceType');
+            const other = document.getElementById('op_serviceTypeOther');
+            if (!sel) return;
+            const val = (v === null || v === undefined) ? '' : String(v).trim();
+            if (other) { other.value = ''; other.classList.add('hidden'); }
+            if (!val) { sel.value = ''; return; }
+            let found = false;
+            for (let i = 0; i < sel.options.length; i++) {
+                if (sel.options[i].value === val) { found = true; break; }
+            }
+            if (!found) {
+                const op = document.createElement('option');
+                op.value = val; op.textContent = val;
+                // แทรกไว้ก่อนตัวเลือก "อื่น ๆ" เสมอ เพื่อให้ "อื่น ๆ" อยู่ล่างสุดตลอด
+                sel.insertBefore(op, sel.options[sel.options.length - 1]);
+            }
+            sel.value = val;
+        }
+
+        function onServiceTypeChange() {
+            const sel = document.getElementById('op_serviceType');
+            const other = document.getElementById('op_serviceTypeOther');
+            if (!sel || !other) return;
+            if (sel.value === '__other__') { other.classList.remove('hidden'); try { other.focus(); } catch (e) {} }
+            else { other.classList.add('hidden'); other.value = ''; }
+        }
+
         function setBranchAndLookup(codeInputId, nameInputId, statusId, rawBranchText) {
             document.getElementById(codeInputId).value = rawBranchText || '';
             if (rawBranchText) doLookupBranchGeneric(codeInputId, nameInputId, statusId);
@@ -4366,6 +4568,29 @@
             };
 
             if (mode === 'open') {
+                // v1.2.0 — ใบแจ้งจากระบบ CM-PM ใช้ตัวแกะคนละตัว (รูปแบบต่างกันคนละเรื่อง)
+                if (clLooksLikeHelpdeskTicket(rawText)) {
+                    const h = clParseHelpdeskTicket(rawText, lines);
+                    document.getElementById('op_mainId').value = h.mainId || '';
+                    document.getElementById('op_reqDate').value = h.reqDate || '';
+                    document.getElementById('op_serviceWork').value = h.serviceWork || '';
+                    document.getElementById('op_serviceIssue').value = h.serviceIssue || '';
+                    document.getElementById('op_details').value = h.details || '';
+                    setBranchAndLookup('op_branchCode', 'op_branchName', 'op_branchStatus', h.branch);
+                    // ใบแจ้งไม่มีข้อมูล Service Type / ประเภทสัญญา / ผู้รับเหมา
+                    // จึง "ไม่แตะ" ช่องพวกนี้ ปล่อยค่าที่แอดมินเลือกไว้เอง — เดาใส่ให้จะกลายเป็นข้อมูลผิดที่ไม่มีใครทันสังเกต
+                    if (h.mainId) checkOpenJobNumberDuplicate(h.mainId.trim());
+                    const todo = [];
+                    if (!getServiceTypeValue()) todo.push('Service Type');
+                    const ctEl = document.getElementById('op_contractType');
+                    if (ctEl && !ctEl.value.trim()) todo.push('ประเภทสัญญา');
+                    const coEl = document.getElementById('op_contractor');
+                    if (coEl && !coEl.value.trim()) todo.push('ผู้รับเหมา');
+                    showAlert('success', 'แยกข้อมูลจากใบแจ้ง ' + (h.mainId || '(ไม่พบเลขใบแจ้ง)') + ' แล้ว'
+                        + (h.assetId ? ' · เลขทรัพย์สิน ' + h.assetId + ' อยู่ในช่องรายละเอียด' : '')
+                        + (todo.length ? ' · ยังต้องกรอกเอง: ' + todo.join(' · ') : ''));
+                    return;
+                }
                 const data = { mainId: '', type: '', date: '', service: '', serviceIssue: '', branch: '', details: '' };
                 for (let i = 0; i < lines.length; i++) {
                     let line = lines[i];
@@ -4383,7 +4608,7 @@
                     else if (line.includes('รายละเอียดปัญหาที่พบ')) data.details = extractValue(line, nextLine);
                 }
                 document.getElementById('op_mainId').value = data.mainId || '';
-                document.getElementById('op_serviceType').value = data.type || '';
+                setServiceTypeValue(data.type);
                 document.getElementById('op_reqDate').value = data.date || '';
                 document.getElementById('op_serviceWork').value = data.service || '';
                 document.getElementById('op_serviceIssue').value = data.serviceIssue || '';
@@ -4724,7 +4949,7 @@
             if (searchEl) searchEl.value = '';
             updateBillingSearchNote(0);
             const statusEl = document.getElementById('billingStatus');
-            statusEl.textContent = 'ล้างหน้าจอแล้ว (ข้อมูลเดิมยังอยู่ในระบบ) — กด "โหลด/รีเฟรชข้อมูล" หรือ "ดูตัวอย่างก่อนบันทึกรอบบิล" เพื่อดูชุดถัดไป';
+            statusEl.textContent = 'ล้างหน้าจอแล้ว (ข้อมูลเดิมยังอยู่ในระบบ) — กด "โหลด/รีเฟรชข้อมูล" หรือ "ดูตัวอย่างก่อนดึงเข้าบิล" เพื่อดูชุดถัดไป';
             statusEl.className = 'text-sm text-slate-400 mb-3';
         }
 
@@ -4766,7 +4991,7 @@
             }
 
             const includeBacklog = document.getElementById('billingIncludeBacklog').checked;
-            runServerCall('previewBillingCandidates', [currentSession.username, currentSession.token, startDate, endDate, jobIds, includeBacklog], function(res) {
+            runServerCall('previewBillingCandidates', [currentSession.username, currentSession.token, startDate, endDate, jobIds, includeBacklog, currentBillingKind()], function(res) {
                 resetBtn();
                 if (res && res.success) {
                     renderBillingPreview(res);
@@ -4821,7 +5046,7 @@
                     waitPhotoBadge.classList.remove('hidden');
                     waitPhotoBadge.textContent = 'ยังไม่ได้ยืนยันรูป ' + wpCount + ' รายการ ('
                         + wpJobs.slice(0, 5).join(', ') + (wpJobs.length > 5 ? ' และอื่น ๆ' : '')
-                        + ') — ดึงเข้ารอบบิลและแก้ไขได้ตามปกติ แต่จะกดส่งให้ผู้รับเหมาไม่ได้จนกว่าจะยืนยันรูป';
+                        + ') — อยู่ในบิลและแก้ไขได้ตามปกติ แต่จะกดส่งให้ผู้รับเหมาไม่ได้จนกว่าจะยืนยันรูป';
                 } else {
                     waitPhotoBadge.classList.add('hidden');
                 }
@@ -4870,7 +5095,7 @@
         // ขั้นที่ 2: ยืนยันจริง - เรียก generateBillingDocumentsForAllClosedJobs (ใช้ startDate/endDate/jobIds ชุดเดียวกับตอนดูตัวอย่างเป๊ะๆ)
         function confirmBillingRound() {
             if (!billingPreviewParams) {
-                showAlert('error', 'ไม่พบข้อมูลที่ดูตัวอย่างไว้ กรุณากด "ดูตัวอย่างก่อนบันทึกรอบบิล" ใหม่อีกครั้ง');
+                showAlert('error', 'ไม่พบข้อมูลที่ดูตัวอย่างไว้ กรุณากด "ดูตัวอย่างก่อนดึงเข้าบิล" ใหม่อีกครั้ง');
                 return;
             }
             const { startDate, endDate, jobIds } = billingPreviewParams;
@@ -4880,13 +5105,13 @@
 
             confirmBtn.disabled = true;
             confirmBtn.classList.add('opacity-60', 'cursor-not-allowed');
-            textEl.textContent = 'กำลังบันทึกรอบบิล...';
+            textEl.textContent = 'กำลังดึงเข้าบิล...';
 
             const includeBacklog = document.getElementById('billingIncludeBacklog').checked;
-            runServerCall('generateBillingDocumentsForAllClosedJobs', [currentSession.username, currentSession.token, startDate, endDate, jobIds, includeBacklog], function(res) {
+            runServerCall('generateBillingDocumentsForAllClosedJobs', [currentSession.username, currentSession.token, startDate, endDate, jobIds, includeBacklog, currentBillingKind()], function(res) {
                 confirmBtn.disabled = false;
                 confirmBtn.classList.remove('opacity-60', 'cursor-not-allowed');
-                textEl.textContent = 'ยืนยันบันทึกรอบบิล';
+                textEl.textContent = 'ยืนยันดึงเข้าบิล';
                 if (res && res.success) {
                     closeBillingPreviewModal();
                     billingPreviewParams = null;
@@ -4896,12 +5121,12 @@
                     refreshBillingRoundOptions(); // มีรอบบิลใหม่เกิดขึ้น เติม dropdown ให้ทันที
                     statusEl.textContent = '';
                 } else {
-                    showAlert('error', (res && res.message) || 'บันทึกรอบบิลล้มเหลว');
+                    showAlert('error', (res && res.message) || 'ดึงเข้าบิลล้มเหลว');
                 }
             }, function(err) {
                 confirmBtn.disabled = false;
                 confirmBtn.classList.remove('opacity-60', 'cursor-not-allowed');
-                textEl.textContent = 'ยืนยันบันทึกรอบบิล';
+                textEl.textContent = 'ยืนยันดึงเข้าบิล';
                 showAlert('error', 'เชื่อมต่อล้มเหลว: ' + (err && err.message ? err.message : 'ไม่ทราบสาเหตุ') + ' — ลองเลือกช่วงวันที่ให้แคบลงแล้วลองใหม่');
             }, 90000);
         }
@@ -5133,7 +5358,7 @@
             statusEl.textContent = 'กำลังจัดลำดับใหม่...';
             statusEl.className = 'text-sm text-slate-400 mb-3';
 
-            runServerCall('fixBillingSeqNumbers', [currentSession.username, currentSession.token], function(res) {
+            runServerCall('fixBillingSeqNumbers', [currentSession.username, currentSession.token, currentBillingKind()], function(res) {
                 btn.disabled = false;
                 btn.classList.remove('opacity-60', 'cursor-not-allowed');
                 if (res && res.success) {
@@ -5162,12 +5387,12 @@
             const roundFilterEl = document.getElementById('billingRoundFilter');
             const roundFilter = roundFilterEl ? roundFilterEl.value : '';
 
-            // ถ้ามีคำค้นอยู่ ให้ส่งไปค้นที่เซิร์ฟเวอร์แทน — ค้นข้ามทุกรอบบิลและทุกสถานะให้เลย
+            // ถ้ามีคำค้นอยู่ ให้ส่งไปค้นที่เซิร์ฟเวอร์แทน — ค้นข้ามทุกเดือนและทุกสถานะให้เลย
             // ผู้ใช้จึงไม่ต้องรู้ว่างานอยู่รอบไหน แค่พิมพ์เลขงานก็เจอและเข้าไปแก้อะไหล่ได้ทันที
             const searchEl = document.getElementById('billingJobSearch');
             const searchTerm = searchEl ? searchEl.value.trim() : '';
 
-            runServerCall('getBillingDocuments', [currentSession.username, currentSession.token, contractorFilter, jobIdsFilter || null, roundFilter || null, searchTerm || null], function(res) {
+            runServerCall('getBillingDocuments', [currentSession.username, currentSession.token, contractorFilter, jobIdsFilter || null, roundFilter || null, searchTerm || null, currentBillingKind()], function(res) {
                 if (res && res.error) {
                     statusEl.textContent = 'โหลดล้มเหลว: ' + res.error;
                     statusEl.className = 'text-sm text-red-500 mb-3';
@@ -5179,9 +5404,9 @@
                 renderBillingGrid(getBillingRowsForDisplay());
                 updateBillingSearchNote(currentBillingData.length);
 
-                const scopeNote = searchTerm ? (' จากการค้นหา "' + searchTerm + '" (ค้นข้ามทุกรอบบิลและทุกสถานะ)')
+                const scopeNote = searchTerm ? (' จากการค้นหา "' + searchTerm + '" (ค้นข้ามทุกเดือนและทุกสถานะ)')
                     : (jobIdsFilter && jobIdsFilter.length > 0 ? ' (แสดงเฉพาะชุดที่จับคู่ล่าสุด — กด "โหลด/รีเฟรชข้อมูล" เพื่อดูทั้งหมด)'
-                    : (roundFilter ? ' (ข้อมูลย้อนหลังของรอบที่ ' + roundFilter + ' — รวมที่ส่งแล้ว/ตัดบิลแล้วด้วย)' : ''));
+                    : (roundFilter ? ' (ข้อมูลย้อนหลังของ' + clRoundLabel(roundFilter) + ' — รวมที่ส่งแล้ว/ตัดบิลแล้วด้วย)' : ''));
                 statusEl.textContent = 'พบ ' + currentBillingData.length + ' รายการ' + scopeNote + ' — พิมพ์ Part Code แล้วคลิกออกจากช่อง จะดึงราคา/รายละเอียดอัตโนมัติ';
                 statusEl.className = 'text-sm text-blood-600 mb-3';
                 if (typeof onDone === 'function') { try { onDone(); } catch (e) {} }  // v1.0.82 — โหลดเสร็จค่อยทำงานต่อ (เช่น กรอง+เลื่อนไปแถวที่ตีกลับ)
@@ -5225,6 +5450,119 @@
         // ดึงจากเซิร์ฟเวอร์ตรง ๆ (getBillingRoundOptions) แทนการมองแค่ข้อมูลที่โหลดมาแล้ว เพื่อให้เลือกดูรอบเก่า ๆ ย้อนหลังได้ด้วย
         // อ่านรอบบิลที่ติ๊กไว้ในกล่อง Excel รวม — คืนเป็น array ของเลขรอบ (string)
         // ไม่ติ๊กเลย = คืน [] แปลว่า "เอาทุกรอบ" (ไม่ต้องติ๊กทีละรอบตอนอยากได้ทั้งหมด)
+        // ==================== v1.2.0 — ชนิดงานของหน้าตารางวางบิล ====================
+        // ทุกคำขอของฝั่งบิลต้องส่งค่านี้ไปด้วย เพราะงาน CM กับงาน RE อยู่คนละตาราง
+        // และเลขรอบบิลซ้ำกันได้ (ทั้งคู่มีรอบ 1) ถ้าไม่บอกชนิด เซิร์ฟเวอร์จะหยิบผิดตาราง
+        var currentBillingKind_ = 'CM';
+        function currentBillingKind() { return currentBillingKind_; }
+
+        function setBillingKind(kind) {
+            const k = (kind === 'RE') ? 'RE' : 'CM';
+            if (k === currentBillingKind_) return;
+            currentBillingKind_ = k;
+            const on = 'px-4 py-2 text-sm font-semibold bg-blood-600 text-white';
+            const off = 'px-4 py-2 text-sm font-semibold bg-white text-slate-600 hover:bg-slate-50';
+            const bCM = document.getElementById('billingKindBtnCM');
+            const bRE = document.getElementById('billingKindBtnRE');
+            if (bCM) bCM.className = (k === 'CM') ? on : off;
+            if (bRE) bRE.className = (k === 'RE') ? on : off;
+            // สลับชนิดแล้วข้อมูลเดิมใช้ไม่ได้อีกเลย ต้องล้างแล้วโหลดใหม่ทั้งหมด
+            // (ถ้าไม่ล้าง รอบบิลที่ค้างอยู่ในช่องเลือกจะเป็นของอีกชนิด แล้วกดดูจะได้ตารางว่างโดยไม่รู้สาเหตุ)
+            const roundSel = document.getElementById('billingRoundFilter');
+            if (roundSel) roundSel.value = '';
+            const searchEl = document.getElementById('billingJobSearch');
+            if (searchEl) searchEl.value = '';
+            clearRowCache_('billing');
+            refreshBillingRoundOptions();
+            // เมนู Excel ตามแท็บไปให้ (เป็นสิ่งที่คนคาดหวังเกือบทุกครั้ง) แต่เปลี่ยนเองทีหลังได้
+            const xk = document.getElementById('xlsxKind');
+            if (xk) { xk.value = k; onXlsxKindChange(); }
+            const gk = document.getElementById('contractorRangeKind');
+            if (gk) gk.value = k;
+            loadBillingDocuments();
+        }
+
+        // ==================== v1.2.2 — ชนิดงานของเมนู "ไฟล์ Excel รวม" ====================
+        // แยกจากแท็บของทั้งหน้าโดยตั้งใจ — จะอยู่แท็บ CM แล้วดึง Excel ของ RE เลยก็ได้
+        // (เมนูนี้ใช้ดึงยกชุด ถ้าบังคับให้สลับทั้งหน้าก่อนจะเสียเวลาเปล่า)
+        // v1.3.3 — ชนิดงานของกล่อง "ใบเขียวผู้รับเหมา ตามช่วงวันที่"
+        // แยกจากแท็บของทั้งหน้าเหมือนเมนู Excel — ใบเขียวของสองชนิดต้องออกแยกใบเสมอ
+        function currentGreenSheetKind() {
+            const el = document.getElementById('contractorRangeKind');
+            return (el && el.value === 'RE') ? 'RE' : 'CM';
+        }
+
+        function currentXlsxKind() {
+            const el = document.getElementById('xlsxKind');
+            return (el && el.value === 'RE') ? 'RE' : 'CM';
+        }
+
+        function onXlsxKindChange() {
+            // รอบบิลที่ติ๊กไว้เป็นของอีกชนิด ใช้ต่อไม่ได้ ต้องล้างก่อนเสมอ
+            // ไม่งั้นจะดึงไฟล์ของ "รอบที่ไม่มีอยู่จริงในชนิดนี้" แล้วได้ไฟล์ว่างโดยไม่รู้สาเหตุ
+            const box = document.getElementById('xlsxRoundCheckboxes');
+            if (box) box.querySelectorAll('.xlsx-round-cb').forEach(function (cb) { cb.checked = false; });
+            updateXlsxRoundSummary();
+            refreshXlsxRoundOptions();
+        }
+
+        // โหลดรายชื่อรอบบิลของชนิดที่เมนู Excel เลือกไว้
+        // preloaded = รายการรอบที่เพิ่งดึงมาแล้วของชนิดเดียวกัน (ส่งมาได้เพื่อไม่ต้องยิงคำขอซ้ำ)
+        function refreshXlsxRoundOptions(preloaded) {
+            if (!currentSession) return;
+            const box = document.getElementById('xlsxRoundCheckboxes');
+            if (!box) return;
+            const render = function (res) {
+                if (!res || res.error) return;
+                const checkedBefore = getSelectedXlsxRounds();
+                if (res.length === 0) {
+                    box.innerHTML = '<span class="text-[11px] text-slate-400">ยังไม่มีเดือนที่มีบิลของงานชนิดนี้</span>';
+                } else {
+                    box.innerHTML = res.map(function (r) {
+                        const val = String(r.round_no);
+                        const on = checkedBefore.indexOf(val) !== -1 ? ' checked' : '';
+                        const safePeriod = String(r.round_period || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                        return '<label class="flex items-center gap-2 text-xs text-slate-700 py-1 px-1.5 rounded cursor-pointer hover:bg-emerald-50">' +
+                            '<input type="checkbox" class="xlsx-round-cb rounded border-emerald-300" value="' + val + '"' + on + ' onchange="updateXlsxRoundSummary()">' +
+                            '<span class="font-semibold">' + clRoundLabel(val) + '</span>' +
+                            (safePeriod ? '<span class="text-[11px] text-slate-400 truncate">' + safePeriod + '</span>' : '') +
+                            '</label>';
+                    }).join('');
+                }
+                updateXlsxRoundSummary();
+            };
+            // ชนิดตรงกับที่เพิ่งดึงมา = ใช้ของเดิมเลย ไม่ยิงคำขอซ้ำ
+            if (preloaded) { render(preloaded); return; }
+            runServerCall('getBillingRoundOptions', [currentSession.username, currentSession.token, currentXlsxKind()],
+                render, function () { /* โหลดรายการรอบไม่ได้ = ปล่อยของเดิมไว้ ดีกว่าล้างจนว่าง */ });
+        }
+
+        // ==================== v1.3.0 — ชื่อรอบบิล ====================
+        // รอบบิลคือ "เดือนที่ปิดงาน" เก็บเป็นเลข YYYYMM (เช่น 202610) เพราะคอลัมน์เป็น integer
+        // ถ้าโชว์เลขดิบคนอ่านไม่รู้เรื่อง จึงแปลงเป็นชื่อเดือนตรงนี้ที่เดียว
+        // รอบเก่าที่เปิดด้วยมือก่อน v1.3.0 (เลขวิ่ง 1-99) ยังโชว์แบบเดิมทุกอย่าง
+        const CL_THAI_MONTHS = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+            'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+        // ช่อง "ช่วงรอบบิล" — รอบเดือนแบบใหม่ ค่านี้ซ้ำกับชื่อรอบพอดี แสดงซ้ำก็รกเปล่า ๆ
+        // รอบเก่าเป็นช่วงวันที่ (เช่น "01/09/2026 ถึง 30/09/2026") ซึ่งยังมีประโยชน์ จึงยังโชว์
+        function clRoundPeriodCell(roundNo, period) {
+            const p = (period === null || period === undefined) ? '' : String(period);
+            if (!p) return '-';
+            return (p === clRoundLabel(roundNo)) ? '-' : p;
+        }
+
+        function clRoundLabel(roundNo, period) {
+            if (roundNo === null || roundNo === undefined || roundNo === '') return '-';
+            const v = parseInt(roundNo, 10);
+            if (isFinite(v) && v >= 190001 && v <= 999912) {
+                const m = v % 100;
+                if (m >= 1 && m <= 12) return 'รอบเดือน ' + CL_THAI_MONTHS[m - 1] + ' ' + Math.floor(v / 100);
+            }
+            // รอบเลขวิ่งแบบเก่าที่ยังไม่ได้แปลงเป็นรอบเดือน — เขียนให้รู้ว่าเป็น "ของเก่า"
+            // จะได้ไม่สับสนว่าทำไมบางอันเป็นเดือน บางอันเป็นเลข (และรู้ว่าต้องรัน SQL แปลง)
+            return 'รอบเก่าที่ ' + roundNo + (period ? ' (' + period + ')' : '');
+        }
+
         function getSelectedXlsxRounds() {
             return Array.prototype.slice.call(document.querySelectorAll('#xlsxRoundCheckboxes .xlsx-round-cb'))
                 .filter(function (cb) { return cb.checked; })
@@ -5243,8 +5581,8 @@
             const el = document.getElementById('xlsxRoundSummary');
             if (!el) return;
             const picked = getSelectedXlsxRounds();
-            if (picked.length === 0) el.textContent = 'ทุกรอบบิล';
-            else if (picked.length <= 3) el.textContent = 'รอบที่ ' + picked.join(', ');
+            if (picked.length === 0) el.textContent = 'ทุกเดือน';
+            else if (picked.length <= 3) el.textContent = picked.map(function (v) { return clRoundLabel(v); }).join(' · ');
             else el.textContent = 'เลือกไว้ ' + picked.length + ' รอบ';
         }
 
@@ -5263,52 +5601,36 @@
 
         function refreshBillingRoundOptions() {
             if (!currentSession) return;
-            runServerCall('getBillingRoundOptions', [currentSession.username, currentSession.token], function (res) {
+            runServerCall('getBillingRoundOptions', [currentSession.username, currentSession.token, currentBillingKind()], function (res) {
                 if (!res || res.error) return;
                 const select = document.getElementById('billingRoundFilter');
                 if (!select) return;
                 const currentVal = select.value;
 
-                select.innerHTML = '<option value="">ทุกรอบ (แสดงงานที่ค้างอยู่ปัจจุบัน)</option>' +
+                select.innerHTML = '<option value="">ทุกเดือน (แสดงงานที่ค้างอยู่ปัจจุบัน)</option>' +
                     res.map(r => {
-                        const label = 'รอบที่ ' + r.round_no + (r.round_period ? ' (' + r.round_period + ')' : '');
+                        const label = clRoundLabel(r.round_no, r.round_period);
                         return `<option value="${r.round_no}">${label}</option>`;
                     }).join('');
 
                 if (res.some(r => String(r.round_no) === currentVal)) select.value = currentVal;
 
+                // v1.2.2 — รายการรอบของเมนู Excel แยกไปโหลดเอง (refreshXlsxRoundOptions)
+                // เพราะเมนูนั้นเลือกชนิดงานของตัวเองได้ อาจคนละชนิดกับแท็บที่เปิดอยู่
                 // เติมรายชื่อรอบเดียวกันนี้ให้ช่องเลือกรอบของ Excel รวม (ติ๊กได้หลายรอบพร้อมกัน)
                 // จำรอบที่ติ๊กค้างไว้ก่อนสร้างใหม่ ผู้ใช้จะได้ไม่ต้องติ๊กซ้ำทุกครั้งที่กดรีเฟรช
-                const xlsxBox = document.getElementById('xlsxRoundCheckboxes');
-                if (xlsxBox) {
-                    const checkedBefore = getSelectedXlsxRounds();
-                    if (res.length === 0) {
-                        xlsxBox.innerHTML = '<span class="text-[11px] text-slate-400">ยังไม่มีรอบบิลในระบบ</span>';
-                    } else {
-                        xlsxBox.innerHTML = res.map(r => {
-                            const val = String(r.round_no);
-                            const on = checkedBefore.indexOf(val) !== -1 ? ' checked' : '';
-                            // ช่วงรอบบิลเป็นข้อความอิสระ ต้องหนี < > " ก่อนยัดใส่ HTML
-                            const safePeriod = String(r.round_period || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-                            return '<label class="flex items-center gap-2 text-xs text-slate-700 py-1 px-1.5 rounded cursor-pointer hover:bg-emerald-50">' +
-                                '<input type="checkbox" class="xlsx-round-cb rounded border-emerald-300" value="' + val + '"' + on + ' onchange="updateXlsxRoundSummary()">' +
-                                '<span class="font-semibold">รอบที่ ' + val + '</span>' +
-                                (safePeriod ? '<span class="text-[11px] text-slate-400 truncate">' + safePeriod + '</span>' : '') +
-                                '</label>';
-                        }).join('');
-                    }
-                    updateXlsxRoundSummary();
-                }
+                // ชนิดเดียวกัน = ใช้ผลที่เพิ่งได้มาเลย · คนละชนิด = ให้มันไปดึงของชนิดตัวเอง
+                refreshXlsxRoundOptions(currentXlsxKind() === currentBillingKind() ? res : null);
 
                 //   addJobRoundNo = เลือกรอบที่จะเพิ่มเลขงานเข้าไป (ยังเป็น dropdown เพราะเพิ่มได้ทีละรอบ)
                 // ใช้แหล่งข้อมูลเดียวกัน จะได้ไม่มีทางเลือกรอบที่ไม่มีอยู่จริง
-                [['addJobRoundNo', '-- เลือกรอบบิล --']].forEach(function (pair) {
+                [['addJobRoundNo', '-- เลือกเดือน --']].forEach(function (pair) {
                     const el = document.getElementById(pair[0]);
                     if (!el) return;
                     const keep = el.value;
                     el.innerHTML = '<option value="">' + pair[1] + '</option>' +
                         res.map(r => {
-                            const label = 'รอบที่ ' + r.round_no + (r.round_period ? ' (' + r.round_period + ')' : '');
+                            const label = clRoundLabel(r.round_no, r.round_period);
                             return `<option value="${r.round_no}">${label}</option>`;
                         }).join('');
                     if (res.some(r => String(r.round_no) === keep)) el.value = keep;
@@ -5598,7 +5920,7 @@
                 const currentVal = select.value;
                 select.innerHTML = '<option value="">-- งานล่าสุดทั้งหมด --</option>' +
                     res.map(r => {
-                        const label = 'รอบที่ ' + r.round_no + (r.round_period ? ' (' + r.round_period + ')' : '');
+                        const label = clRoundLabel(r.round_no, r.round_period);
                         return `<option value="${r.round_no}">${label}</option>`;
                     }).join('');
                 if (res.some(r => String(r.round_no) === currentVal)) select.value = currentVal;
@@ -6067,7 +6389,7 @@
         //
         // ค้นที่เซิร์ฟเวอร์ ไม่ใช่กรองเฉพาะแถวที่โหลดมาแล้ว
         // เพื่อให้ "พิมพ์แล้วเด้งข้อมูลมาเลย ไม่ต้องเลือกรอบบิลก่อน"
-        // ค้นข้ามทุกรอบบิลและทุกสถานะ (รวมงานที่ตัดบิลไปแล้ว) จึงเข้าไปแก้อะไหล่ย้อนหลังได้ทันที
+        // ค้นข้ามทุกเดือนและทุกสถานะ (รวมงานที่ตัดบิลไปแล้ว) จึงเข้าไปแก้อะไหล่ย้อนหลังได้ทันที
         //
         // ⚠ คำค้นมีผลกับ "ข้อมูลที่โหลดมา" จึงมีผลกับปุ่มดาวน์โหลดด้วยโดยปริยาย
         // ป้ายเตือนสีเหลืองจึงต้องบอกให้ชัดทุกครั้งที่กำลังค้นอยู่ กันลืมล้างแล้วออกบิลไม่ครบ
@@ -6106,14 +6428,14 @@
                 const nowTerm = (document.getElementById('billingJobSearch') || {}).value;
                 if (!nowTerm || nowTerm.trim() !== term) return;
                 if (!res || !res.message) {
-                    note.textContent = 'ไม่พบ "' + term + '" ในตารางวางบิล (ค้นข้ามทุกรอบบิลแล้ว)';
+                    note.textContent = 'ไม่พบ "' + term + '" ในตารางวางบิล (ค้นข้ามทุกเดือนแล้ว)';
                     return;
                 }
                 note.textContent = res.message;
                 note.className = noteBase + (res.level === 'error' ? noteTone.red
                     : (res.level === 'warn' ? noteTone.amber : noteTone.slate));
             }, function () {
-                note.textContent = 'ไม่พบ "' + term + '" ในตารางวางบิล (ค้นข้ามทุกรอบบิลแล้ว)';
+                note.textContent = 'ไม่พบ "' + term + '" ในตารางวางบิล (ค้นข้ามทุกเดือนแล้ว)';
             });
         }
 
@@ -6194,8 +6516,8 @@
             // ไม่ใส่ adminOnly เพราะผู้รับเหมาต้องเห็นคอลัมน์นี้เพื่อกดยืนยัน/ตีกลับบิลของตัวเอง
             { key: 'contractor_review_status', label: 'ผรม. ตรวจบิล' },
             { key: 'contractor', label: 'ผู้รับเหมา', adminOnly: true },
-            { key: 'round_no', label: 'รอบบิลที่', adminOnly: true },
-            { key: 'round_period', label: 'ช่วงรอบบิล', adminOnly: true },
+            { key: 'round_no', label: 'รอบบิล', adminOnly: true },
+            { key: 'round_period', label: 'ช่วงวันที่ (รอบเก่า)', adminOnly: true },
             { key: 'sent_to_contractor', label: 'สถานะ', adminOnly: true }
         ];
         // ความกว้างขั้นต่ำของแต่ละคอลัมน์ในตารางวางบิล (หน่วย px)
@@ -6709,8 +7031,8 @@
             h += '<div class="text-slate-600">จะแก้พร้อมกัน: <b>ปิดงาน 1 แถว</b>';
             if (res.billingRows) {
                 h += ' · <b>แถวบิล ' + res.billingRows + ' แถว</b>';
-                if (res.rounds && res.rounds.length) h += ' (รอบบิลที่ ' + res.rounds.map(escAssetAttr_).join(', ') + ')';
-                h += ' · <b>คีย์จองรอบบิล</b>';
+                if (res.rounds && res.rounds.length) h += ' (' + res.rounds.map(function (x) { return escAssetAttr_(clRoundLabel(x)); }).join(', ') + ')';
+                h += ' · <b>คีย์จองบิล</b>';
             }
             h += '</div>';
             if (res.sentRows) h += '<div class="mt-1 text-sky-700">ผู้รับเหมา' + (res.contractor ? ' (' + escAssetAttr_(res.contractor) + ')' : '') + ' จะเห็นคอมเมนต์ในบิลว่าแก้จากเลขไหนเป็นเลขไหน และเพราะอะไร</div>';
@@ -7806,13 +8128,30 @@
             }));
         }
 
+        // v1.2.0 — ชนิดงานอ่านจากเลขงานเสมอ (กติกาเดียวกับ jobKindOf ฝั่งเซิร์ฟเวอร์เป๊ะ ๆ)
+        // ไม่พึ่ง job_kind ที่เซิร์ฟเวอร์ส่งมาอย่างเดียว เพราะบางหน้าจอข้อมูลมาจากคนละเส้นทาง
+        function clJobKind(row) {
+            if (!row) return 'CM';
+            const id = row.main_id || row.job_id || row.customer_case || '';
+            return /^RE/i.test(String(id).trim()) ? 'RE' : 'CM';
+        }
+        // กรองตามชนิดงานจากช่องเลือกที่ระบุ (ค่าว่าง = ไม่กรอง)
+        function clFilterByKind(rows, selectId) {
+            const el = document.getElementById(selectId);
+            const want = el ? el.value : '';
+            if (!want) return rows;
+            return rows.filter(function (r) { return clJobKind(r) === want; });
+        }
+
         function filterOpenIssuesList() {
             const term = document.getElementById('openListFilter').value.trim().toLowerCase();
-            if (!term) { renderOpenIssuesList(currentOpenListData); return; }
-            const filtered = currentOpenListData.filter(row =>
-                Object.values(row).some(v => v !== null && v !== undefined && String(v).toLowerCase().includes(term))
-            );
-            renderOpenIssuesList(filtered);
+            let rows = clFilterByKind(currentOpenListData, 'openListFilterKind');
+            if (term) {
+                rows = rows.filter(row =>
+                    Object.values(row).some(v => v !== null && v !== undefined && String(v).toLowerCase().includes(term))
+                );
+            }
+            renderOpenIssuesList(rows);
         }
 
         function loadCloseIssuesList() {
@@ -7854,11 +8193,13 @@
 
         function filterCloseIssuesList() {
             const term = document.getElementById('closeListFilter').value.trim().toLowerCase();
-            if (!term) { renderCloseIssuesList(currentCloseListData); return; }
-            const filtered = currentCloseListData.filter(row =>
-                Object.values(row).some(v => v !== null && v !== undefined && String(v).toLowerCase().includes(term))
-            );
-            renderCloseIssuesList(filtered);
+            let rows = clFilterByKind(currentCloseListData, 'closeListFilterKind');
+            if (term) {
+                rows = rows.filter(row =>
+                    Object.values(row).some(v => v !== null && v !== undefined && String(v).toLowerCase().includes(term))
+                );
+            }
+            renderCloseIssuesList(rows);
         }
 
         // ==================== รายงานสถานะดำเนินการ (เปิดงาน -> ปิดงาน -> วางบิล) ====================
@@ -7962,9 +8303,9 @@
                 'bg-amber-50 text-amber-800 ring-amber-200', 'bg-amber-500', 'bg-amber-100 text-amber-700'],
             ['ผรม. ส่งงานมาแล้วรอตรวจสอบ', 'ผู้รับเหมาส่งรูปแล้ว รอแอดมินตรวจรูป',
                 'bg-violet-50 text-violet-800 ring-violet-200', 'bg-violet-500', 'bg-violet-100 text-violet-700'],
-            ['ยืนยันรูปแล้ว', 'รูปผ่านแล้ว รอดึงเข้ารอบบิล',
+            ['ยืนยันรูปแล้ว', 'รูปผ่านแล้ว รอส่งบิลให้ผู้รับเหมา',
                 'bg-sky-50 text-sky-800 ring-sky-200', 'bg-sky-500', 'bg-sky-100 text-sky-700'],
-            ['อยู่ในรอบบิล รอส่ง', 'อยู่ในรอบบิลแล้ว พร้อมให้แอดมินกดส่งให้ผู้รับเหมา',
+            ['อยู่ในรอบบิล รอส่ง', 'อยู่ในบิลของเดือนนั้นแล้ว พร้อมส่งให้ผู้รับเหมา',
                 'bg-indigo-50 text-indigo-800 ring-indigo-200', 'bg-indigo-500', 'bg-indigo-100 text-indigo-700'],
             ['ส่งงานแล้ว', 'ส่งบิลแล้ว รอผู้รับเหมาตรวจ/ยืนยันบิล',
                 'bg-blue-50 text-blue-800 ring-blue-200', 'bg-blue-500', 'bg-blue-100 text-blue-700'],
@@ -8429,7 +8770,8 @@
             const slaFilterEl = document.getElementById('statusReportFilterSla');
             const slaFilter = slaFilterEl ? slaFilterEl.value : '';
 
-            let filtered = currentStatusReportData;
+            // v1.2.0 — กรองชนิดงานก่อนเสมอ (คนละแกนกับสถานะและเวลา ใช้ร่วมกันได้)
+            let filtered = clFilterByKind(currentStatusReportData, 'statusReportFilterKind');
             if (statusFilter) {
                 filtered = filtered.filter(row => row.status === statusFilter);
             }
@@ -8563,7 +8905,7 @@
                 if (canApprove && !alreadyApproved) {
                     remarkColumnHtml = `<textarea id="remark_${row.id}" rows="1" placeholder="หมายเหตุ (บังคับกรอกถ้าตีกลับ)" class="w-full px-2 py-1 rounded border border-slate-200 text-xs resize-y">${row.admin_remark || ''}</textarea>
                         <div class="flex gap-1 mt-1">
-                            <button type="button" onclick="reviewSubmission('${row.id}', 'approved')" title="ยืนยันว่ารูปครบถูกต้อง — งานจะเสร็จสิ้นเมื่อผู้รับเหมายืนยันรอบบิลด้วย"
+                            <button type="button" onclick="reviewSubmission('${row.id}', 'approved')" title="ยืนยันว่ารูปครบถูกต้อง — งานจะเสร็จสิ้นเมื่อผู้รับเหมายืนยันบิลด้วย"
                                 class="text-[10px] bg-emerald-600 text-white px-2 py-1 rounded hover:bg-emerald-700 whitespace-nowrap">
                                 <i class="fa-solid fa-circle-check mr-1"></i> ยืนยันรูป
                             </button>
@@ -9102,7 +9444,7 @@
             let headers = ['ลำดับ','Customer Case','รหัสสาขา','ชื่อสาขา','งานบริการ','เลขทรัพย์สิน','Part Code','รายละเอียดอะไหล่','ระยะเวลาประกัน(เดือน)','จำนวน','หน่วย',priceHeader,totalHeader,'วันที่รับแจ้ง','วันที่เข้างาน','Quotation','อะไหล่เก่าส่งคืน CJ','ผู้รับผิดชอบ','บริษัท'];
             let fieldOrder = ['seq','customer_case','branch_code','branch_name','service_type','asset_id','part_code','part_detail','warranty_months','qty','unit',priceField,totalField,'req_date','visit_date','quotation_ref','return_old_part','responsible','company'];
             if (isAdmin) {
-                headers = headers.concat(['ผู้รับเหมา','รอบบิลที่','ช่วงรอบบิล']);
+                headers = headers.concat(['ผู้รับเหมา','รอบบิล','ช่วงวันที่ (รอบเก่า)']);
                 fieldOrder = fieldOrder.concat(['contractor','round_no','round_period']);
             }
 
@@ -9168,11 +9510,12 @@
             const roundNo = roundEl.value;
             const jobId = jobEl.value.trim();
 
-            if (!roundNo) { showAlert('error', 'กรุณาเลือกรอบบิลที่ต้องการเพิ่มงานเข้าไปก่อน'); roundEl.focus(); return; }
+            if (!roundNo) { showAlert('error', 'กรุณาเลือกเดือนที่ต้องการเพิ่มงานเข้าไปก่อน'); roundEl.focus(); return; }
             if (!jobId) { showAlert('error', 'กรุณากรอกเลขที่ใบแจ้งซ่อมบำรุง'); jobEl.focus(); return; }
-            // เช็ค CM ตั้งแต่ฝั่งหน้าแอป จะได้ไม่ต้องรอเซิร์ฟเวอร์ตอบกลับ (เซิร์ฟเวอร์ก็เช็คซ้ำอีกชั้น)
-            if (!/^CM/i.test(jobId)) {
-                showAlert('error', 'เลขที่ใบแจ้งซ่อมบำรุงต้องขึ้นต้นด้วย "CM" เท่านั้น');
+            // เช็คตั้งแต่ฝั่งหน้าแอป จะได้ไม่ต้องรอเซิร์ฟเวอร์ตอบกลับ (เซิร์ฟเวอร์ก็เช็คซ้ำอีกชั้น)
+            // v1.2.0 — รับทั้ง CM (งานซ่อมบำรุง) และ RE (ใบแจ้งซ่อมจากระบบ CM-PM)
+            if (!/^(CM|RE)/i.test(jobId)) {
+                showAlert('error', 'เลขที่ใบแจ้งซ่อมบำรุงต้องขึ้นต้นด้วย "CM" หรือ "RE" เท่านั้น');
                 jobEl.focus();
                 return;
             }
@@ -9198,7 +9541,7 @@
                     if (mainRoundFilter) mainRoundFilter.value = roundNo;
                     loadBillingDocuments();
                 } else {
-                    showAlert('error', (res && res.message) || 'เพิ่มเข้ารอบบิลล้มเหลว');
+                    showAlert('error', (res && res.message) || 'เพิ่มเข้าเดือนล้มเหลว');
                 }
             }, function (err) {
                 resetBtn();
@@ -9236,7 +9579,7 @@
                 return;
             }
 
-            runServerCall('downloadAllBillingXlsx', [currentSession.username, currentSession.token, rounds, types], function (res) {
+            runServerCall('downloadAllBillingXlsx', [currentSession.username, currentSession.token, rounds, types, currentXlsxKind()], function (res) {
                 resetBtn();
                 if (!res || !res.success) {
                     showAlert('error', (res && res.message) || 'สร้างไฟล์ Excel ล้มเหลว');
@@ -9296,7 +9639,7 @@
             }
 
             runServerCall('downloadContractorBillingPdfByRange',
-                [currentSession.username, currentSession.token, start, end, dateField, contractorName],
+                [currentSession.username, currentSession.token, start, end, dateField, contractorName, currentGreenSheetKind()],
                 function (res) {
                     resetBtn();
                     if (!res || !res.success) {
@@ -9400,10 +9743,10 @@
             document.getElementById('thHistContractor').style.display = isAdmin ? '' : 'none';
             document.getElementById('thHistTotalCJ').style.display = isAdmin ? '' : 'none';
 
-            runServerCall('getBillingRoundsHistory', [currentSession.username, currentSession.token], function (res) {
+            runServerCall('getBillingRoundsHistory', [currentSession.username, currentSession.token, currentBillingKind()], function (res) {
                 document.getElementById('billingHistoryLoading').classList.add('hidden');
                 if (!res || res.error) {
-                    showAlert('error', (res && res.error) || 'โหลดประวัติรอบบิลล้มเหลว');
+                    showAlert('error', (res && res.error) || 'โหลดประวัติบิลล้มเหลว');
                     return;
                 }
                 renderBillingHistoryList(res, isAdmin);
@@ -9438,8 +9781,8 @@
                     : 'text-slate-600 bg-slate-100';
 
                 tr.innerHTML =
-                    '<td class="p-2 border-b border-slate-100 font-semibold">' + (r.round_no !== null && r.round_no !== undefined ? r.round_no : '-') + '</td>' +
-                    '<td class="p-2 border-b border-slate-100">' + (r.round_period || '-') + '</td>' +
+                    '<td class="p-2 border-b border-slate-100 font-semibold">' + ((r.round_no !== null && r.round_no !== undefined) ? clRoundLabel(r.round_no) : '-') + '</td>' +
+                    '<td class="p-2 border-b border-slate-100">' + clRoundPeriodCell(r.round_no, r.round_period) + '</td>' +
                     '<td class="p-2 border-b border-slate-100" style="' + (isAdmin ? '' : 'display:none') + '">' + (r.contractor || '-') + '</td>' +
                     '<td class="p-2 border-b border-slate-100 text-right">' + (r.item_count || 0) + '</td>' +
                     '<td class="p-2 border-b border-slate-100 text-right" style="' + (isAdmin ? '' : 'display:none') + '">' + numberFmt(r.total_cj) + '</td>' +
@@ -9471,7 +9814,7 @@
                 btnEl.innerHTML = originalHtml;
             }
 
-            runServerCall('downloadBillingRoundPdf', [currentSession.username, currentSession.token, roundNo, contractor], function (res) {
+            runServerCall('downloadBillingRoundPdf', [currentSession.username, currentSession.token, roundNo, contractor, currentBillingKind()], function (res) {
                 resetBtn();
                 if (res && res.success) {
                     try {
@@ -9547,7 +9890,7 @@
             const todayTh = Date.UTC(nowTh.getUTCFullYear(), nowTh.getUTCMonth(), nowTh.getUTCDate());
             if (d.getTime() > todayTh + 24 * 3600 * 1000) {
                 return { ok: false, message: 'วันที่เข้าแก้ไข "' + s + '" อยู่ในอนาคต — น่าจะพิมพ์ปีผิด (ปีนี้คือ ' + nowTh.getUTCFullYear() + ')'
-                    + ' ถ้าบันทึกไว้แบบนี้ งานจะไม่ถูกดึงเข้ารอบบิลจนกว่าจะถึงวันนั้น' };
+                    + ' ถ้าบันทึกไว้แบบนี้ งานจะไม่เข้าบิลจนกว่าจะถึงวันนั้น' };
             }
             return { ok: true, message: '' };
         }
@@ -9593,10 +9936,12 @@
 
             if (mode === 'open') {
                 const ok = validateRequiredFields([
-                    // เลขงานของระบบขึ้นต้นด้วย CM เสมอ ถ้าไม่ใช่แปลว่าคัดลอกมาผิดช่อง/ผิดระบบ
-                    // ปล่อยผ่านไปจะกลายเป็นงานผีที่ไม่มีวันจับคู่กับข้อมูลปิดงานได้
-                    { id: 'op_mainId',      msg: 'เลขที่ใบแจ้งซ่อมบำรุงต้องขึ้นต้นด้วย "CM" เท่านั้น', test: function (v) { return /^CM/i.test(v); } },
-                    { id: 'op_serviceType', msg: 'กรุณากรอก Service Type' },
+                    // v1.2.0 — เลขงานรับได้ 2 แบบ และเก็บคนละตารางกัน
+                    //   CM... = งานซ่อมบำรุงเดิม        RE... = ใบแจ้งซ่อมจากระบบ CM-PM
+                    // ถ้าไม่ใช่ทั้งสองแบบแปลว่าคัดลอกมาผิดช่อง/ผิดระบบ ปล่อยผ่านไปจะกลายเป็นงานผีที่ไม่มีวันจับคู่กับข้อมูลปิดงานได้
+                    { id: 'op_mainId',      msg: 'เลขที่ใบแจ้งซ่อมบำรุงต้องขึ้นต้นด้วย "CM" หรือ "RE" เท่านั้น', test: function (v) { return /^(CM|RE)/i.test(v); } },
+                    // เลือก "อื่น ๆ" แล้วไม่พิมพ์อะไรเลย ต้องไม่ผ่าน (ค่าช่องเลือกเป็น "__other__" ซึ่งไม่ว่าง)
+                    { id: 'op_serviceType', msg: 'กรุณาเลือก Service Type', test: function () { return getServiceTypeValue() !== ''; } },
                     { id: 'op_serviceWork', msg: 'กรุณากรอกงานบริการ' },
                     { id: 'op_serviceIssue',msg: 'กรุณากรอก Service Issue' },
                     { id: 'op_reqDate',     msg: 'กรุณากรอกวันที่ร้องขอ' },
@@ -9655,7 +10000,7 @@
                 }
                 formData = {
                     mainId: document.getElementById('op_mainId').value,
-                    serviceType: document.getElementById('op_serviceType').value,
+                    serviceType: getServiceTypeValue(),
                     contractType: document.getElementById('op_contractType').value,
                     reqDate: document.getElementById('op_reqDate').value,
                     serviceWork: document.getElementById('op_serviceWork').value,
@@ -9711,7 +10056,7 @@
                             if (res && res.success) {
                                 showAlert('success', res.message);
                                 form.reset();
-                                if (mode === 'open') { document.getElementById('rawTextOpen').value = ''; document.getElementById('op_branchStatus').textContent = ''; setDefaultOpenDateTime(); }
+                                if (mode === 'open') { document.getElementById('rawTextOpen').value = ''; document.getElementById('op_branchStatus').textContent = ''; setDefaultOpenDateTime(); onServiceTypeChange(); }
                                 if (mode === 'close') {
                                     document.getElementById('rawTextClose').value = '';
                                     // v1.0.68 — ล้างบล็อกเลขทรัพย์สินทั้งหมด เหลือบล็อกว่าง 1 บล็อกรองานถัดไป
@@ -10195,7 +10540,7 @@
             statusEl.textContent = 'กำลังโหลดข้อมูล...';
             statusEl.className = 'text-sm text-slate-400 mb-3';
 
-            runServerCall('getCompletedBillingRounds', [currentSession.username, currentSession.token], function (res) {
+            runServerCall('getCompletedBillingRounds', [currentSession.username, currentSession.token, currentBillingKind()], function (res) {
                 if (res && res.error) {
                     statusEl.textContent = 'โหลดล้มเหลว: ' + res.error;
                     statusEl.className = 'text-sm text-red-500 mb-3';
@@ -10222,8 +10567,8 @@
             tbody.innerHTML = rows.map(function (r) {
                 const safeContractor = (r.contractor || '').replace(/'/g, "\\'");
                 return `<tr class="border-t border-slate-100">
-                    <td class="p-2 whitespace-nowrap font-semibold">${r.round_no}</td>
-                    <td class="p-2 whitespace-nowrap">${r.round_period || '-'}</td>
+                    <td class="p-2 whitespace-nowrap font-semibold">${clRoundLabel(r.round_no)}</td>
+                    <td class="p-2 whitespace-nowrap">${clRoundPeriodCell(r.round_no, r.round_period)}</td>
                     <td class="p-2 whitespace-nowrap">${r.contractor || '-'}</td>
                     <td class="p-2 whitespace-nowrap">${r.item_count}</td>
                     <td class="p-2 whitespace-nowrap">${r.total_cj.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</td>
@@ -10253,14 +10598,14 @@
 
         function openCompletedRoundDetail(roundNo, contractor) {
             currentCompletedRoundInfo = { round_no: roundNo, contractor: contractor };
-            document.getElementById('completedRoundDetailTitle').textContent = 'รายละเอียดบิลรอบที่ ' + roundNo + ' — ' + (contractor || '-');
+            document.getElementById('completedRoundDetailTitle').textContent = 'รายละเอียดบิล' + clRoundLabel(roundNo) + ' — ' + (contractor || '-');
             const statusEl = document.getElementById('completedRoundDetailStatus');
             statusEl.textContent = 'กำลังโหลดข้อมูล...';
             statusEl.className = 'text-sm text-slate-400 mb-3';
             document.getElementById('completedRoundDetailBody').innerHTML = '';
             document.getElementById('completedRoundDetailModal').classList.remove('hidden');
 
-            runServerCall('getCompletedRoundDetail', [currentSession.username, currentSession.token, roundNo, contractor], function (res) {
+            runServerCall('getCompletedRoundDetail', [currentSession.username, currentSession.token, roundNo, contractor, currentBillingKind()], function (res) {
                 if (res && res.error) {
                     statusEl.textContent = 'โหลดล้มเหลว: ' + res.error;
                     statusEl.className = 'text-sm text-red-500 mb-3';
@@ -10474,7 +10819,7 @@
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'บิลรอบเสร็จสิ้น_รอบ' + info.round_no + '_' + safeContractor + pricingPart + '_' + new Date().toISOString().slice(0,10) + '.csv';
+            a.download = 'บิลเสร็จสิ้น_' + clRoundLabel(info.round_no).replace(/\s/g, '') + '_' + safeContractor + pricingPart + '_' + new Date().toISOString().slice(0,10) + '.csv';
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);

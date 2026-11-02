@@ -557,10 +557,104 @@ function bangkokIsoTimestamp(dateStr: any, timeStr: any): string | null {
   return dt.toISOString();
 }
 
-// เลขที่ใบแจ้งซ่อมบำรุงของระบบขึ้นต้นด้วย CM เสมอ (เช่น CM20260902-0137)
-// ถ้าไม่ขึ้นต้นด้วย CM แปลว่ากรอกผิดช่อง/ผิดระบบ ปล่อยผ่านไปจะไปโผล่เป็นงานผีในตารางวางบิล
+// ==================== v1.2.0 — แยกงาน RE ออกจากงาน CM ====================
+// ระบบเก็บงาน 2 ชนิด "คนละตาราง" ไม่ปนกันเลยสักแถว
+//   CM...  = งานซ่อมบำรุงเดิม           -> open_issues / close_issues / billing_documents / ...
+//   RE-... = ใบแจ้งซ่อมจากระบบ CM-PM    -> re_open_issues / re_close_issues / re_billing_documents / ...
+//
+// ทำไมเก็บชื่อตารางไว้ที่เดียวแบบนี้ แทนที่จะก๊อปโค้ดทั้งชุดเป็นสองชุด:
+//   โค้ดสองชุด = ทุกครั้งที่แก้บั๊กต้องไล่แก้สองที่ ลืมที่ใดที่หนึ่งเมื่อไหร่ สองฝั่งจะเพี้ยนจากกันเงียบ ๆ
+//   (เป็นรูปแบบบั๊กที่เจอซ้ำมาหลายรอบแล้วในระบบนี้ — กฎเดียวกันแต่เขียนไว้หลายที่ แล้วแก้ไม่ครบ)
+//   วิธีนี้โค้ดมีชุดเดียว แต่ชี้ไปคนละตารางตามชนิดงาน
+//
+// ⚠ ตารางที่ "ไม่แยก" โดยตั้งใจ: branches · branch_assets · parts · contractors · asset_warranty
+//   เพราะเป็นข้อมูลหลักที่ใช้ร่วมกัน ถ้าแยกจะต้องอัปเดตราคาอะไหล่สองที่ทุกครั้ง = พลาดแน่นอนสักวัน
+type JobKind = 'CM' | 'RE';
+
+// ⚠ ตารางฟอร์มรูป (job_form_submissions) "ไม่แยก" โดยตั้งใจ — ใช้ตารางเดียวร่วมกัน
+//   เหตุผล: การกดตรวจ/ตีกลับ/สิ้นสุดงาน อ้างถึง "รหัสแถวของฟอร์ม" ไม่ใช่เลขงาน
+//   ถ้าแยกตาราง ทุกการกดต้องไปไล่หาว่าแถวนี้อยู่ตารางไหนก่อน = เพิ่มความซับซ้อนให้ส่วนที่ซับซ้อนที่สุดอยู่แล้ว
+//   โดยไม่ได้ความปลอดภัยเพิ่มเลย เพราะเลขงาน CM กับ RE ขึ้นต้นต่างกัน จึงไม่มีทางชนกันอยู่แล้ว
+//   การ "แยกให้เห็น" ทำที่ชั้นแสดงผลแทน (กรองด้วยชนิดที่อ่านจากเลขงาน)
+interface JobTableSet {
+  open: string; close: string; billing: string; registry: string;
+  removed: string; comments: string; pause: string;
+  // nextRoundFn ไม่ถูกเรียกแล้วตั้งแต่ v1.3.0 (รอบบิลคิดจากเดือนที่ปิดงาน ไม่ต้องขอเลขรอบ)
+  // คงไว้เพื่อให้รู้ว่าฟังก์ชันในฐานข้อมูลชื่ออะไร เผื่อต้องย้อนกลับไปใช้รอบเลขวิ่ง
+  nextRoundFn: string; claimFn: string; removeFn: string; restoreFn: string;
+  label: string;
+}
+
+const JOB_TABLES: Record<JobKind, JobTableSet> = {
+  CM: {
+    open: 'open_issues', close: 'close_issues', billing: 'billing_documents',
+    registry: 'billing_job_registry', removed: 'billing_removed_jobs',
+    comments: 'billing_row_comments', pause: 'pause_records',
+    nextRoundFn: 'next_billing_round_no', claimFn: 'claim_billing_jobs',
+    removeFn: 'remove_billing_job', restoreFn: 'restore_removed_billing_job',
+    label: 'CM',
+  },
+  RE: {
+    open: 're_open_issues', close: 're_close_issues', billing: 're_billing_documents',
+    registry: 're_billing_job_registry', removed: 're_billing_removed_jobs',
+    comments: 're_billing_row_comments', pause: 're_pause_records',
+    nextRoundFn: 'next_re_billing_round_no', claimFn: 'claim_re_billing_jobs',
+    removeFn: 'remove_re_billing_job', restoreFn: 'restore_removed_re_billing_job',
+    label: 'RE',
+  },
+};
+
+// ตัดสินชนิดงานจาก "เลขงาน" อย่างเดียว ไม่ต้องส่งพารามิเตอร์เพิ่ม
+// (เลขงานติดตัวไปทุกที่อยู่แล้ว จึงไม่มีทางที่งานจะไปโผล่ผิดตารางเพราะลืมส่งค่า)
+function jobKindOf(jobId: any): JobKind {
+  return /^RE/i.test((jobId === null || jobId === undefined) ? '' : jobId.toString().trim()) ? 'RE' : 'CM';
+}
+
+// ชุดตารางของงานชนิดนั้น — ใช้ jobTables(kind).open แทนการพิมพ์ชื่อตารางตรง ๆ
+function jobTables(kind: JobKind): JobTableSet { return JOB_TABLES[kind]; }
+
+// ชุดตารางที่เดาจากเลขงานให้เลย — ใช้กับฟังก์ชันที่ทำงานกับเลขงานเดียว
+function jobTablesOf(jobId: any): JobTableSet { return JOB_TABLES[jobKindOf(jobId)]; }
+
+// แปลงค่าที่ส่งมาจากหน้าจอเป็นชนิดงาน — ค่าที่ไม่รู้จักถือเป็น CM เสมอ
+// (แอปรุ่นเก่าไม่ได้ส่งค่านี้มา ต้องยังทำงานกับงาน CM ได้เหมือนเดิมทุกอย่าง)
+function toJobKind(v: any): JobKind {
+  return String(v === null || v === undefined ? '' : v).trim().toUpperCase() === 'RE' ? 'RE' : 'CM';
+}
+
+// ==================== v1.3.0 — รอบบิลคือ "เดือนที่ปิดงาน" ====================
+// เดิมรอบบิลเป็นเลขวิ่ง (1, 2, 3, …) ที่แอดมินต้องกดเปิดรอบใหม่เองทุกครั้ง
+// ตอนนี้ปิดงานเดือนไหน งานเข้ารอบเดือนนั้นเอง ไม่ต้องเปิดรอบอีกแล้ว
+//
+// เก็บเป็นเลข YYYYMM (เช่น 202610 = ตุลาคม 2026) เพราะคอลัมน์ round_no เป็น integer อยู่แล้ว
+// จึงไม่ต้องแก้โครงตาราง และรอบเก่า (เลขวิ่ง 1-99) ยังอยู่ครบ เปิดดูได้เหมือนเดิม
+// เลขรอบเก่ากับเลขรอบใหม่ไม่มีทางชนกัน เพราะคนละช่วงตัวเลขกันคนละโลก
+const THAI_MONTHS = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+  'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+
+// เลขรอบของงานที่ปิดวันนั้น ๆ — อ่านวันที่ไม่ออกก็ใช้เดือนปัจจุบัน
+// (ดีกว่าโยนงานทิ้งไว้นอกรอบจนไม่มีใครเห็น ซึ่งเป็นอาการที่เคยตามแก้มาหลายรอบแล้ว)
+function billingRoundNoFromFixDate(fixDate: any): number {
+  const d = parseFixDateString(fixDate);
+  const dt = d || new Date();
+  return dt.getFullYear() * 100 + (dt.getMonth() + 1);
+}
+
+// ข้อความที่คนอ่านรู้เรื่อง — รองรับทั้งรอบเดือนแบบใหม่ และรอบเลขวิ่งแบบเก่า
+function billingRoundLabel(roundNo: any): string {
+  const n = parseInt(String(roundNo), 10);
+  if (!isFinite(n)) return 'รอบที่ ' + roundNo;
+  if (n >= 190001 && n <= 999912) {
+    const m = n % 100;
+    if (m >= 1 && m <= 12) return 'รอบเดือน ' + THAI_MONTHS[m - 1] + ' ' + Math.floor(n / 100);
+  }
+  return 'รอบเก่าที่ ' + n;   // รอบเลขวิ่งที่เปิดด้วยมือก่อน v1.3.0 (ยังไม่ได้แปลงเป็นรอบเดือน)
+}
+
+// เลขที่ใบแจ้งซ่อมบำรุงต้องขึ้นต้นด้วย CM (งานซ่อมบำรุง) หรือ RE (ใบแจ้งซ่อมจากระบบ CM-PM)
+// ถ้าไม่ใช่ทั้งสองแบบ แปลว่ากรอกผิดช่อง/ผิดระบบ ปล่อยผ่านไปจะไปโผล่เป็นงานผีในตารางวางบิล
 function isValidJobNumber(jobId: any): boolean {
-  return /^CM/i.test((jobId === null || jobId === undefined) ? '' : jobId.toString().trim());
+  return /^(CM|RE)/i.test((jobId === null || jobId === undefined) ? '' : jobId.toString().trim());
 }
 
 // "วันที่ร้องขอ" (req_date) ที่เก็บใน open_issues เป็นข้อความรูปแบบ "DD/MM/YYYY, HH:MM"
@@ -2702,13 +2796,32 @@ const STATUS_REPORT_SHEET = {
 
 // keyOf ใช้ "id" (primary key ของแถวในฐานข้อมูล) เป็นค่าเริ่มต้นเสมอ เพราะเสถียรที่สุด ไม่มีวันเปลี่ยน/ซ้ำ
 // (ต่างจากการอ้างอิงด้วยเลขงาน/เลขทรัพย์สิน ที่ตอนนี้ 1 เลขงานมีได้หลายแถวแล้ว)
-const SYNC_TABLE_REGISTRY: { table: string; sheetName: string; color: string; headers: string[]; keyOf: (r: any) => string; mapRow: (r: any) => any[] }[] = [
+//
+// optional   = แท็บนี้มาจากตารางฝั่ง RE ซึ่งจะมีก็ต่อเมื่อรัน v1.2.0-แยกงาน-RE-ออกจาก-CM.sql แล้ว
+//              ถ้ายังไม่รัน (ตารางไม่มีอยู่จริง) ให้ข้ามแท็บนี้ไปเฉย ๆ ไม่ถือเป็นความล้มเหลวของการซิงค์
+// baseTable  = ใช้จับคู่กับช่องติ๊กเดิมของฝั่งแอป (ที่ส่งมาเป็นชื่อตาราง CM) เพื่อไม่ต้องแก้ UI เพิ่มช่องติ๊กแยก
+//              ติ๊ก "เปิดงาน" 1 ช่อง = ซิงค์ทั้งแท็บ "เปิดงาน" (CM) และ "เปิดงาน RE" พร้อมกัน
+type SyncTableEntry = { table: string; sheetName: string; color: string; headers: string[]; keyOf: (r: any) => string; mapRow: (r: any) => any[]; optional?: boolean; baseTable?: string };
+const SYNC_TABLE_REGISTRY: SyncTableEntry[] = [
   { table: 'open_issues', sheetName: 'เปิดงาน', color: '#e0e7ff', headers: ['เลขที่ใบแจ้งซ่อมบำรุง', 'Service Type', 'ประเภทสัญญา', 'วันที่ร้องขอ', 'งานบริการ', 'Service Issue', 'รหัส-ชื่อสาขา', 'รายละเอียดปัญหาที่พบ'], keyOf: (r) => String(r.id), mapRow: (r) => [r.main_id, r.service_type, r.contract_type ?? '', r.req_date, r.service_work, r.service_issue ?? '', r.branch, r.details] },
   { table: 'close_issues', sheetName: 'ปิดงาน', color: '#d1fae5', headers: ['เลขงาน', 'สาขา', 'วันที่เข้าแก้ไข', 'รายการอะไหล่ที่เปลี่ยน', 'เลขทรัพย์สิน', 'ดำเนินการ', 'ลิงก์แนบรูป'], keyOf: (r) => String(r.id), mapRow: (r) => [r.job_id, r.branch, r.fix_date, r.parts, r.asset_id, r.action_taken, r.photo_form_link] },
   { table: 'quotations', sheetName: 'ใบเสนอราคา', color: '#fef3c7', headers: ['ชุดที่', 'วันที่', 'Customer Case', 'Branch Code', 'Branch', 'Type', 'Asset No.', 'Part Code', 'Detail', 'ระยะเวลารับประกัน(เดือน)', 'จำนวน', 'หน่วย', 'ราคา/หน่วย', 'ราคา/รวม', 'วันที่รับแจ้งงาน', 'วันที่เข้างาน', 'Quotation', 'อะไหล่เก่าส่งคืน CJ', 'ผู้รับผิดชอบ', 'บริษัท'], keyOf: (r) => String(r.id), mapRow: (r) => [r.set_no ?? null, r.quote_date ?? null, r.customer_case, r.branch_code, r.branch_name, r.work_type ?? null, r.asset_id, r.part_code, r.part_name, r.warranty_months, r.qty, r.unit, r.unit_price, r.total_price, r.req_date, r.visit_date, r.quotation_ref, r.return_old_part, r.responsible, r.company] },
   { table: 'billing_documents', sheetName: 'ตารางวางบิล', color: '#fbecec', headers: ['ลำดับ', 'Customer Case', 'รหัสสาขา', 'ชื่อสาขา', 'งานบริการ', 'เลขทรัพย์สิน', 'Part Code', 'รายละเอียดอะไหล่', 'ระยะเวลาประกัน(เดือน)', 'จำนวน', 'หน่วย', 'ราคา/หน่วย (CJ)', 'ราคา/รวม (CJ)', 'ราคา/หน่วย (ผู้รับเหมา)', 'ราคา/รวม (ผู้รับเหมา)', 'วันที่รับแจ้ง', 'วันที่เข้างาน', 'Quotation', 'อะไหล่เก่าส่งคืน CJ', 'ผู้รับผิดชอบ', 'บริษัท', 'ผู้รับเหมา', 'รอบบิลที่', 'ช่วงรอบบิล', 'ประเภทเก็บเงิน'], keyOf: (r) => String(r.id), mapRow: (r) => [r.seq, r.customer_case, r.branch_code, r.branch_name, r.service_type, r.asset_id, r.part_code, r.part_detail, r.warranty_months, r.qty, r.unit, r.unit_price, r.total_price, r.unit_price_contractor, r.total_price_contractor, r.req_date, r.visit_date, r.quotation_ref, r.return_old_part, r.responsible, r.company, r.contractor, r.round_no, r.round_period, billingTypeLabel(r.billing_type)] },
   { table: 'pause_records', sheetName: 'พักงาน', color: '#fde68a', headers: ['เลขที่ใบแจ้งซ่อมบำรุง', 'เหตุผลที่พัก', 'หมายเหตุ', 'วันเวลาที่พัก', 'ผู้พักงาน', 'วันเวลาที่กลับมาทำ', 'ผู้ทำรายการกลับมาทำ', 'สถานะ'], keyOf: (r) => String(r.id), mapRow: (r) => [r.main_id, r.reason, r.note, r.paused_at, r.paused_by, r.resumed_at, r.resumed_by, r.status] },
 ];
+
+// v1.3.6 — เพิ่มแท็บของฝั่งงาน RE แยกจาก CM ในชีตเดียวกัน (ชื่อ "RE" ต่อท้ายชื่อแท็บ CM)
+// ใช้ headers/keyOf/mapRow ชุดเดียวกับฝั่ง CM ได้เป๊ะ ๆ เพราะตารางฝั่ง RE สร้างด้วย `like <ตาราง CM> including all`
+// (คอลัมน์ชื่อ/ชนิดเหมือนกันทุกตัว) - ไม่มีแท็บคู่ของ "ใบเสนอราคา" เพราะงาน RE ไม่มีขั้นตอนใบเสนอราคา
+const RE_COUNTERPART_TABLE: Record<string, string> = {
+  open_issues: 're_open_issues', close_issues: 're_close_issues',
+  billing_documents: 're_billing_documents', pause_records: 're_pause_records',
+};
+SYNC_TABLE_REGISTRY.slice().forEach((base) => {
+  const reTable = RE_COUNTERPART_TABLE[base.table];
+  if (!reTable) return;
+  SYNC_TABLE_REGISTRY.push({ ...base, table: reTable, sheetName: base.sheetName + ' RE', optional: true, baseTable: base.table });
+});
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -2766,6 +2879,94 @@ Deno.serve(async (req: Request) => {
       const r = await selectAll(() => build(chunk), tieBreaker);
       if (r.error) return { data: out, error: r.error };
       for (const x of r.data) out.push(x);
+    }
+    return { data: out, error: null };
+  }
+
+  // ==================== อ่านข้าม "สองชุดตาราง" (v1.2.0) ====================
+  // งาน CM กับงาน RE เก็บคนละตาราง แต่หลายหน้าจอต้องเห็นทั้งสองชนิดพร้อมกัน
+  // (รายการเปิดงาน/ปิดงาน · รายงานสถานะ · ป้ายนับงานค้าง)
+  // สองตัวนี้อ่านให้ทั้งสองฝั่งแล้วรวมผล พร้อมติดป้าย job_kind ('CM'/'RE') ให้ทุกแถว
+  // ฝั่งหน้าจอค่อยแยกแท็บเอาจาก job_kind — ข้อมูลในฐานข้อมูลยังแยกกันคนละตารางเหมือนเดิมทุกประการ
+  //
+  // ⚠ ถ้ายังไม่ได้รัน v1.2.0-แยกงาน-RE-ออกจาก-CM.sql จะยังไม่มีตารางชุด RE
+  //   กรณีนั้นถือว่า "ฝั่ง RE ไม่มีงาน" แล้วทำงานต่อตามปกติ ไม่ใช่พังทั้งหน้าจอ
+  //   แปลว่า deploy ตัวนี้ก่อนรัน SQL ได้อย่างปลอดภัย ระบบ CM เดิมไม่กระทบอะไรเลยสักอย่าง
+  function isMissingTableError(err: any): boolean {
+    if (!err) return false;
+    const code = ((err as any).code || '').toString();
+    const msg = ((err as any).message || '').toString();
+    return code === '42P01' || code === 'PGRST205' || code === 'PGRST106'
+      || /does not exist|could not find the table/i.test(msg);
+  }
+
+  const ALL_JOB_KINDS: JobKind[] = ['CM', 'RE'];
+
+  async function selectAllBothKinds(
+    pick: (t: JobTableSet) => string,
+    build: (table: string) => any,
+    tieBreaker: string | null = 'id',
+  ): Promise<{ data: any[]; error: any }> {
+    const out: any[] = [];
+    for (const kind of ALL_JOB_KINDS) {
+      const res = await selectAll(() => build(pick(jobTables(kind))), tieBreaker);
+      if (res.error) {
+        if (kind === 'RE' && isMissingTableError(res.error)) continue;
+        return { data: out, error: res.error };
+      }
+      for (const r of (res.data || [])) { (r as any).job_kind = kind; out.push(r); }
+    }
+    return { data: out, error: null };
+  }
+
+  // หาว่า "แถวบิล" ที่เลือกมา อยู่ตารางของงานชนิดไหน (v1.2.0)
+  // รหัสแถวเป็น uuid จึงไม่มีทางชนกันข้ามตาราง — ถามทีละฝั่งแล้วดูว่าเจอที่ไหน
+  //
+  // ⚠ ตั้งใจให้ "เลือกปนชนิดกันไม่ได้" — งาน CM กับงาน RE อยู่คนละรอบบิลเสมอ
+  //   การใช้งานจริงจึงไม่มีทางเลือกปนกัน ถ้าปนแปลว่ามีอะไรผิดปกติ
+  //   ตอบกลับไปตรง ๆ ดีกว่าเดาแล้วไปแก้ผิดตาราง (ซึ่งจะเป็นบั๊กเงียบที่ตามยากมาก)
+  async function resolveBillingKind(ids: any[]): Promise<{ kind: JobKind | null; message?: string }> {
+    const list = Array.from(new Set((ids || []).filter((v) => v !== null && v !== undefined && v !== '')));
+    if (list.length === 0) return { kind: null, message: 'ไม่ได้ระบุแถวที่ต้องการ' };
+    const found: Record<string, JobKind> = {};
+    for (const kind of ALL_JOB_KINDS) {
+      const res = await selectAllIn(list, (chunk) =>
+        supabase.from(jobTables(kind).billing).select('id').in('id', chunk));
+      if (res.error) {
+        if (kind === 'RE' && isMissingTableError(res.error)) continue;
+        return { kind: null, message: 'ตรวจสอบแถวบิลล้มเหลว: ' + res.error.message };
+      }
+      (res.data || []).forEach((r: any) => { found[r.id] = kind; });
+    }
+    const kinds = Array.from(new Set(Object.keys(found).map((k) => found[k])));
+    if (kinds.length === 0) return { kind: null, message: 'ไม่พบแถวที่เลือกในตารางวางบิล (อาจถูกลบไปแล้ว ลองโหลดหน้าใหม่)' };
+    if (kinds.length > 1) return { kind: null, message: 'เลือกแถวของงาน CM กับงาน RE ปนกันไม่ได้ (คนละรอบบิล) กรุณาเลือกทีละชนิด' };
+    return { kind: kinds[0] as JobKind };
+  }
+
+  // แบบรับ "รายการเลขงาน" — แยกเลขงานตามชนิดก่อน แล้วยิงเฉพาะตารางที่เกี่ยวข้องจริง
+  // (ไม่ต้องยิงทั้งสองตารางด้วยเลขงานที่ไม่มีทางอยู่ในนั้น)
+  async function selectAllInBothKinds(
+    pick: (t: JobTableSet) => string,
+    jobIds: any[],
+    build: (table: string, chunk: any[]) => any,
+    tieBreaker: string | null = 'id',
+  ): Promise<{ data: any[]; error: any }> {
+    const byKind: Record<JobKind, any[]> = { CM: [], RE: [] };
+    (jobIds || []).forEach((j) => {
+      if (j === null || j === undefined || j === '') return;
+      byKind[jobKindOf(j)].push(j);
+    });
+    const out: any[] = [];
+    for (const kind of ALL_JOB_KINDS) {
+      if (byKind[kind].length === 0) continue;
+      const table = pick(jobTables(kind));
+      const res = await selectAllIn(byKind[kind], (chunk) => build(table, chunk), tieBreaker);
+      if (res.error) {
+        if (kind === 'RE' && isMissingTableError(res.error)) continue;
+        return { data: out, error: res.error };
+      }
+      for (const r of (res.data || [])) { (r as any).job_kind = kind; out.push(r); }
     }
     return { data: out, error: null };
   }
@@ -2865,7 +3066,8 @@ Deno.serve(async (req: Request) => {
   async function checkOpenIssueExists(jobId: string): Promise<any> {
     try {
       if (!jobId) return { exists: false };
-      const { data, error } = await supabase.from('open_issues').select('id,branch').eq('main_id', jobId).limit(1);
+      // งาน RE อยู่คนละตารางกับงาน CM — เลือกตารางจากเลขงานเอง (v1.2.0)
+      const { data, error } = await supabase.from(jobTablesOf(jobId).open).select('id,branch').eq('main_id', jobId).limit(1);
       if (error) return { error: error.message };
       const found = !!(data && data.length > 0);
       return { exists: found, branch: found ? (data![0].branch || '') : '' };
@@ -2879,7 +3081,7 @@ Deno.serve(async (req: Request) => {
     try {
       if (!jobId) return { exists: false };
       const normalizedAsset = (assetId || '').toString().trim() || '-';
-      const { data, error } = await supabase.from('close_issues').select('id').eq('job_id', jobId).eq('asset_id', normalizedAsset).limit(1);
+      const { data, error } = await supabase.from(jobTablesOf(jobId).close).select('id').eq('job_id', jobId).eq('asset_id', normalizedAsset).limit(1);
       if (error) return { error: error.message };
       return { exists: !!(data && data.length > 0) };
     } catch (e) { return { error: String(e) }; }
@@ -2889,7 +3091,7 @@ Deno.serve(async (req: Request) => {
     try {
       const id = (mainId || '').toString().trim();
       if (!id) return { paused: false };
-      const { data, error } = await supabase.from('pause_records').select('id').eq('main_id', id).eq('status', 'paused').limit(1);
+      const { data, error } = await supabase.from(jobTablesOf(id).pause).select('id').eq('main_id', id).eq('status', 'paused').limit(1);
       if (error) return { paused: false, error: error.message };
       return { paused: !!(data && data.length > 0) };
     } catch (e) { return { paused: false, error: String(e) }; }
@@ -3080,8 +3282,80 @@ Deno.serve(async (req: Request) => {
   // การตีกลับสำคัญกว่าการเก็บประวัติ ปล่อยให้ตีกลับสำเร็จแล้วเสียแค่ประวัติดีกว่ากดอะไรไม่ได้เลย
   async function logBillingRowComments(rows: any[]): Promise<boolean> {
     if (!rows || rows.length === 0) return true;
-    const { error } = await supabase.from('billing_row_comments').insert(rows);
-    return !error;
+    // v1.2.0 — ข้อความของงาน CM กับงาน RE เก็บคนละตาราง แยกตามเลขงานของแต่ละแถว
+    // (ปกติ 1 ครั้งที่เรียกคือชนิดเดียวกันหมด แต่แยกไว้เพื่อไม่ให้มีทางเขียนผิดตารางเลย)
+    const byKind: Record<JobKind, any[]> = { CM: [], RE: [] };
+    rows.forEach((r: any) => { byKind[jobKindOf(r && r.customer_case)].push(r); });
+    let allOk = true;
+    for (const kind of ALL_JOB_KINDS) {
+      if (byKind[kind].length === 0) continue;
+      const { error } = await supabase.from(jobTables(kind).comments).insert(byKind[kind]);
+      if (error) allOk = false;
+    }
+    return allOk;
+  }
+
+  // ==================== v1.3.0 — เขียนสถานะ "ส่งบิลแล้ว" ====================
+  // ใช้ร่วมกัน 2 ที่: ปุ่ม "ส่งบิล" ของแอดมิน และตอนยืนยันรูปแล้วส่งให้อัตโนมัติ
+  // แยกออกมาเพื่อให้ผลลัพธ์เหมือนกันเป๊ะทั้งสองทาง — ถ้าเขียนสองชุด วันหนึ่งจะเพี้ยนจากกันแน่
+  //
+  // แถวที่ผู้รับเหมาไม่มีวันได้เห็น (เคลมประกัน / ใบเสนอราคา) ต้องไม่ตั้งเป็น 'pending'
+  // ไม่งั้นจะได้คิวที่ไม่มีใครกดยืนยันได้ แล้วเลขงานนั้นค้างตลอดกาล (บทเรียน v1.0.74)
+  async function applyBillingSent(table: string, rows: any[]): Promise<{ sent: number; reviewColumnsMissing: boolean; error: any }> {
+    const needReview = rows.filter((r: any) => billingRowNeedsContractorReview(r)).map((r: any) => r.id);
+    const noReview = rows.filter((r: any) => !billingRowNeedsContractorReview(r)).map((r: any) => r.id);
+    const sentAtIso = new Date().toISOString();
+    let reviewColumnsMissing = false;
+    let error: any = null;
+    let sent = 0;
+    for (const grp of [
+      { ids: needReview, status: 'pending' },
+      { ids: noReview, status: REVIEW_NOT_REQUIRED },
+    ]) {
+      if (grp.ids.length === 0) continue;
+      // แบ่งก้อนละ 200 แถว กัน URL ยาวเกินจน PostgREST ปฏิเสธทั้งคำขอ (v1.0.98)
+      for (let i = 0; i < grp.ids.length && !error; i += 200) {
+        const part = grp.ids.slice(i, i + 200);
+        let res = await supabase.from(table)
+          .update({ sent_to_contractor: true, sent_at: sentAtIso, contractor_review_status: grp.status, revision_no: 1 })
+          .in('id', part);
+        // ยังไม่ได้รัน SQL v1.0.69 = ยังไม่มีคอลัมน์ตรวจรับ ถอยไปส่งแบบเดิม (ยังส่งได้จริง)
+        if (res.error && /column|schema cache/i.test(res.error.message || '')) {
+          reviewColumnsMissing = true;
+          res = await supabase.from(table)
+            .update({ sent_to_contractor: true, sent_at: sentAtIso }).in('id', part);
+        }
+        if (res.error) error = res.error; else sent += part.length;
+      }
+      if (error) break;
+    }
+    return { sent, reviewColumnsMissing, error };
+  }
+
+  // v1.3.0 — ยืนยันรูปแล้วส่งบิลของ "เลขงานนั้น" ให้เลย ไม่ต้องให้แอดมินมากดส่งอีกรอบ
+  // ด่าน "ต้องยืนยันรูปก่อนส่งบิล" ผ่านแล้วโดยปริยาย เพราะเพิ่งยืนยันไปเมื่อกี้
+  //
+  // แถวที่ยังกรอก Part Code / จำนวนไม่ครบ จะ "ไม่ถูกส่ง" และนับกลับไปบอกผู้ใช้
+  // (ส่งไปทั้งที่ยังไม่ครบ = ผู้รับเหมาเห็นบิลยอด 0 บาท แล้วต้องมานั่งแก้ย้อนหลัง)
+  async function autoSendBillsForJob(jobId: string): Promise<{ sent: number; incomplete: number; error?: string }> {
+    const clean = (jobId || '').toString().trim();
+    if (!clean) return { sent: 0, incomplete: 0 };
+    const table = jobTablesOf(clean).billing;
+    const { data, error } = await selectAll(() => supabase.from(table)
+      .select('id,customer_case,billing_type,sent_to_contractor,part_code,qty,completed_at')
+      .eq('customer_case', clean));
+    if (error) return { sent: 0, incomplete: 0, error: error.message };
+    const pending = (data || []).filter((r: any) => !r.sent_to_contractor && !r.completed_at);
+    const ready = pending.filter((r: any) => {
+      const hasPart = r.part_code && String(r.part_code).trim() !== '';
+      const hasQty = r.qty !== null && r.qty !== undefined && parseFloat(r.qty) > 0;
+      return hasPart && hasQty;
+    });
+    const incomplete = pending.length - ready.length;
+    if (ready.length === 0) return { sent: 0, incomplete };
+    const res = await applyBillingSent(table, ready);
+    if (res.error) return { sent: 0, incomplete, error: res.error.message };
+    return { sent: res.sent, incomplete };
   }
 
   // ---- เงื่อนไขฝั่งรูป: เลขงานนี้ "ยืนยันรูปแล้ว" หรือไม่ต้องใช้รูป ----
@@ -3111,10 +3385,10 @@ Deno.serve(async (req: Request) => {
     // เหลือเฉพาะเลขงานที่ยังไม่ผ่าน ค่อยไปดูว่าเข้าข่ายยกเว้นไหม
     const rest = ids.filter((j) => !approved.has(j));
     const closeByJob: Record<string, any[]> = {};
-    for (let i = 0; i < rest.length; i += 200) {
+    {
       // asset_id ใช้จับคู่กับแถวในตารางวางบิล (v1.0.74)
-      const { data } = await supabase.from('close_issues')
-        .select('job_id,asset_id,created_at,parts,parts_json').in('job_id', rest.slice(i, i + 200));
+      const { data } = await selectAllInBothKinds((t) => t.close, rest,
+        (table, chunk) => supabase.from(table).select('job_id,asset_id,created_at,parts,parts_json').in('job_id', chunk));
       (data || []).forEach((r: any) => { (closeByJob[r.job_id] = closeByJob[r.job_id] || []).push(r); });
     }
     const allCloseRows: any[] = [];
@@ -3158,10 +3432,11 @@ Deno.serve(async (req: Request) => {
       .filter((r: any) => !!r).map((r: any) => r.job_id).filter(Boolean))) as string[];
     const billingRows: any[] = [];
     // แบ่งก้อนละ 200 เลขงาน กัน URL ยาวเกินจน PostgREST ปฏิเสธคำขอ
-    for (let i = 0; i < jobsToAsk.length; i += 200) {
-      const chunk = jobsToAsk.slice(i, i + 200);
-      const { data } = await selectAll(() => supabase.from('billing_documents')
-        .select('customer_case,asset_id,billing_type,completed_at').in('customer_case', chunk));
+    {
+      // v1.2.0 — เลขงาน CM กับ RE อยู่คนละตารางบิล แยกถามตามชนิดแล้วรวมผล
+      const { data } = await selectAllInBothKinds((t) => t.billing, jobsToAsk,
+        (table, chunk) => supabase.from(table)
+          .select('customer_case,asset_id,billing_type,completed_at').in('customer_case', chunk));
       (data || []).forEach((b: any) => billingRows.push(b));
     }
     // ==================== งานที่คืนแล้ว = ไม่ต้องส่งรูป (v1.1.5) ====================
@@ -3173,10 +3448,9 @@ Deno.serve(async (req: Request) => {
     // (ยังไม่ได้รัน SQL v1.0.95 = ไม่มีตารางนี้ -> ข้ามไป ทำงานเหมือนเดิม)
     const removedPairs = new Set<string>();
     const removedWholeJob = new Set<string>();
-    for (let i = 0; i < jobsToAsk.length; i += 200) {
-      const chunk = jobsToAsk.slice(i, i + 200);
-      const { data: rm, error: rmErr } = await supabase.from('billing_removed_jobs').select('job_id,asset_id').in('job_id', chunk);
-      if (rmErr) break;
+    {
+      const { data: rm } = await selectAllInBothKinds((t) => t.removed, jobsToAsk,
+        (table, chunk) => supabase.from(table).select('job_id,asset_id').in('job_id', chunk));
       (rm || []).forEach((r: any) => {
         const asset = (r.asset_id === null || r.asset_id === undefined) ? '' : String(r.asset_id).trim();
         if (asset) removedPairs.add(jobAssetKey(r.job_id, asset));
@@ -3213,7 +3487,7 @@ Deno.serve(async (req: Request) => {
   //   - ตัดประเภทที่ผู้รับเหมามองไม่เห็นออก (เคลมประกัน / ใบเสนอราคา)
   //     แถวพวกนี้ไม่เคยโผล่ในตารางของเขา จึงรอคำยืนยันที่ไม่มีวันมา
   async function completeBillingJobIfReady(customerCase: string, roundNo: any): Promise<number> {
-    let q = supabase.from('billing_documents')
+    let q = supabase.from(jobTablesOf(customerCase).billing)
       .select('id,billing_type,contractor_review_status,sent_to_contractor,completed_at')
       .eq('customer_case', customerCase);
     q = (roundNo === null || roundNo === undefined) ? q.is('round_no', null) : q.eq('round_no', roundNo);
@@ -3234,7 +3508,7 @@ Deno.serve(async (req: Request) => {
     // ฝั่งบิลครบแล้ว เหลือเช็คฝั่งรูป — ขาดข้อใดข้อหนึ่งยังไม่ถือว่าเสร็จสิ้น
     if (!(await jobPhotoRequirementMet(customerCase))) return 0;
     if (openIds.length === 0) return 0;
-    const { data: closed } = await supabase.from('billing_documents')
+    const { data: closed } = await supabase.from(jobTablesOf(customerCase).billing)
       .update({ completed_at: new Date().toISOString() })
       .in('id', openIds).is('completed_at', null).select('id');
     return (closed || []).length;
@@ -3251,10 +3525,11 @@ Deno.serve(async (req: Request) => {
     const ids = Array.from(new Set((jobIds || []).filter(Boolean))) as string[];
     if (ids.length === 0) return { closed: 0, jobs: [] };
     const all: any[] = [];
-    for (let i = 0; i < ids.length; i += 200) {
-      const { data, error } = await supabase.from('billing_documents')
-        .select('id,customer_case,round_no,billing_type,contractor_review_status,sent_to_contractor,completed_at')
-        .in('customer_case', ids.slice(i, i + 200));
+    {
+      const { data, error } = await selectAllInBothKinds((t) => t.billing, ids,
+        (table, chunk) => supabase.from(table)
+          .select('id,customer_case,round_no,billing_type,contractor_review_status,sent_to_contractor,completed_at')
+          .in('customer_case', chunk));
       // อ่านไม่ได้ (เช่นยังไม่ได้รัน SQL v1.0.69) = ไม่ต้องเดา ปล่อยไว้เฉย ๆ ดีกว่าปิดผิดแถว
       if (error) return { closed: 0, jobs: [] };
       (data || []).forEach((r: any) => all.push(r));
@@ -3277,26 +3552,31 @@ Deno.serve(async (req: Request) => {
     if (readyJobs.length === 0) return { closed: 0, jobs: [] };
     // ฝั่งรูปเช็คทีเดียวทุกเลขงาน
     const photoOk = await photoOkMapForJobs(readyJobs);
-    const closeIds: string[] = [];
+    // v1.2.0 — แยกแถวที่จะปิดตามชนิดงาน เพราะต้องไปเขียนคนละตาราง
+    const closeIdsByKind: Record<JobKind, string[]> = { CM: [], RE: [] };
     const closedJobs: string[] = [];
     readyJobs.forEach((j) => {
       if (photoOk[j] === false) return;
       closedJobs.push(j);
-      openIdsByJob[j].forEach((id) => closeIds.push(id));
+      const k = jobKindOf(j);
+      openIdsByJob[j].forEach((id) => closeIdsByKind[k].push(id));
     });
-    if (closeIds.length === 0) return { closed: 0, jobs: [] };
+    if (closeIdsByKind.CM.length === 0 && closeIdsByKind.RE.length === 0) return { closed: 0, jobs: [] };
     let closed = 0;
     const nowIso = new Date().toISOString();
-    for (let i = 0; i < closeIds.length; i += 200) {
-      const { data } = await supabase.from('billing_documents')
-        .update({ completed_at: nowIso })
-        .in('id', closeIds.slice(i, i + 200)).is('completed_at', null).select('id');
-      closed += (data || []).length;
+    for (const kind of ALL_JOB_KINDS) {
+      const list = closeIdsByKind[kind];
+      for (let i = 0; i < list.length; i += 200) {
+        const { data } = await supabase.from(jobTables(kind).billing)
+          .update({ completed_at: nowIso })
+          .in('id', list.slice(i, i + 200)).is('completed_at', null).select('id');
+        closed += (data || []).length;
+      }
     }
     return { closed, jobs: closedJobs };
   }
 
-  async function resolveBillingCandidatePairs(startDate: string | null, endDate: string | null, jobIds: string[] | null, includeBacklog?: boolean): Promise<{ candidatePairs: { jobId: string; assetId: string; isBacklog: boolean }[]; roundPeriod: string; error?: string; waitingPhoto?: { jobId: string; assetId: string }[] }> {
+  async function resolveBillingCandidatePairs(startDate: string | null, endDate: string | null, jobIds: string[] | null, includeBacklog: boolean | undefined, kind: JobKind): Promise<{ candidatePairs: { jobId: string; assetId: string; isBacklog: boolean }[]; roundPeriod: string; error?: string; waitingPhoto?: { jobId: string; assetId: string }[] }> {
     if ((!jobIds || jobIds.length === 0) && (!startDate || !endDate)) {
       return { candidatePairs: [], roundPeriod: '', error: 'ต้องระบุช่วงวันที่ (ตั้งแต่วันที่ และ ถึงวันที่) หรือระบุเลขงานเจาะจง ก่อนถึงจะจับคู่ข้อมูลได้' };
     }
@@ -3305,7 +3585,8 @@ Deno.serve(async (req: Request) => {
       const roundPeriod = 'ระบุเลขงานเจาะจง (' + new Date().toISOString().slice(0, 10) + ')';
       if (wantedJobIds.length === 0) return { candidatePairs: [], roundPeriod };
       // ระบุเลขงานเจาะจง - เอาทุกครั้งที่ปิดงานของเลขงานนั้น ๆ มาเป็นตัวเลือกทั้งหมด (ไม่กรองวันที่)
-      const { data: closeData, error: closeErr } = await supabase.from('close_issues').select('job_id,asset_id,created_at,parts,parts_json').in('job_id', wantedJobIds);
+      const { data: closeData, error: closeErr } = await selectAllIn(wantedJobIds, (chunk) =>
+        supabase.from(jobTables(kind).close).select('job_id,asset_id,created_at,parts,parts_json').in('job_id', chunk));
       if (closeErr) return { candidatePairs: [], roundPeriod: '', error: 'ดึงข้อมูล close_issues ล้มเหลว: ' + closeErr.message };
       const seenPair = new Set<string>();
       const candidatePairs: { jobId: string; assetId: string; isBacklog: boolean }[] = [];
@@ -3325,7 +3606,7 @@ Deno.serve(async (req: Request) => {
       return { candidatePairs, roundPeriod, waitingPhoto: waiting };
     }
     const roundPeriod = startDate + ' ถึง ' + endDate + (includeBacklog ? ' (รวมงานตกค้างก่อนหน้า)' : '');
-    const { data: closeData, error: closeErr } = await selectAll(() => supabase.from('close_issues').select('job_id,asset_id,fix_date,created_at,parts,parts_json').order('created_at', { ascending: true }));
+    const { data: closeData, error: closeErr } = await selectAll(() => supabase.from(jobTables(kind).close).select('job_id,asset_id,fix_date,created_at,parts,parts_json').order('created_at', { ascending: true }));
     if (closeErr) return { candidatePairs: [], roundPeriod: '', error: 'ดึงข้อมูล close_issues ล้มเหลว: ' + closeErr.message };
     const startD = new Date(startDate + 'T00:00:00');
     const endD = new Date(endDate + 'T23:59:59');
@@ -3351,6 +3632,135 @@ Deno.serve(async (req: Request) => {
     });
     const waiting = await findPairsWaitingPhoto(candidatePairs, closeRowMap);
     return { candidatePairs, roundPeriod, waitingPhoto: waiting };
+  }
+
+  // ==================== v1.3.0 — สร้างแถวตารางวางบิลจากคู่งานที่ปิดแล้ว ====================
+  // ใช้ร่วมกัน 2 ที่: ตอน "กดปิดงาน" (สร้างให้อัตโนมัติ) และปุ่ม "จับคู่ข้อมูล" (เก็บตกงานเก่า)
+  // โค้ดชุดเดียว = กติกาการตั้งรอบ · เลขลำดับ · ราคา ตรงกันเสมอ ไม่มีทางเพี้ยนจากกัน
+  //
+  // รอบบิล = "เดือนที่ปิดงาน" คิดจาก fix_date ของแต่ละคู่ ไม่ใช่เลขรอบเดียวกันทั้งชุด
+  // (ชุดเดียวอาจมีงานข้ามเดือนได้ ถ้ายัดรอบเดียวกันหมด ยอดของเดือนจะเพี้ยน)
+  async function createBillingRowsForPairs(
+    pairs: { jobId: string; assetId: string }[],
+    kind: JobKind,
+  ): Promise<{ created: number; skipped: number; jobIds: string[]; rounds: number[]; error?: string }> {
+    const seen = new Set<string>();
+    const want: { jobId: string; assetId: string }[] = [];
+    (pairs || []).forEach((p) => {
+      if (!p || !p.jobId) return;
+      const asset = (p.assetId === null || p.assetId === undefined || p.assetId === '') ? '-' : String(p.assetId);
+      const k = p.jobId + '||' + asset;
+      if (seen.has(k)) return;
+      seen.add(k);
+      want.push({ jobId: p.jobId, assetId: asset });
+    });
+    if (want.length === 0) return { created: 0, skipped: 0, jobIds: [], rounds: [] };
+
+    const T = jobTables(kind);
+    const jobIds = Array.from(new Set(want.map((p) => p.jobId)));
+    const [openRes, closeRes] = await Promise.all([
+      selectAllIn(jobIds, (chunk) => supabase.from(T.open).select('*').in('main_id', chunk)),
+      selectAllIn(jobIds, (chunk) => supabase.from(T.close).select('*').in('job_id', chunk)),
+    ]);
+    if (openRes.error) return { created: 0, skipped: 0, jobIds: [], rounds: [], error: openRes.error.message };
+    if (closeRes.error) return { created: 0, skipped: 0, jobIds: [], rounds: [], error: closeRes.error.message };
+    const openByJob: Record<string, any> = {};
+    (openRes.data || []).forEach((o: any) => { if (!openByJob[o.main_id]) openByJob[o.main_id] = o; });
+    const closeByPair: Record<string, any> = {};
+    (closeRes.data || []).forEach((c: any) => { closeByPair[c.job_id + '||' + (c.asset_id || '-')] = c; });
+
+    // คีย์จองรอบบิล — รูปแบบเดิมเป๊ะ ๆ (ของเก่าที่จองไว้แล้วจึงยังกันซ้ำได้เหมือนเดิม)
+    const claimKeyOf = (p: { jobId: string; assetId: string }): string =>
+      (p.assetId && p.assetId !== '-') ? (p.jobId + '__asset__' + p.assetId) : p.jobId;
+
+    // จัดกลุ่มตาม "รอบเดือน" ที่คิดจากวันที่ปิดงานของคู่นั้น ๆ
+    const byRound: Record<number, { keys: string[]; map: Record<string, { jobId: string; assetId: string }> }> = {};
+    want.forEach((p) => {
+      const closeRec = closeByPair[p.jobId + '||' + p.assetId] || null;
+      const roundNo = billingRoundNoFromFixDate(closeRec && closeRec.fix_date);
+      const key = claimKeyOf(p);
+      if (!byRound[roundNo]) byRound[roundNo] = { keys: [], map: {} };
+      byRound[roundNo].keys.push(key);
+      byRound[roundNo].map[key] = p;
+    });
+
+    // จองคิวทีละรอบ — คืนเฉพาะคีย์ที่จองได้จริง (คู่ที่เคยวางบิลแล้วจะไม่ถูกคืนมา)
+    const claimedByRound: Record<number, { jobId: string; assetId: string }[]> = {};
+    const allClaimedKeys: string[] = [];
+    let candidateCount = 0;
+    for (const roundKey of Object.keys(byRound)) {
+      const roundNo = parseInt(roundKey, 10);
+      const grp = byRound[roundNo];
+      candidateCount += grp.keys.length;
+      const { data: claimedRows, error: claimErr } = await supabase.rpc(T.claimFn, { job_ids: grp.keys, p_round_no: roundNo });
+      if (claimErr) return { created: 0, skipped: 0, jobIds: [], rounds: [], error: 'จองเลขงานล้มเหลว: ' + claimErr.message };
+      const keys: string[] = (claimedRows || []).map((r: any) => r.customer_case);
+      const got = keys.map((k) => grp.map[k]).filter(Boolean);
+      if (got.length > 0) { claimedByRound[roundNo] = got; keys.forEach((k) => allClaimedKeys.push(k)); }
+    }
+    const roundsUsed = Object.keys(claimedByRound).map((r) => parseInt(r, 10));
+    if (roundsUsed.length === 0) return { created: 0, skipped: candidateCount, jobIds: [], rounds: [] };
+
+    // เลขลำดับต้องนับต่อจากที่มีอยู่แล้วในรอบเดือนนั้น ๆ (แยกตามผู้รับเหมา)
+    // ถ้าเริ่มนับ 1 ใหม่ทุกครั้งที่ปิดงาน ลำดับในใบวางบิลจะซ้ำกันทั้งเดือน
+    const { data: existingRows } = await selectAll(() => supabase.from(T.billing)
+      .select('round_no,contractor,seq').in('round_no', roundsUsed));
+    const maxSeq: Record<string, number> = {};
+    (existingRows || []).forEach((r: any) => {
+      const k = String(r.round_no) + '||' + (r.contractor || '__ไม่มีผู้รับเหมา__');
+      const n = parseInt(r.seq, 10);
+      if (isFinite(n) && n > (maxSeq[k] || 0)) maxSeq[k] = n;
+    });
+
+    const { data: branchesData } = await selectAll(() => supabase.from('branches').select('branch_code,branch_name'));
+    const branchMap: Record<string, string> = {};
+    (branchesData || []).forEach((b: any) => { if (b.branch_code) branchMap[b.branch_code] = b.branch_name; });
+
+    const rowsToInsert: any[] = [];
+    let createdPairs = 0;
+    for (const roundNo of roundsUsed) {
+      const roundPeriod = billingRoundLabel(roundNo);
+      for (const p of claimedByRound[roundNo]) {
+        const openRecord = openByJob[p.jobId] || null;
+        const closeRecord = closeByPair[p.jobId + '||' + p.assetId] || null;
+        const contractorKey = (openRecord && openRecord.contractor) || '__ไม่มีผู้รับเหมา__';
+        const seqKey = String(roundNo) + '||' + contractorKey;
+        maxSeq[seqKey] = (maxSeq[seqKey] || 0) + 1;
+        const seq = maxSeq[seqKey];
+        const rawBranchText = (closeRecord && closeRecord.branch) || (openRecord && openRecord.branch) || '';
+        let branchCode: string | null = null; let branchName: string | null = null;
+        const codeMatch = rawBranchText.toString().match(/^\d+/);
+        if (codeMatch) { branchCode = codeMatch[0]; branchName = branchMap[branchCode] || rawBranchText; }
+        else if (rawBranchText) { branchName = rawBranchText; }
+        const headFields = {
+          seq, round_no: roundNo, round_period: roundPeriod, customer_case: p.jobId,
+          branch_code: branchCode, branch_name: branchName,
+          service_type: openRecord ? (openRecord.service_work || openRecord.service_type || '-') : '-',
+          asset_id: closeRecord ? (closeRecord.asset_id || '-') : p.assetId,
+          req_date: openRecord ? (openRecord.req_date || '-') : '-',
+          visit_date: closeRecord ? (closeRecord.fix_date || '-') : '-',
+          contractor: openRecord ? (openRecord.contractor || null) : null, synced_to_sheet: false,
+        };
+        const partRows = await billingPartRowsFromCloseRow(closeRecord);
+        partRows.forEach((pf: any) => { rowsToInsert.push(Object.assign({}, headFields, pf)); });
+        createdPairs++;
+      }
+    }
+
+    if (rowsToInsert.length > 0) {
+      const { error: insertErr } = await supabase.from(T.billing).insert(sameShapeRows(rowsToInsert));
+      if (insertErr) {
+        // ใส่แถวไม่สำเร็จ = ต้องคืนคีย์จองด้วย ไม่งั้นงานจะค้างนอกรอบตลอดไปโดยไม่มีใครดึงเข้าได้อีก
+        await supabase.from(T.registry).delete().in('customer_case', allClaimedKeys);
+        return { created: 0, skipped: 0, jobIds: [], rounds: [], error: 'สร้างแถวตารางวางบิลล้มเหลว: ' + insertErr.message };
+      }
+    }
+    return {
+      created: createdPairs,
+      skipped: candidateCount - createdPairs,
+      jobIds: Array.from(new Set(roundsUsed.flatMap((r) => claimedByRound[r].map((p) => p.jobId)))),
+      rounds: roundsUsed,
+    };
   }
 
   // ดึงรายการงาน PM ที่ "พร้อมวางบิล" จากระบบ PM (คนละโปรเจกต์ Supabase) มาทั้งหมด
@@ -3393,8 +3803,8 @@ Deno.serve(async (req: Request) => {
   // คำนวณแถวรายงานสถานะดำเนินการ (ใช้ร่วมกันทั้ง fnName 'getJobStatusReport' และตอนซิงค์ลง Google Sheet
   // เพื่อให้ตรรกะสถานะ/ระยะเวลา/ข้อมูลพักงาน ตรงกันเป๊ะทั้งสองที่ ไม่มีวันเพี้ยนต่างกัน)
   async function computeJobStatusReportRows(startDate?: string | null, endDate?: string | null): Promise<any[]> {
-    const buildOpenQuery = () => {
-      let q = supabase.from('open_issues').select('main_id,branch,service_type,service_work,service_issue,contract_type,contractor,details,req_date,created_at').order('created_at', { ascending: false });
+    const buildOpenQuery = (table: string) => {
+      let q = supabase.from(table).select('main_id,branch,service_type,service_work,service_issue,contract_type,contractor,details,req_date,created_at').order('created_at', { ascending: false });
       if (startDate) q = q.gte('created_at', startDate + 'T00:00:00');
       if (endDate) q = q.lte('created_at', endDate + 'T23:59:59');
       return q;
@@ -3402,16 +3812,16 @@ Deno.serve(async (req: Request) => {
     // v1.0.97 — ยิงทุกคำขอพร้อมกันรอบเดียว (เดิมงานที่คืนแล้ว กับวันเริ่มกฎรูป ต้องรอต่อคิวทีละอัน)
     // และอ่านให้ครบทุกแถว (เดิมเกิน 1000 แถวจะหายเงียบ ๆ ทำให้สถานะงานผิด)
     const [openRes, closeRes, billingRes, pauseRes, subRes, removedRes, slaGateStart] = await Promise.all([
-      selectAll(buildOpenQuery),
+      selectAllBothKinds((t) => t.open, buildOpenQuery),
       // parts_json ใช้ตัดสินว่าการปิดงานครั้งนี้ "ต้องให้ผู้รับเหมาส่งรูป" หรือไม่ (v1.0.74)
-      selectAll(() => supabase.from('close_issues').select('job_id,asset_id,fix_date,created_at,action_taken,parts_json').order('created_at', { ascending: true })),
-      selectAll(() => supabase.from('billing_documents').select('*')),
-      selectAll(() => supabase.from('pause_records').select('main_id,reason,note,status,paused_at,resumed_at,paused_by,resumed_by').order('paused_at', { ascending: true })),
+      selectAllBothKinds((t) => t.close, (table) => supabase.from(table).select('job_id,asset_id,fix_date,created_at,action_taken,parts_json').order('created_at', { ascending: true })),
+      selectAllBothKinds((t) => t.billing, (table) => supabase.from(table).select('*')),
+      selectAllBothKinds((t) => t.pause, (table) => supabase.from(table).select('main_id,reason,note,status,paused_at,resumed_at,paused_by,resumed_by').order('paused_at', { ascending: true })),
       // v1.0.70 — สถานะฝั่งรูป ใช้แยก "ส่งแบบฟอร์มรูปแล้ว / รอตรวจสอบ / ยืนยันรูปแล้ว"
       // v1.0.71 — เพิ่ม reviewed_at เพราะใช้เป็นจุดเริ่มนับเวลาของช่วง "ตีกลับ → ส่งใหม่"
       selectAll(() => supabase.from('job_form_submissions').select('customer_case,status,submitted_at,reviewed_at').order('submitted_at', { ascending: true })),
       // v1.0.95 — งานที่ถูกกดคืนงาน (ยังไม่ได้รัน SQL v1.0.95 = ไม่มีตาราง ถือว่าไม่มีงานที่ถูกคืน)
-      selectAll(() => supabase.from('billing_removed_jobs').select('job_id')),
+      selectAllBothKinds((t) => t.removed, (table) => supabase.from(table).select('job_id')),
       // ประตูรูปเริ่มมีผลเมื่อไหร่ — งานที่ปิดก่อนหน้านั้นไม่เคยมีฟอร์มรูปให้ส่ง
       loadPhotoGateStartAt(),
     ]);
@@ -3421,7 +3831,7 @@ Deno.serve(async (req: Request) => {
     let closeRows: any[] = [];
     if (closeRes.error) {
       if (!/column|schema cache/i.test(closeRes.error.message || '')) throw new Error(closeRes.error.message);
-      const retry = await selectAll(() => supabase.from('close_issues')
+      const retry = await selectAllBothKinds((t) => t.close, (table) => supabase.from(table)
         .select('job_id,asset_id,fix_date,created_at,action_taken').order('created_at', { ascending: true }));
       if (retry.error) throw new Error(retry.error.message);
       closeRows = retry.data || [];
@@ -3523,12 +3933,18 @@ Deno.serve(async (req: Request) => {
         }
         // แถวที่ส่งบิลก่อนมีระบบตรวจรับของผู้รับเหมา (contractor_review_status เป็น null)
         // ปิดที่ขั้นยืนยันรูป — กติกาเดียวกับ reviewJobFormSubmission
-        for (let i = 0; i < legacyReady.length; i += 200) {
-          const { data: done } = await supabase.from('billing_documents')
-            .update({ completed_at: new Date().toISOString() })
-            .in('customer_case', legacyReady.slice(i, i + 200)).eq('sent_to_contractor', true)
-            .is('completed_at', null).is('contractor_review_status', null).select('customer_case');
-          (done || []).forEach((r: any) => { if (billingMap[r.customer_case]) billingMap[r.customer_case].completed = true; });
+        // v1.2.0 — แยกเลขงานตามชนิดก่อน เพราะงาน CM กับงาน RE เขียนคนละตาราง
+        const legacyByKind: Record<JobKind, any[]> = { CM: [], RE: [] };
+        legacyReady.forEach((j: any) => { legacyByKind[jobKindOf(j)].push(j); });
+        for (const kind of ALL_JOB_KINDS) {
+          const legacyList = legacyByKind[kind];
+          for (let i = 0; i < legacyList.length; i += 200) {
+            const { data: done } = await supabase.from(jobTables(kind).billing)
+              .update({ completed_at: new Date().toISOString() })
+              .in('customer_case', legacyList.slice(i, i + 200)).eq('sent_to_contractor', true)
+              .is('completed_at', null).is('contractor_review_status', null).select('customer_case');
+            (done || []).forEach((r: any) => { if (billingMap[r.customer_case]) billingMap[r.customer_case].completed = true; });
+          }
         }
       } catch (_e) {
         // ซ่อมไม่สำเร็จไม่เป็นไร รายงานแสดงตามสภาพจริงไปก่อน รอบหน้าลองใหม่เอง
@@ -3657,6 +4073,9 @@ Deno.serve(async (req: Request) => {
         const slaLevel = everOverdue ? 'overdue'
           : (slaStages.some((x: any) => x.state === 'warning') ? 'warning' : 'ok');
         rows.push({
+          // v1.2.0 — ชนิดงาน (CM/RE) ติดไปกับทุกแถว ฝั่งหน้าจอใช้แยกแท็บ
+          // อ่านจากเลขงานเสมอ ไม่พึ่งค่าที่ติดมาจากตาราง เพื่อให้ได้ค่าเดียวกันแน่นอนทุกเส้นทาง
+          job_kind: jobKindOf(o.main_id),
           main_id: o.main_id, branch: o.branch, service_type: o.service_type, service_work: o.service_work, service_issue: o.service_issue, contract_type: o.contract_type, contractor: o.contractor,
           details: o.details, req_date: o.req_date, opened_at: o.created_at,
           asset_id: closeRec ? closeRec.asset_id : null,
@@ -3869,7 +4288,9 @@ Deno.serve(async (req: Request) => {
         // roundsRaw = รายการเลขรอบบิลที่ติ๊กเลือกไว้ (array) — ว่าง/ไม่ส่ง = ทุกรอบ
         //   รับค่าเดี่ยวแบบเดิม (string/number) ได้ด้วย เผื่อแอปเวอร์ชันเก่ายังส่งมาแบบนั้น
         // types = รายการประเภทเก็บเงินที่ติ๊กเลือกไว้ (ไม่ส่ง = เอาครบทั้ง 3)
-        const [username, token, roundsRaw, typesRaw] = args;
+        // v1.2.0 — kindRaw แยกว่าจะดึงของงาน CM หรืองาน RE (คนละตาราง คนละชุดเลขรอบ)
+        const [username, token, roundsRaw, typesRaw, kindRaw] = args;
+        const kind = toJobKind(kindRaw);
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ดาวน์โหลดไฟล์นี้ได้' });
@@ -3888,7 +4309,7 @@ Deno.serve(async (req: Request) => {
         const PAGE = 1000;
         for (let page = 0; page < 50; page++) {
           let q = supabase
-            .from('billing_documents')
+            .from(jobTables(kind).billing)
             .select('*')
             .order('round_no', { ascending: true })
             .order('contractor', { ascending: true })
@@ -3908,7 +4329,9 @@ Deno.serve(async (req: Request) => {
         const rows = allRows.filter((r: any) => wantedTypes.indexOf(normalizeBillingType(r.billing_type)) !== -1);
 
         // ชื่อไฟล์: 1 รอบ -> "รอบ 63" / หลายรอบ -> "รอบ 61+62+63" / ไม่เลือก -> "ทุกรอบ"
-        const scopeLabel = roundList.length === 0 ? 'ทุกรอบ' : ('รอบ ' + roundList.join('+'));
+        // v1.3.0 — รอบเป็นเลขเดือน (202610) โชว์ดิบ ๆ ในชื่อไฟล์แล้วอ่านไม่รู้เรื่อง แปลงเป็นชื่อเดือนก่อน
+        const scopeLabel = (kind === 'RE' ? 'RE ' : '')
+          + (roundList.length === 0 ? 'ทุกรอบ' : roundList.map((r) => billingRoundLabel(r)).join('+'));
         if (rows.length === 0) {
           return jsonResponse({ success: false, message: 'ไม่มีข้อมูลตรงเงื่อนไขที่เลือก (' + scopeLabel + ' · ' + wantedTypes.map((t) => billingTypeLabel(t)).join(', ') + ')' });
         }
@@ -3937,13 +4360,13 @@ Deno.serve(async (req: Request) => {
         const jobId = (jobIdRaw || '').toString().trim();
         if (!isFinite(roundNo)) return jsonResponse({ success: false, message: 'กรุณาเลือกรอบบิลที่ต้องการเพิ่มงานเข้าไปก่อน' });
         if (!jobId) return jsonResponse({ success: false, message: 'กรุณากรอกเลขที่ใบแจ้งซ่อมบำรุง' });
-        if (!isValidJobNumber(jobId)) return jsonResponse({ success: false, message: 'เลขที่ใบแจ้งซ่อมบำรุงต้องขึ้นต้นด้วย "CM" เท่านั้น (ที่กรอกมาคือ "' + jobId + '")' });
+        if (!isValidJobNumber(jobId)) return jsonResponse({ success: false, message: 'เลขที่ใบแจ้งซ่อมบำรุงต้องขึ้นต้นด้วย "CM" หรือ "RE" เท่านั้น (ที่กรอกมาคือ "' + jobId + '")' });
 
         // ต้องมีข้อมูลเปิดงานและปิดงานครบก่อน ไม่งั้นแถวบิลจะไม่มีสาขา/ผู้รับเหมา/วันที่
         const [openRes, closeRes, roundRes, branchesRes] = await Promise.all([
-          supabase.from('open_issues').select('main_id,branch,service_work,service_type,req_date,contractor').eq('main_id', jobId).limit(1),
-          supabase.from('close_issues').select('job_id,branch,asset_id,fix_date,parts,parts_json').eq('job_id', jobId),
-          supabase.from('billing_documents').select('round_period,contractor,seq').eq('round_no', roundNo),
+          supabase.from(jobTablesOf(jobId).open).select('main_id,branch,service_work,service_type,req_date,contractor').eq('main_id', jobId).limit(1),
+          supabase.from(jobTablesOf(jobId).close).select('job_id,branch,asset_id,fix_date,parts,parts_json').eq('job_id', jobId),
+          supabase.from(jobTablesOf(jobId).billing).select('round_period,contractor,seq').eq('round_no', roundNo),
           selectAll(() => supabase.from('branches').select('branch_code,branch_name')),
         ]);
         if (openRes.error) return jsonResponse({ success: false, message: openRes.error.message });
@@ -3969,7 +4392,7 @@ Deno.serve(async (req: Request) => {
         });
 
         // คู่ (เลขงาน + เลขทรัพย์สิน) ที่มีบิลอยู่แล้ว ต้องข้าม กันเพิ่มซ้ำ
-        const { data: existing } = await supabase.from('billing_documents').select('asset_id').eq('customer_case', jobId);
+        const { data: existing } = await supabase.from(jobTablesOf(jobId).billing).select('asset_id').eq('customer_case', jobId);
         const existingAssets = new Set((existing || []).map((r: any) => (r.asset_id || '-').toString().trim() || '-'));
 
         const branchMap: Record<string, string> = {};
@@ -4007,7 +4430,7 @@ Deno.serve(async (req: Request) => {
         if (rowsToInsert.length === 0) {
           return jsonResponse({ success: false, message: 'เลขงาน "' + jobId + '" มีอยู่ในตารางวางบิลครบทุกเลขทรัพย์สินแล้ว (' + skipped + ' รายการ) จึงไม่มีอะไรให้เพิ่ม' });
         }
-        const { error: insErr } = await supabase.from('billing_documents').insert(sameShapeRows(rowsToInsert));
+        const { error: insErr } = await supabase.from(jobTablesOf(jobId).billing).insert(sameShapeRows(rowsToInsert));
         if (insErr) return jsonResponse({ success: false, message: 'เพิ่มเข้ารอบบิลล้มเหลว: ' + insErr.message });
         return jsonResponse({
           success: true,
@@ -4096,7 +4519,7 @@ Deno.serve(async (req: Request) => {
         const mainId = (f.mainId || '').toString().trim();
         if (!mainId) return jsonResponse({ success: false, message: 'กรุณากรอกเลขที่ใบแจ้งซ่อมบำรุง' });
         if (!isValidJobNumber(mainId)) {
-          return jsonResponse({ success: false, message: 'เลขที่ใบแจ้งซ่อมบำรุงต้องขึ้นต้นด้วย "CM" เท่านั้น (ที่กรอกมาคือ "' + mainId + '") กรุณาตรวจสอบว่าคัดลอกเลขงานมาถูกช่อง' });
+          return jsonResponse({ success: false, message: 'เลขที่ใบแจ้งซ่อมบำรุงต้องขึ้นต้นด้วย "CM" หรือ "RE" เท่านั้น (ที่กรอกมาคือ "' + mainId + '") กรุณาตรวจสอบว่าคัดลอกเลขงานมาถูกช่อง' });
         }
         // ตรวจครบทุกช่องซ้ำอีกชั้นที่ฝั่งเซิร์ฟเวอร์ ไม่พึ่งการตรวจฝั่งหน้าเว็บอย่างเดียว
         // เพราะฝั่งหน้าเว็บถูกข้ามได้ (เรียก API ตรง หรือใช้แอปรุ่นเก่าที่ยังไม่มีตัวตรวจ)
@@ -4125,7 +4548,8 @@ Deno.serve(async (req: Request) => {
         };
         const openedIso = bangkokIsoTimestamp(f.openDate, f.openTime);
         if (openedIso) row.created_at = openedIso;
-        const { error } = await supabase.from('open_issues').insert(row);
+        // เลข RE ลงตาราง re_open_issues · เลข CM ลงตาราง open_issues — แยกกันคนละตาราง (v1.2.0)
+        const { error } = await supabase.from(jobTablesOf(mainId).open).insert(row);
         if (error) {
           if ((error as any).code === '23505') {
             return jsonResponse({ success: false, message: 'เลขที่ใบแจ้งซ่อมบำรุง "' + mainId + '" ถูกเปิดงานไปแล้ว (มีคนบันทึกซ้ำในเวลาไล่เลี่ยกัน) ห้ามเปิดซ้ำ' });
@@ -4227,7 +4651,7 @@ Deno.serve(async (req: Request) => {
         // "วันที่เข้าแก้ไข" ต้องไม่มาก่อน "วันที่ร้องขอ" ของงานนั้น
         // เช่น ร้องขอ 1/2/2026 แต่กรอกวันที่เข้าแก้ไขเป็น 1/1/2026 = เป็นไปไม่ได้ ต้องเป็นการกรอกผิด
         // ปล่อยผ่านไปจะทำให้ตัวกรองรอบบิล (ที่ใช้วันที่เข้าแก้ไข) จัดงานลงผิดรอบ และรายงานระยะเวลาติดลบ
-        const { data: openRowForDate } = await supabase.from('open_issues').select('req_date,branch').eq('main_id', jobId).limit(1);
+        const { data: openRowForDate } = await supabase.from(jobTablesOf(jobId).open).select('req_date,branch').eq('main_id', jobId).limit(1);
         const openRowRef = (openRowForDate && openRowForDate.length > 0) ? openRowForDate[0] : null;
 
         // ---- สาขาตอนปิดงานต้องตรงกับตอนเปิดงาน ----
@@ -4292,7 +4716,7 @@ Deno.serve(async (req: Request) => {
         // insert หลายแถวในคำสั่งเดียว = สำเร็จทั้งหมดหรือไม่สำเร็จเลย
         // สำคัญมากตรงนี้ เพราะถ้าบันทึกได้ครึ่งเดียวแล้วพัง ผู้ใช้จะกดซ้ำแล้วติดว่า "ปิดงานไปแล้ว"
         // ทั้งที่ยังมีทรัพย์สินอีกหลายชิ้นที่ยังไม่ได้บันทึก ตามแก้ยากมาก
-        const { error } = await supabase.from('close_issues').insert(rowsToInsert);
+        const { error } = await supabase.from(jobTablesOf(jobId).close).insert(rowsToInsert);
         if (error) {
           if ((error as any).code === '23505') {
             return jsonResponse({ success: false, message: 'เลขที่ใบแจ้งซ่อมบำรุง "' + jobId + '" มีเลขทรัพย์สินที่เพิ่งถูกปิดงานไปในเวลาไล่เลี่ยกัน ห้ามปิดซ้ำ — ยังไม่มีรายการใดถูกบันทึก กรุณาโหลดหน้าใหม่แล้วตรวจสอบอีกครั้ง' });
@@ -4305,10 +4729,30 @@ Deno.serve(async (req: Request) => {
           return jsonResponse({ success: false, message: 'บันทึกล้มเหลว: ' + error.message });
         }
         await invalidateAdminBadgeCountsCache();
+
+        // ==================== v1.3.0 — ปิดงานแล้วเข้าตารางวางบิลทันที ====================
+        // เดิมต้องรอแอดมินมากดปุ่ม "จับคู่ข้อมูล" เพื่อเปิดรอบบิลใหม่ก่อน งานถึงจะโผล่
+        // ตอนนี้รอบบิลคือ "เดือนที่ปิดงาน" อยู่แล้ว จึงไม่มีอะไรต้องรอ สร้างแถวได้เลย
+        //
+        // ⚠ สร้างไม่สำเร็จ "ห้ามทำให้การปิดงานล้มเหลว" — งานปิดไปแล้วจริง ๆ ข้อมูลบันทึกครบแล้ว
+        //   ถ้าโยน error กลับไป ผู้ใช้จะกดบันทึกซ้ำแล้วติดว่า "ปิดงานไปแล้ว" ทั้งที่ของบันทึกสำเร็จ
+        //   แถวบิลที่ขาดไปยังเก็บตกด้วยปุ่ม "จับคู่ข้อมูล" ได้เสมอ จึงแค่บอกให้รู้ก็พอ
+        let billingNote = '';
+        try {
+          const gen = await createBillingRowsForPairs(
+            assetBlocks.map((blk: any) => ({ jobId, assetId: blk.assetId || '-' })),
+            jobKindOf(jobId),
+          );
+          if (gen.error) billingNote = ' (ยังไม่ได้สร้างแถวในตารางวางบิล: ' + gen.error + ' — กดปุ่ม "จับคู่ข้อมูล" เก็บตกได้)';
+          else if (gen.created > 0) billingNote = ' — เข้าตารางวางบิล ' + gen.rounds.map((r) => billingRoundLabel(r)).join(' · ') + ' แล้ว';
+        } catch (e) {
+          billingNote = ' (ยังไม่ได้สร้างแถวในตารางวางบิล — กดปุ่ม "จับคู่ข้อมูล" เก็บตกได้)';
+        }
+
         const assetCountMsg = assetBlocks.length === 1 ? '' : (' รวม ' + assetBlocks.length + ' เลขทรัพย์สิน');
         return jsonResponse({
           success: true,
-          message: 'บันทึกข้อมูล ปิดงาน เรียบร้อย!' + assetCountMsg
+          message: 'บันทึกข้อมูล ปิดงาน เรียบร้อย!' + assetCountMsg + billingNote
             + ' — ผู้รับเหมาเห็นฟอร์มแนบรูปแล้ว งานจะเข้าตารางวางบิลได้หลังแอดมินยืนยันรูป'
             + ' (Sheet จะอัปเดตเป็นรอบ ๆ ภายในไม่กี่นาที)',
         });
@@ -4320,7 +4764,7 @@ Deno.serve(async (req: Request) => {
         const [username, token] = args;
         const gate = await adminGate(username, token);
         if (!gate.ok) return jsonResponse({ error: gate.message });
-        const { data, error } = await selectAll(() => supabase.from('open_issues').select('*').order('created_at', { ascending: false }));
+        const { data, error } = await selectAllBothKinds((t) => t.open, (table) => supabase.from(table).select('*').order('created_at', { ascending: false }));
         if (error) return jsonResponse({ error: error.message });
         return jsonResponse(data);
       }
@@ -4331,7 +4775,7 @@ Deno.serve(async (req: Request) => {
         const [username, token] = args;
         const gate = await adminGate(username, token);
         if (!gate.ok) return jsonResponse({ error: gate.message });
-        const { data, error } = await selectAll(() => supabase.from('close_issues').select('*').order('created_at', { ascending: false }));
+        const { data, error } = await selectAllBothKinds((t) => t.close, (table) => supabase.from(table).select('*').order('created_at', { ascending: false }));
         if (error) return jsonResponse({ error: error.message });
         return jsonResponse(data);
       }
@@ -4347,7 +4791,9 @@ Deno.serve(async (req: Request) => {
 
       // ==================== ตารางวางบิล ====================
       case 'getBillingDocuments': {
-        const [username, token, contractorFilter, jobIdsFilter, roundFilter, searchTermRaw] = args;
+        // v1.2.0 — ชนิดงานมาจากแท็บที่แอดมินเปิดอยู่ (แอปรุ่นเก่าไม่ส่งมา = CM เหมือนเดิม)
+        const [username, token, contractorFilter, jobIdsFilter, roundFilter, searchTermRaw, kindRaw] = args;
+        const kind = toJobKind(kindRaw);
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ error: 'กรุณาเข้าสู่ระบบใหม่ (session หมดอายุหรือไม่ถูกต้อง)' });
 
@@ -4362,7 +4808,7 @@ Deno.serve(async (req: Request) => {
           const safe = searchTerm.replace(/[%_,()]/g, ' ').trim();
           if (!safe) return jsonResponse([]);
           const like = '*' + safe + '*';
-          let sq = supabase.from('billing_documents').select('*')
+          let sq = supabase.from(jobTables(kind).billing).select('*')
             .or('customer_case.ilike.' + like + ',asset_id.ilike.' + like + ',part_code.ilike.' + like + ',branch_name.ilike.' + like)
             .order('round_no', { ascending: false })
             .order('contractor', { ascending: true })
@@ -4385,7 +4831,7 @@ Deno.serve(async (req: Request) => {
         // v1.0.97 — อ่านให้ครบทุกแถว (เดิม .limit(1000) = ผู้รับเหมาที่มีบิลสะสมเกิน 1000 แถว
         // จะไม่เห็นบิลรอบล่าสุดเลย เพราะเรียงจากรอบเก่าไปใหม่ แถวที่ถูกตัดทิ้งคือรอบใหม่สุด)
         const buildBillingQuery = () => {
-        let q = supabase.from('billing_documents').select('*');
+        let q = supabase.from(jobTables(kind).billing).select('*');
         if (isHistoryMode) {
           q = q.eq('round_no', roundFilter).order('contractor', { ascending: true }).order('seq', { ascending: true }).order('customer_case', { ascending: true }).order('created_at', { ascending: true });
           if (session.role === 'admin') {
@@ -4556,11 +5002,17 @@ Deno.serve(async (req: Request) => {
         // ก่อน v1.0.74 แถวพวกนี้ถูกตั้งเป็น 'pending' ทั้งที่ผู้รับเหมามองไม่เห็น
         // จึงค้างรอคำยืนยันที่ไม่มีวันมา ต้องรันไฟล์ SQL v1.0.74 เพื่อเก็บกวาดของเก่า
         {
-          const { count, error } = await supabase.from('billing_documents')
-            .select('id', { count: 'exact', head: true })
-            .eq('sent_to_contractor', true).is('completed_at', null)
-            .eq('contractor_review_status', 'pending')
-            .in('billing_type', BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
+          // v1.2.0 — นับรวมทั้งงาน CM และงาน RE
+          let count = 0; let error: any = null;
+          for (const kind of ALL_JOB_KINDS) {
+            const r = await supabase.from(jobTables(kind).billing)
+              .select('id', { count: 'exact', head: true })
+              .eq('sent_to_contractor', true).is('completed_at', null)
+              .eq('contractor_review_status', 'pending')
+              .in('billing_type', BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
+            if (r.error) { if (kind === 'RE' && isMissingTableError(r.error)) continue; error = r.error; break; }
+            count += (r.count || 0);
+          }
           if (error) {
             add('บิลค้างของงานที่ไม่ต้องส่ง ผรม.', true, 'ok', 'ข้ามการตรวจ (ยังไม่มีคอลัมน์ที่ใช้ตรวจ)');
           } else if ((count || 0) > 0) {
@@ -4842,7 +5294,7 @@ Deno.serve(async (req: Request) => {
         if (!jobId) return jsonResponse({ found: false, message: '' });
 
         // ---- ขั้นที่ 1: อยู่ในตารางวางบิลแล้วหรือยัง ----
-        const { data: billRows } = await supabase.from('billing_documents')
+        const { data: billRows } = await supabase.from(jobTablesOf(jobId).billing)
           .select('round_no,contractor,sent_to_contractor,completed_at').eq('customer_case', jobId);
         if (billRows && billRows.length > 0) {
           // ผู้รับเหมาเห็นได้เฉพาะงานของตัวเองที่ส่งบิลแล้ว — ตอบตามที่เขาเห็นได้จริง
@@ -4870,8 +5322,8 @@ Deno.serve(async (req: Request) => {
         }
 
         const [openRes2, closeRes2, subRes2] = await Promise.all([
-          supabase.from('open_issues').select('main_id,contractor').eq('main_id', jobId).limit(1),
-          supabase.from('close_issues').select('asset_id,created_at,parts,parts_json').eq('job_id', jobId),
+          supabase.from(jobTablesOf(jobId).open).select('main_id,contractor').eq('main_id', jobId).limit(1),
+          supabase.from(jobTablesOf(jobId).close).select('asset_id,created_at,parts,parts_json').eq('job_id', jobId),
           supabase.from('job_form_submissions').select('status,submitted_at').eq('customer_case', jobId).order('submitted_at', { ascending: true }),
         ]);
 
@@ -4926,13 +5378,13 @@ Deno.serve(async (req: Request) => {
         const assetId = String(assetRaw || '').trim();
         if (!jobId || !assetId) return jsonResponse({ success: false, message: 'ข้อมูลไม่ครบ (ต้องมีเลขงานและเลขทรัพย์สิน)' });
 
-        const { data: closeRows, error: closeErr } = await supabase.from('close_issues')
+        const { data: closeRows, error: closeErr } = await supabase.from(jobTablesOf(jobId).close)
           .select('id,branch,fix_date').eq('job_id', jobId).eq('asset_id', assetId).limit(1);
         if (closeErr) return jsonResponse({ success: false, message: closeErr.message });
         if (!closeRows || closeRows.length === 0) {
           return jsonResponse({ success: false, message: 'ไม่พบงานปิดของเลขงาน ' + jobId + ' เลขทรัพย์สิน ' + assetId + ' (อาจถูกแก้ไปแล้ว ลองโหลดหน้าใหม่)' });
         }
-        const { data: billRows, error: billErr } = await supabase.from('billing_documents')
+        const { data: billRows, error: billErr } = await supabase.from(jobTablesOf(jobId).billing)
           .select('round_no,sent_to_contractor,completed_at,contractor').eq('customer_case', jobId).eq('asset_id', assetId);
         if (billErr) return jsonResponse({ success: false, message: billErr.message });
         const rows = billRows || [];
@@ -4942,7 +5394,7 @@ Deno.serve(async (req: Request) => {
         const state = rows.length === 0 ? 'ยังไม่เข้ารอบบิล' : done > 0 ? 'ตัดบิลแล้ว' : sent > 0 ? 'ส่งผู้รับเหมาแล้ว' : 'อยู่ในรอบบิล ยังไม่ส่ง';
 
         // เลขทรัพย์สินอื่นของงานเดียวกัน — ใช้ซ้ำไม่ได้ (ฐานข้อมูลกันซ้ำไว้อีกชั้นด้วย)
-        const { data: siblings } = await supabase.from('close_issues').select('asset_id').eq('job_id', jobId);
+        const { data: siblings } = await supabase.from(jobTablesOf(jobId).close).select('asset_id').eq('job_id', jobId);
         const otherAssets = (siblings || []).map((x: any) => x.asset_id).filter((a: any) => a && a !== assetId);
 
         // ประวัติการแก้ของงานนี้ — ถ้ายังไม่ได้รัน SQL v1.0.93 จะยังไม่มีตาราง ให้ถือว่า "ยังไม่พร้อม" ไม่ใช่ error
@@ -5007,6 +5459,10 @@ Deno.serve(async (req: Request) => {
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่แก้ไขข้อมูลได้' });
+        // v1.2.0 — แถวนี้อยู่ตารางบิลของงาน CM หรือ RE ต้องถามก่อนถึงจะแก้ถูกตาราง
+        const __bk = await resolveBillingKind([id]);
+        if (!__bk.kind) return jsonResponse({ success: false, error: __bk.message, message: __bk.message });
+        const __BT_billing = jobTables(__bk.kind).billing;
         // v1.0.93 — แก้ได้เฉพาะช่องที่หน้าจอเปิดให้แก้จริงเท่านั้น
         // เดิมรับทุกช่องที่ส่งมาแล้วเขียนลงตรง ๆ = ยิงคำขอเข้ามาเองก็แก้ได้ทุกอย่าง เช่น
         //   asset_id                  แก้เลขทรัพย์สินแค่ในตารางบิล ไม่แก้ปิดงาน/คีย์จอง -> เก็บเงินซ้ำ
@@ -5050,7 +5506,7 @@ Deno.serve(async (req: Request) => {
         const missingBase = clean.qty === undefined || clean.unit_price === undefined || clean.unit_price_contractor === undefined;
         let priceBase: any = {};
         if (touchesTotals && missingBase) {
-          const { data: pb, error: pbErr } = await supabase.from('billing_documents')
+          const { data: pb, error: pbErr } = await supabase.from(__BT_billing)
             .select('qty,unit_price,unit_price_contractor').eq('id', id).limit(1);
           if (pbErr) return jsonResponse({ success: false, message: pbErr.message });
           if (!pb || pb.length === 0) return jsonResponse({ success: false, message: 'ไม่พบแถวนี้แล้ว (อาจถูกลบไปก่อนหน้า) — กดโหลดตารางใหม่' });
@@ -5081,7 +5537,7 @@ Deno.serve(async (req: Request) => {
         let typeNotice = '';
         let recheckRound: { job: string; round: any } | null = null;
         if (clean.billing_type !== undefined) {
-          const { data: curRows, error: curErr } = await supabase.from('billing_documents')
+          const { data: curRows, error: curErr } = await supabase.from(__BT_billing)
             .select('id,customer_case,round_no,billing_type,sent_to_contractor,completed_at,contractor_review_status,revision_no')
             .eq('id', id).limit(1);
           if (curErr) return jsonResponse({ success: false, message: curErr.message });
@@ -5133,7 +5589,7 @@ Deno.serve(async (req: Request) => {
         // ถ้าไม่คืนมา พอแอดมินแก้ "ราคา/หน่วย (ผู้รับเหมา)" แล้วกดบันทึก ช่องราคารวมจะยังเป็นเลขเก่า
         // ดูเหมือนแก้ไม่ติด ทั้งที่ในฐานข้อมูลถูกต้องแล้ว
         const { data: updatedRows, error } = await supabase
-          .from('billing_documents').update(clean).eq('id', id).select('*');
+          .from(__BT_billing).update(clean).eq('id', id).select('*');
         if (error) return jsonResponse({ success: false, message: error.message });
         // เลิกรอผู้รับเหมาแล้ว เหลือเงื่อนไขเดียวคือฝั่งรูป — ครบแล้วตัดบิลให้เลย (กติกาเดียวกับทุกที่)
         let closedNow = 0;
@@ -5141,7 +5597,7 @@ Deno.serve(async (req: Request) => {
         let row = (updatedRows && updatedRows.length > 0) ? updatedRows[0] : null;
         if (closedNow > 0) {
           typeNotice += ' · ครบเงื่อนไขแล้ว ตัดบิลให้ ' + closedNow + ' แถว';
-          const { data: again } = await supabase.from('billing_documents').select('*').eq('id', id).limit(1);
+          const { data: again } = await supabase.from(__BT_billing).select('*').eq('id', id).limit(1);
           if (again && again.length > 0) row = again[0];
         }
         return jsonResponse({ success: true, row, message: typeNotice ? ('บันทึกแล้ว — ' + typeNotice) : undefined });
@@ -5154,7 +5610,9 @@ Deno.serve(async (req: Request) => {
       //   ต่อให้คนกดเป็นแอดมินก็ตาม ราคาที่ออกมาต้องเป็นราคาผู้รับเหมาล้วน ห้ามมีราคา CJ ปนเด็ดขาด
       //   แถวที่ยังไม่ได้ตั้งราคาผู้รับเหมาจะขึ้นขีดกลาง ไม่ใช่ดึงราคา CJ มาแทน (ดู getDisplayPriceAndTotal)
       case 'downloadContractorBillingPdfByRange': {
-        const [username, token, startDate, endDate, dateFieldRaw, contractorName] = args;
+        // v1.3.3 — ชนิดงานมาจากกล่อง "ใบเขียวผู้รับเหมา" บนหน้าจอ (แอปรุ่นเก่าไม่ส่งมา = CM เหมือนเดิม)
+        const [username, token, startDate, endDate, dateFieldRaw, contractorName, kindRaw] = args;
+        const kind = toJobKind(kindRaw);
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ใช้เมนูนี้ได้' });
@@ -5179,7 +5637,7 @@ Deno.serve(async (req: Request) => {
         for (let page = 0; page < 50; page++) {
           // ดึงเฉพาะแถวที่ "ส่งบิลให้ผู้รับเหมาแล้ว" เพราะใบเขียวผู้รับเหมาเกิดขึ้นหลังส่งบิลเท่านั้น
           // และตัดประเภทที่ไม่เก็บเงินฝั่งผู้รับเหมาออก (เคลมประกัน 3 เดือน / ใบเสนอราคา)
-          let q = supabase.from('billing_documents').select('*').eq('sent_to_contractor', true);
+          let q = supabase.from(jobTables(kind).billing).select('*').eq('sent_to_contractor', true);
           q = excludeBillingTypes(q, BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
           if (contractorName) q = q.eq('contractor', contractorName);
           q = q.order('round_no', { ascending: true }).order('contractor', { ascending: true })
@@ -5220,7 +5678,10 @@ Deno.serve(async (req: Request) => {
         const result = await generateBillingPdfBase64(renumberBillingRowsForDocument(rows), false);
         if (!result.success) return jsonResponse(result);
         const safe = (s: string) => (s || '').replace(/[\\/:*?"<>|]/g, '_');
-        result.filename = 'ใบเขียวผู้รับเหมา_' + (contractorName ? (safe(contractorName) + '_') : '')
+        // v1.3.3 — ใบเขียวของงาน CM กับงาน RE เป็นคนละใบเสมอ ชื่อไฟล์ต้องแยกให้ออก
+        // ไม่งั้นดาวน์โหลดสองชนิดในวันเดียวกัน ไฟล์จะชื่อซ้ำแล้วทับกันเอง
+        result.filename = 'ใบเขียวผู้รับเหมา_' + (kind === 'RE' ? 'RE_' : '')
+          + (contractorName ? (safe(contractorName) + '_') : '')
           + safe(startDate) + '_ถึง_' + safe(endDate) + '.pdf';
         result.rowCount = rows.length;
         result.warning = unreadableNote.replace(/^ · /, '');
@@ -5241,14 +5702,14 @@ Deno.serve(async (req: Request) => {
         const roundNo = (roundRaw === null || roundRaw === undefined || roundRaw === '') ? null : Number(roundRaw);
         if (!jobId) return jsonResponse({ success: false, message: 'ไม่ได้ระบุเลขงาน' });
 
-        let q = supabase.from('billing_documents')
+        let q = supabase.from(jobTablesOf(jobId).billing)
           .select('id,part_code,part_detail,qty,unit_price,unit_price_contractor,sent_to_contractor,completed_at,contractor,round_no,contractor_review_status')
           .eq('customer_case', jobId).eq('asset_id', assetId);
         if (roundNo !== null && !isNaN(roundNo)) q = q.eq('round_no', roundNo);
         // v1.1.1 — อ่านแถวบิลกับประวัติการคืนงานพร้อมกัน (เดิมรอกันทีละอย่าง = ช้าเพิ่ม 1 รอบฐานข้อมูล)
         const [{ data, error }, h] = await Promise.all([
           q,
-          supabase.from('billing_removed_jobs')
+          supabase.from(jobTablesOf(jobId).removed)
             .select('id,job_id,asset_id,round_no,reason,removed_by,removed_at,rows_removed,was_sent')
             .eq('job_id', jobId).order('removed_at', { ascending: false }).limit(20),
         ]);
@@ -5300,7 +5761,7 @@ Deno.serve(async (req: Request) => {
         if (!jobId) return jsonResponse({ success: false, message: 'ไม่ได้ระบุเลขงาน' });
         if (!reason) return jsonResponse({ success: false, message: 'กรุณาระบุเหตุผลที่คืนงาน' });
 
-        const { data, error } = await supabase.rpc('remove_billing_job', {
+        const { data, error } = await supabase.rpc(jobTablesOf(jobId).removeFn, {
           p_job_id: jobId, p_asset_id: assetId,
           p_round_no: (roundNo !== null && !isNaN(roundNo)) ? roundNo : null,
           p_reason: reason, p_by: session.displayName || username,
@@ -5327,13 +5788,18 @@ Deno.serve(async (req: Request) => {
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ลบข้อมูลได้' });
+        // v1.2.0 — แถวนี้อยู่ตารางบิลของงาน CM หรือ RE ต้องถามก่อนถึงจะแก้ถูกตาราง
+        const __bk = await resolveBillingKind([id]);
+        if (!__bk.kind) return jsonResponse({ success: false, error: __bk.message, message: __bk.message });
+        const __BT_billing = jobTables(__bk.kind).billing;
+        const __BT_registry = jobTables(__bk.kind).registry;
         // ==================== v1.0.98 ====================
         // บั๊กเดิม 2 ข้อ
         //   1. ลบแถวสุดท้ายของคู่ (เลขงาน+เลขทรัพย์สิน) แล้ว "คีย์จองรอบบิล" ยังค้างอยู่
         //      = งานนั้นดึงเข้ารอบบิลไม่ได้อีกตลอดกาล (ข้อมูลจริงมีค้างแบบนี้ 4 งาน)
         //      ถ้าตั้งใจเอางานออกจากระบบวางบิลถาวร ให้ใช้ปุ่ม "คืนงาน" ซึ่งเก็บประวัติและสำรองข้อมูลไว้
         //   2. ลบแถวที่ตัดบิลไปแล้วได้ = ยอดของรอบที่ปิดไปแล้วลดลงเงียบ ๆ
-        const { data: curRows, error: curErr } = await supabase.from('billing_documents')
+        const { data: curRows, error: curErr } = await supabase.from(__BT_billing)
           .select('id,customer_case,asset_id,completed_at').eq('id', id).limit(1);
         if (curErr) return jsonResponse({ success: false, message: curErr.message });
         const cur = curRows && curRows.length > 0 ? curRows[0] : null;
@@ -5341,7 +5807,7 @@ Deno.serve(async (req: Request) => {
         if (cur.completed_at) {
           return jsonResponse({ success: false, message: 'แถวนี้ตัดบิลไปแล้ว ลบไม่ได้ — ยอดของรอบที่ปิดไปแล้วจะเปลี่ยนเงียบ ๆ' });
         }
-        const { error } = await supabase.from('billing_documents').delete().eq('id', id);
+        const { error } = await supabase.from(__BT_billing).delete().eq('id', id);
         if (error) return jsonResponse({ success: false, message: error.message });
 
         // ลบแถวสุดท้ายของคู่นี้ไปแล้ว -> ปลดคีย์จองรอบบิล ให้ดึงเข้ารอบใหม่ได้
@@ -5350,11 +5816,11 @@ Deno.serve(async (req: Request) => {
         const jobId = String(cur.customer_case || '').trim();
         const assetId = String(cur.asset_id || '').trim();
         if (jobId) {
-          const { data: left } = await supabase.from('billing_documents').select('id,asset_id').eq('customer_case', jobId);
+          const { data: left } = await supabase.from(__BT_billing).select('id,asset_id').eq('customer_case', jobId);
           const leftForPair = (left || []).filter((r: any) => String(r.asset_id || '').trim() === assetId);
           if (leftForPair.length === 0) {
             const keys = (assetId && assetId !== '-') ? [jobId + '__asset__' + assetId] : [jobId];
-            const { data: del } = await supabase.from('billing_job_registry').delete().in('customer_case', keys).select('customer_case');
+            const { data: del } = await supabase.from(__BT_registry).delete().in('customer_case', keys).select('customer_case');
             freed = (del || []).length > 0;
           }
         }
@@ -5369,13 +5835,17 @@ Deno.serve(async (req: Request) => {
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ส่งบิลได้' });
+        // v1.2.0 — แถวนี้อยู่ตารางบิลของงาน CM หรือ RE ต้องถามก่อนถึงจะแก้ถูกตาราง
+        const __bk = await resolveBillingKind(ids);
+        if (!__bk.kind) return jsonResponse({ success: false, error: __bk.message, message: __bk.message });
+        const __BT_billing = jobTables(__bk.kind).billing;
         if (!ids || ids.length === 0) return jsonResponse({ success: false, message: 'ไม่มีแถวให้ส่ง กรุณาโหลดข้อมูลก่อน' });
         // ⚠ ต้องดึง customer_case / billing_type มาด้วย
         // v1.0.72 เขียนด่าน "ต้องยืนยันรูปก่อนส่งบิล" ไว้ข้างล่างโดยอ่าน rowById[id].customer_case
         // แต่ select ตรงนี้ไม่ได้ดึงคอลัมน์นั้นมา ค่าที่ได้จึงเป็น undefined ทุกแถว
         // รายชื่อเลขงานที่จะเอาไปเช็คเลยว่างเปล่าเสมอ = ด่านรูปไม่เคยบล็อกอะไรเลยสักครั้ง
         // และไม่มี error ให้เห็น เพราะทุกอย่าง "ผ่าน" หมด
-        const { data: checkData, error: checkErr } = await selectAllIn(ids, (chunk) => supabase.from('billing_documents')
+        const { data: checkData, error: checkErr } = await selectAllIn(ids, (chunk) => supabase.from(__BT_billing)
           .select('id,customer_case,round_no,billing_type,sent_to_contractor,part_code,qty').in('id', chunk));
         if (checkErr) return jsonResponse({ success: false, message: checkErr.message });
         let alreadySent = 0, incomplete = 0;
@@ -5427,35 +5897,13 @@ Deno.serve(async (req: Request) => {
         // ถ้าตั้งเป็น 'pending' เหมือนแถวอื่น จะได้คิวที่ไม่มีใครกดได้
         //   - ป้ายแจ้งเตือนฝั่งผู้รับเหมาขึ้นเลขค้าง กดยังไงก็ไม่ลด
         //   - เลขงานนั้นไม่มีวันเสร็จสิ้น เพราะรอคำยืนยันที่ไม่มีวันมา
-        const idsNeedReview = idsToSend.filter((id: string) => billingRowNeedsContractorReview(rowById[id]));
+        // แถวที่ผู้รับเหมามองไม่เห็น (เคลมประกัน/ใบเสนอราคา) ใช้ตอนตัดสินว่าจะปิดบิลให้เลยหรือไม่
         const idsNoReview = idsToSend.filter((id: string) => !billingRowNeedsContractorReview(rowById[id]));
 
-        // v1.0.69 — ส่งบิล = เปิดคิวให้ผู้รับเหมาตรวจแถวนั้นด้วย (รอบที่ 1)
-        // ⚠ ถ้าฐานข้อมูลยังไม่ได้รัน SQL v1.0.69 คอลัมน์พวกนี้จะยังไม่มี แล้ว PostgREST จะปฏิเสธทั้งคำสั่ง
-        // ถอยไปส่งบิลแบบเดิมแทน (ยังส่งได้จริง เสียแค่ยังไม่เข้ากระบวนการตรวจของผู้รับเหมา)
-        const sentAtIso = new Date().toISOString();
-        let reviewColumnsMissing = false;
-        let error: any = null;
-        for (const grp of [
-          { ids: idsNeedReview, status: 'pending' },
-          { ids: idsNoReview, status: REVIEW_NOT_REQUIRED },
-        ]) {
-          if (grp.ids.length === 0) continue;
-          // v1.0.98 — แบ่งก้อนละ 200 แถว (ส่งทีละหลายร้อยแถวในคำขอเดียว URL ยาวเกินจนพัง)
-          for (let i = 0; i < grp.ids.length && !error; i += 200) {
-            const part = grp.ids.slice(i, i + 200);
-            let res = await supabase.from('billing_documents')
-              .update({ sent_to_contractor: true, sent_at: sentAtIso, contractor_review_status: grp.status, revision_no: 1 })
-              .in('id', part);
-            if (res.error && /column|schema cache/i.test(res.error.message || '')) {
-              reviewColumnsMissing = true;
-              res = await supabase.from('billing_documents')
-                .update({ sent_to_contractor: true, sent_at: sentAtIso }).in('id', part);
-            }
-            if (res.error) error = res.error;
-          }
-          if (error) break;
-        }
+        // v1.3.0 — ใช้ตัวเขียนสถานะตัวเดียวกับตอน "ยืนยันรูปแล้วส่งบิลอัตโนมัติ"
+        const sendRes = await applyBillingSent(__BT_billing, idsToSend.map((id: string) => rowById[id]));
+        const reviewColumnsMissing = sendRes.reviewColumnsMissing;
+        const error = sendRes.error;
         if (error) return jsonResponse({ success: false, message: 'ส่งบิลล้มเหลว: ' + error.message });
 
         // ---- เลขงานที่ไม่เหลือแถวรอผู้รับเหมาแล้ว = ปิดบิลให้เลยตรงนี้ ----
@@ -5491,6 +5939,10 @@ Deno.serve(async (req: Request) => {
         const [username, token, ids, decisionRaw, commentRaw] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
+        // v1.2.0 — แถวนี้อยู่ตารางบิลของงาน CM หรือ RE ต้องถามก่อนถึงจะแก้ถูกตาราง
+        const __bk = await resolveBillingKind(ids);
+        if (!__bk.kind) return jsonResponse({ success: false, error: __bk.message, message: __bk.message });
+        const __BT_billing = jobTables(__bk.kind).billing;
         // แอดมินกดแทนไม่ได้โดยตั้งใจ — ขั้นนี้คือหลักฐานว่า "ผู้รับเหมารับรองยอดนี้เอง"
         // ถ้าแอดมินกดแทนได้ ตัวตัดบิลจะกลายเป็นฝ่ายเดียวกับคนออกบิล ซึ่งทำให้ขั้นตอนนี้ไม่มีความหมาย
         if (session.role === 'admin') {
@@ -5505,7 +5957,7 @@ Deno.serve(async (req: Request) => {
         const idList: string[] = Array.isArray(ids) ? ids : (ids ? [ids] : []);
         if (idList.length === 0) return jsonResponse({ success: false, message: 'ยังไม่ได้เลือกแถวที่จะตรวจ' });
 
-        const { data: rows, error: fetchErr } = await supabase.from('billing_documents')
+        const { data: rows, error: fetchErr } = await supabase.from(__BT_billing)
           .select('id,customer_case,round_no,contractor,sent_to_contractor,completed_at,contractor_review_status,revision_no,billing_type,part_code')
           .in('id', idList);
         if (fetchErr) {
@@ -5546,7 +5998,7 @@ Deno.serve(async (req: Request) => {
         }
 
         const nowIso = new Date().toISOString();
-        const { error: upErr } = await supabase.from('billing_documents').update({
+        const { error: upErr } = await supabase.from(__BT_billing).update({
           contractor_review_status: decision,
           contractor_reviewed_at: nowIso,
           contractor_reviewed_by: session.displayName,
@@ -5605,11 +6057,15 @@ Deno.serve(async (req: Request) => {
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ส่งบิลกลับได้' });
+        // v1.2.0 — แถวนี้อยู่ตารางบิลของงาน CM หรือ RE ต้องถามก่อนถึงจะแก้ถูกตาราง
+        const __bk = await resolveBillingKind(ids);
+        if (!__bk.kind) return jsonResponse({ success: false, error: __bk.message, message: __bk.message });
+        const __BT_billing = jobTables(__bk.kind).billing;
         const idList: string[] = Array.isArray(ids) ? ids : (ids ? [ids] : []);
         if (idList.length === 0) return jsonResponse({ success: false, message: 'ยังไม่ได้เลือกแถวที่จะส่งกลับ' });
         const reply = (replyRaw === null || replyRaw === undefined) ? '' : String(replyRaw).trim();
 
-        const { data: rows, error: fetchErr } = await supabase.from('billing_documents')
+        const { data: rows, error: fetchErr } = await supabase.from(__BT_billing)
           .select('id,customer_case,contractor_review_status,revision_no,completed_at,sent_to_contractor')
           .in('id', idList);
         if (fetchErr) {
@@ -5635,7 +6091,7 @@ Deno.serve(async (req: Request) => {
         });
         const nowIso = new Date().toISOString();
         for (const k of Object.keys(byRev)) {
-          const { error: upErr } = await supabase.from('billing_documents').update({
+          const { error: upErr } = await supabase.from(__BT_billing).update({
             contractor_review_status: 'pending',
             contractor_reviewed_at: null,
             contractor_reviewed_by: null,
@@ -5669,13 +6125,17 @@ Deno.serve(async (req: Request) => {
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ย้อนสถานะบิลได้' });
+        // v1.2.0 — แถวนี้อยู่ตารางบิลของงาน CM หรือ RE ต้องถามก่อนถึงจะแก้ถูกตาราง
+        const __bk = await resolveBillingKind(ids);
+        if (!__bk.kind) return jsonResponse({ success: false, error: __bk.message, message: __bk.message });
+        const __BT_billing = jobTables(__bk.kind).billing;
         const idList: string[] = Array.isArray(ids) ? ids : (ids ? [ids] : []);
         if (idList.length === 0) return jsonResponse({ success: false, message: 'ยังไม่ได้เลือกแถวที่จะย้อนสถานะ' });
         const reason = (reasonRaw === null || reasonRaw === undefined) ? '' : String(reasonRaw).trim();
         // บังคับเหตุผล — การย้อนงานที่รับรอง/ตัดบิลแล้วเป็นเรื่องใหญ่ ต้องรู้ว่าย้อนเพราะอะไร
         if (!reason) return jsonResponse({ success: false, message: 'กรุณากรอกเหตุผลที่ต้องย้อนสถานะก่อน (ผู้รับเหมาจะเห็นข้อความนี้)' });
 
-        const { data: rows, error: fetchErr } = await supabase.from('billing_documents')
+        const { data: rows, error: fetchErr } = await supabase.from(__BT_billing)
           .select('id,customer_case,contractor_review_status,revision_no,completed_at,sent_to_contractor,billing_type')
           .in('id', idList);
         if (fetchErr) {
@@ -5701,7 +6161,7 @@ Deno.serve(async (req: Request) => {
         });
         const nowIso = new Date().toISOString();
         for (const k of Object.keys(byRev)) {
-          const { error: upErr } = await supabase.from('billing_documents').update({
+          const { error: upErr } = await supabase.from(__BT_billing).update({
             completed_at: null,                       // เปิดงานกลับ — ยกเลิกการตัดบิล
             contractor_review_status: 'pending',      // กลับเข้าคิวให้ผู้รับเหมาตรวจใหม่
             contractor_reviewed_at: null,
@@ -5734,15 +6194,20 @@ Deno.serve(async (req: Request) => {
         const [username, token, billingId] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ error: 'กรุณาเข้าสู่ระบบใหม่' });
+        // v1.2.0 — แถวนี้อยู่ตารางบิลของงาน CM หรือ RE ต้องถามก่อนถึงจะแก้ถูกตาราง
+        const __bk = await resolveBillingKind([billingId]);
+        if (!__bk.kind) return jsonResponse({ success: false, error: __bk.message, message: __bk.message });
+        const __BT_billing = jobTables(__bk.kind).billing;
+        const __BT_comments = jobTables(__bk.kind).comments;
         if (!billingId) return jsonResponse([]);
         // ผู้รับเหมาอ่านได้เฉพาะแถวของตัวเอง — กันเปิดดูคอมเมนต์ของผู้รับเหมาเจ้าอื่น
         if (session.role !== 'admin') {
-          const { data: own } = await supabase.from('billing_documents')
+          const { data: own } = await supabase.from(__BT_billing)
             .select('id,contractor,sent_to_contractor').eq('id', billingId).limit(1);
           const r = (own && own.length > 0) ? own[0] : null;
           if (!r || r.contractor !== session.displayName || r.sent_to_contractor !== true) return jsonResponse([]);
         }
-        const { data, error } = await supabase.from('billing_row_comments')
+        const { data, error } = await supabase.from(__BT_comments)
           .select('*').eq('billing_id', String(billingId)).order('id', { ascending: true });
         // ยังไม่ได้รัน SQL v1.0.69 = ยังไม่มีตาราง ให้ถือว่า "ยังไม่มีคอมเมนต์" ไม่ใช่ error
         // ไม่งั้นหน้าจอจะขึ้นแดงทั้งที่ระบบยังใช้งานได้ปกติทุกอย่าง
@@ -5756,9 +6221,11 @@ Deno.serve(async (req: Request) => {
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ waiting: 0, rejected: 0 });
         const wanted = (session.role === 'admin') ? 'rejected' : 'pending';
-        let q = supabase.from('billing_documents')
+        // v1.2.0 — ป้ายต้องนับงานทั้งสองชนิดรวมกัน ไม่งั้นงาน RE ที่ถูกตีกลับจะไม่มีใครเห็น
+        const buildReviewCountQuery = (table: string) => supabase.from(table)
           .select('id', { count: 'exact', head: true })
           .eq('contractor_review_status', wanted).is('completed_at', null);
+        let q = buildReviewCountQuery(jobTables('CM').billing);
         // v1.0.74 — ตัดประเภทที่ผู้รับเหมามองไม่เห็นออก (เคลมประกัน / ใบเสนอราคา)
         // ไม่งั้นป้ายจะขึ้นว่า "มีบิลรอคุณตรวจ N รายการ" แต่พอเปิดตารางมาแล้วไม่มีแถวไหนให้กดเลย
         // = เลขค้างอยู่อย่างนั้นตลอดไป ไม่มีทางทำให้เป็นศูนย์ได้
@@ -5766,7 +6233,15 @@ Deno.serve(async (req: Request) => {
         if (session.role !== 'admin') q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true);
         const { count, error } = await q;
         if (error) return jsonResponse({ waiting: 0, rejected: 0 });
-        const n = count || 0;
+        let n = count || 0;
+        {
+          // นับฝั่ง RE เพิ่ม ด้วยเงื่อนไขเดียวกันเป๊ะ (ยังไม่มีตาราง = ถือว่าไม่มีงาน)
+          let q2 = buildReviewCountQuery(jobTables('RE').billing);
+          q2 = excludeBillingTypes(q2, BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
+          if (session.role !== 'admin') q2 = q2.eq('contractor', session.displayName).eq('sent_to_contractor', true);
+          const r2 = await q2;
+          if (!r2.error) n += (r2.count || 0);
+        }
         return jsonResponse({ waiting: session.role === 'admin' ? 0 : n, rejected: session.role === 'admin' ? n : 0 });
       }
 
@@ -5783,19 +6258,28 @@ Deno.serve(async (req: Request) => {
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ error: 'กรุณาเข้าสู่ระบบใหม่' });
         const wanted = (session.role === 'admin') ? 'rejected' : 'pending';
-        let q = supabase.from('billing_documents').select('*')
+        // v1.2.0 — ต้องเห็นงานทั้งสองชนิด ไม่งั้นแถวของงาน RE ที่ถูกตีกลับจะหายไปจากปุ่มนี้
+        const buildNeedQuery = (table: string) => supabase.from(table).select('*')
           .eq('contractor_review_status', wanted).is('completed_at', null)
           .order('round_no', { ascending: false })
           .order('contractor', { ascending: true })
           .order('seq', { ascending: true })
           .order('customer_case', { ascending: true })
           .limit(500);
-        q = excludeBillingTypes(q, BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
-        if (session.role !== 'admin') q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true);
-        const { data, error } = await q;
-        if (error) return jsonResponse({ error: error.message });
-        if (session.role !== 'admin') return jsonResponse(stripCjPricesForContractor(data || []));
-        return jsonResponse(data || []);
+        const rowsNeedingAction: any[] = [];
+        for (const kind of ALL_JOB_KINDS) {
+          let q = buildNeedQuery(jobTables(kind).billing);
+          q = excludeBillingTypes(q, BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
+          if (session.role !== 'admin') q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true);
+          const { data, error } = await q;
+          if (error) {
+            if (kind === 'RE' && isMissingTableError(error)) continue;
+            return jsonResponse({ error: error.message });
+          }
+          (data || []).forEach((r: any) => { r.job_kind = kind; rowsNeedingAction.push(r); });
+        }
+        if (session.role !== 'admin') return jsonResponse(stripCjPricesForContractor(rowsNeedingAction));
+        return jsonResponse(rowsNeedingAction);
       }
 
       case 'getBillingRoundOptions': {
@@ -5803,7 +6287,8 @@ Deno.serve(async (req: Request) => {
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ error: 'กรุณาเข้าสู่ระบบใหม่' });
         const { data, error } = await selectAll(() => {
-          let q = supabase.from('billing_documents').select('round_no,round_period').not('round_no', 'is', null);
+          const kind = toJobKind(args[2]);
+        let q = supabase.from(jobTables(kind).billing).select('round_no,round_period').not('round_no', 'is', null);
           if (session.role !== 'admin') q = excludeBillingTypes(q.eq('contractor', session.displayName).eq('sent_to_contractor', true), BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
           return q;
         });
@@ -5819,7 +6304,7 @@ Deno.serve(async (req: Request) => {
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ error: 'กรุณาเข้าสู่ระบบใหม่ (session หมดอายุหรือไม่ถูกต้อง)' });
         const { data, error } = await selectAll(() => {
-          let q = supabase.from('billing_documents').select('round_no,round_period,contractor,total_price,total_price_contractor,sent_at,completed_at,sent_to_contractor,billing_type').not('round_no', 'is', null);
+          let q = supabase.from(jobTables(toJobKind(args[2])).billing).select('round_no,round_period,contractor,total_price,total_price_contractor,sent_at,completed_at,sent_to_contractor,billing_type').not('round_no', 'is', null);
           if (session.role === 'admin') {
             q = q.or('sent_to_contractor.eq.true,completed_at.not.is.null');
           } else {
@@ -5866,11 +6351,13 @@ Deno.serve(async (req: Request) => {
       // ดูตัวอย่างก่อนบันทึกรอบบิลจริง (ไม่เขียนอะไรลงฐานข้อมูลเลย - อ่านอย่างเดียว)
       // ใช้เงื่อนไขจับคู่แบบเดียวกับตอนบันทึกจริงเป๊ะ (resolveBillingCandidatePairs) เพื่อให้สิ่งที่เห็นตรงกับสิ่งที่จะถูกบันทึก
       case 'previewBillingCandidates': {
-        const [username, token, startDate, endDate, jobIds, includeBacklog] = args;
+        // v1.2.0 — kindRaw บอกว่ากำลังทำรอบบิลของงานชนิดไหน (แอปรุ่นเก่าไม่ส่งมา = CM เหมือนเดิม)
+        const [username, token, startDate, endDate, jobIds, includeBacklog, kindRaw] = args;
+        const kind = toJobKind(kindRaw);
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ทำรายการนี้ได้' });
-        const candResult = await resolveBillingCandidatePairs(startDate, endDate, jobIds, !!includeBacklog);
+        const candResult = await resolveBillingCandidatePairs(startDate, endDate, jobIds, !!includeBacklog, kind);
         if (candResult.error) return jsonResponse({ success: false, message: candResult.error });
         const candidatePairs = candResult.candidatePairs;
         const roundPeriod = candResult.roundPeriod;
@@ -5885,7 +6372,7 @@ Deno.serve(async (req: Request) => {
         const candidateJobIds = Array.from(new Set(candidatePairs.map((p) => p.jobId)));
         // "เลขงาน+เลขทรัพย์สิน" คู่ไหนที่มีรอบบิลอยู่แล้ว (ถูกจับคู่ไปก่อนหน้า) ไม่นับเป็นตัวอย่างซ้ำ - ให้เห็นแต่ของใหม่จริง ๆ
         // (เดิมเช็คแค่ระดับเลขงาน ทำให้เลขงานที่เคยมีบิลจากการปิดครั้งแรกแล้ว จะไม่มีทางเห็นการปิดครั้งใหม่ ๆ อีกเลย)
-        const { data: alreadyBilledData, error: alreadyBilledErr } = await selectAllIn(candidateJobIds, (chunk) => supabase.from('billing_documents').select('customer_case,asset_id').in('customer_case', chunk));
+        const { data: alreadyBilledData, error: alreadyBilledErr } = await selectAllIn(candidateJobIds, (chunk) => supabase.from(jobTables(kind).billing).select('customer_case,asset_id').in('customer_case', chunk));
         if (alreadyBilledErr) return jsonResponse({ success: false, message: 'ตรวจสอบรอบบิลเดิมล้มเหลว: ' + alreadyBilledErr.message });
         const alreadyBilledSet = new Set((alreadyBilledData || []).map((r: any) => r.customer_case + '||' + (r.asset_id || '-')));
         const newPairs = candidatePairs.filter((p) => !alreadyBilledSet.has(p.jobId + '||' + p.assetId));
@@ -5895,8 +6382,8 @@ Deno.serve(async (req: Request) => {
         }
         const newJobIds = Array.from(new Set(newPairs.map((p) => p.jobId)));
         const [openRes, closeRes, branchesRes] = await Promise.all([
-          selectAllIn(newJobIds, (chunk) => supabase.from('open_issues').select('main_id,branch,service_work,service_type,req_date,contractor').in('main_id', chunk)),
-          selectAllIn(newJobIds, (chunk) => supabase.from('close_issues').select('job_id,branch,asset_id,fix_date').in('job_id', chunk)),
+          selectAllIn(newJobIds, (chunk) => supabase.from(jobTables(kind).open).select('main_id,branch,service_work,service_type,req_date,contractor').in('main_id', chunk)),
+          selectAllIn(newJobIds, (chunk) => supabase.from(jobTables(kind).close).select('job_id,branch,asset_id,fix_date').in('job_id', chunk)),
           selectAll(() => supabase.from('branches').select('branch_code,branch_name')),
         ]);
         if (openRes.error) return jsonResponse({ success: false, message: openRes.error.message });
@@ -5932,14 +6419,16 @@ Deno.serve(async (req: Request) => {
       }
 
       case 'generateBillingDocumentsForAllClosedJobs': {
-        const [username, token, startDate, endDate, jobIds, includeBacklog] = args;
+        // v1.2.0 — รอบบิลของงาน CM กับงาน RE แยกกันคนละชุดเลข และคนละตาราง
+        const [username, token, startDate, endDate, jobIds, includeBacklog, kindRaw] = args;
+        const kind = toJobKind(kindRaw);
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ทำรายการนี้ได้' });
         if ((!jobIds || jobIds.length === 0) && (!startDate || !endDate)) {
           return jsonResponse({ success: false, message: 'ต้องระบุช่วงวันที่ (ตั้งแต่วันที่ และ ถึงวันที่) หรือระบุเลขงานเจาะจง ก่อนถึงจะจับคู่ข้อมูลได้' });
         }
-        const candResult = await resolveBillingCandidatePairs(startDate, endDate, jobIds, !!includeBacklog);
+        const candResult = await resolveBillingCandidatePairs(startDate, endDate, jobIds, !!includeBacklog, kind);
         if (candResult.error) return jsonResponse({ success: false, message: candResult.error });
         const candidatePairs = candResult.candidatePairs;
         const roundPeriod = candResult.roundPeriod;
@@ -5952,76 +6441,22 @@ Deno.serve(async (req: Request) => {
             created: 0, skipped: 0, matchedJobIds: [],
           });
         }
-        const { data: roundNoData, error: roundNoErr } = await supabase.rpc('next_billing_round_no');
-        if (roundNoErr) return jsonResponse({ success: false, message: 'ขอเลขรอบบิลล้มเหลว: ' + roundNoErr.message });
-        const roundNo = roundNoData as number;
-
-        // ระบบจองคิวกันชนกัน (claim_billing_jobs) เดิมออกแบบมาให้จอง "1 เลขงาน = 1 คีย์" เท่านั้น (ก่อนหน้านี้ 1 เลขงาน = 1 บิลเสมอ)
-        // ตอนนี้ 1 เลขงานอาจมีหลายครั้งปิดงาน (คนละเลขทรัพย์สิน) ต้องจองแยกกันเป็นคนละคิวคีย์ - แต่ไม่อยากไปแก้ตัวฟังก์ชัน/ตาราง
-        // จองคิวเดิมที่ไม่รู้โครงสร้างแน่ชัด (เสี่ยงพังระบบบิลทั้งหมด) จึงใช้วิธีสร้าง "คีย์จอง" สมมติแทน: ถ้าคู่ไหนไม่มีเลขทรัพย์สิน
-        // (หรือมีแค่ครั้งเดียว) คีย์จองยังเป็นเลขงานตรง ๆ เหมือนเดิมทุกอย่าง (ไม่กระทบของเก่าเลย) ส่วนคู่ที่มีเลขทรัพย์สินจริง
-        // จะได้คีย์จองที่ต่อท้ายด้วยเลขทรัพย์สิน ทำให้จองคิวแยกกันได้โดยไม่ต้องแก้ claim_billing_jobs เลย
-        function claimKeyOf(p: { jobId: string; assetId: string }): string {
-          return (p.assetId && p.assetId !== '-') ? (p.jobId + '__asset__' + p.assetId) : p.jobId;
+        // v1.3.0 — ไม่ต้องขอเลขรอบใหม่แล้ว รอบคือ "เดือนที่ปิดงาน" ของแต่ละคู่
+        // ตัวสร้างแถวใช้ตัวเดียวกับตอนกดปิดงาน จึงได้กติกาเดียวกันเป๊ะ
+        const gen = await createBillingRowsForPairs(candidatePairs, kind);
+        if (gen.error) return jsonResponse({ success: false, message: gen.error });
+        if (gen.created === 0) {
+          return jsonResponse({
+            success: true,
+            message: 'ไม่มีเลขงานใหม่ให้สร้าง (ทั้งหมดถูกสร้างบิลไปแล้ว/มีแอดมินคนอื่นเพิ่งสร้างไปพร้อมกัน)',
+            created: 0, skipped: gen.skipped, matchedJobIds: [],
+          });
         }
-        const claimKeyToPair: Record<string, { jobId: string; assetId: string }> = {};
-        candidatePairs.forEach((p) => { claimKeyToPair[claimKeyOf(p)] = p; });
-        const candidateClaimKeys = Object.keys(claimKeyToPair);
-
-        const { data: claimedRows, error: claimErr } = await supabase.rpc('claim_billing_jobs', { job_ids: candidateClaimKeys, p_round_no: roundNo });
-        if (claimErr) return jsonResponse({ success: false, message: 'จองเลขงานล้มเหลว: ' + claimErr.message });
-        const claimedKeys: string[] = (claimedRows || []).map((r: any) => r.customer_case);
-        const skippedAlreadyClaimed = candidateClaimKeys.length - claimedKeys.length;
-        if (claimedKeys.length === 0) {
-          return jsonResponse({ success: true, message: 'ไม่มีเลขงานใหม่ให้สร้าง (ทั้งหมดถูกสร้างบิลไปแล้ว/มีแอดมินคนอื่นเพิ่งสร้างไปพร้อมกัน)', created: 0, skipped: skippedAlreadyClaimed, matchedJobIds: [] });
-        }
-        const claimedPairs = claimedKeys.map((k) => claimKeyToPair[k]).filter(Boolean);
-        const claimedJobIds = Array.from(new Set(claimedPairs.map((p) => p.jobId)));
-
-        const [openRes, closeRes] = await Promise.all([
-          selectAllIn(claimedJobIds, (chunk) => supabase.from('open_issues').select('*').in('main_id', chunk)),
-          selectAllIn(claimedJobIds, (chunk) => supabase.from('close_issues').select('*').in('job_id', chunk)),
-        ]);
-        if (openRes.error) return jsonResponse({ success: false, message: openRes.error.message });
-        if (closeRes.error) return jsonResponse({ success: false, message: closeRes.error.message });
-        const openByJob: Record<string, any> = {};
-        (openRes.data || []).forEach((o: any) => { if (!openByJob[o.main_id]) openByJob[o.main_id] = o; });
-        const closeByPair: Record<string, any> = {};
-        (closeRes.data || []).forEach((c: any) => { closeByPair[c.job_id + '||' + (c.asset_id || '-')] = c; });
-        const { data: branchesData } = await selectAll(() => supabase.from('branches').select('branch_code,branch_name'));
-        const branchMap: Record<string, string> = {};
-        (branchesData || []).forEach((b: any) => { if (b.branch_code) branchMap[b.branch_code] = b.branch_name; });
-        const contractorSeqCounters: Record<string, number> = {};
-        const rowsToInsert: any[] = [];
-        // ใช้ for..of ไม่ใช่ forEach เพราะข้างในต้อง await หาราคาอะไหล่จากตาราง parts
-        for (const p of claimedPairs) {
-          const openRecord = openByJob[p.jobId] || null;
-          const closeRecord = closeByPair[p.jobId + '||' + p.assetId] || null;
-          const contractorKey = (openRecord && openRecord.contractor) || '__ไม่มีผู้รับเหมา__';
-          contractorSeqCounters[contractorKey] = (contractorSeqCounters[contractorKey] || 0) + 1;
-          const seq = contractorSeqCounters[contractorKey];
-          const rawBranchText = (closeRecord && closeRecord.branch) || (openRecord && openRecord.branch) || '';
-          let branchCode: string | null = null; let branchName: string | null = null;
-          const codeMatch = rawBranchText.toString().match(/^\d+/);
-          if (codeMatch) { branchCode = codeMatch[0]; branchName = branchMap[branchCode] || rawBranchText; }
-          else if (rawBranchText) { branchName = rawBranchText; }
-          const headFields = {
-            seq, round_no: roundNo, round_period: roundPeriod, customer_case: p.jobId, branch_code: branchCode, branch_name: branchName,
-            service_type: openRecord ? (openRecord.service_work || openRecord.service_type || '-') : '-',
-            asset_id: closeRecord ? (closeRecord.asset_id || '-') : p.assetId, req_date: openRecord ? (openRecord.req_date || '-') : '-',
-            visit_date: closeRecord ? (closeRecord.fix_date || '-') : '-', contractor: openRecord ? (openRecord.contractor || null) : null, synced_to_sheet: false,
-          };
-          // v1.0.68 — กางอะไหล่ที่กรอกไว้ตอนปิดงานออกเป็นแถวละชิ้น พร้อมประเภทเก็บเงินของชิ้นนั้น
-          const partRows = await billingPartRowsFromCloseRow(closeRecord);
-          partRows.forEach((pf: any) => { rowsToInsert.push(Object.assign({}, headFields, pf)); });
-        }
-        const { error: insertErr } = await supabase.from('billing_documents').insert(sameShapeRows(rowsToInsert));
-        if (insertErr) {
-          await supabase.from('billing_job_registry').delete().in('customer_case', claimedKeys);
-          return jsonResponse({ success: false, message: 'สร้างแถวตารางวางบิลล้มเหลว: ' + insertErr.message });
-        }
-        const message = 'สร้างสำเร็จ ' + claimedPairs.length + ' รายการ (รอบบิลที่ ' + roundNo + ')' + (skippedAlreadyClaimed > 0 ? ' | ข้าม ' + skippedAlreadyClaimed + ' รายการที่มีบิลอยู่แล้ว' : '');
-        return jsonResponse({ success: true, message, created: claimedPairs.length, skipped: skippedAlreadyClaimed, matchedJobIds: claimedJobIds, roundNo });
+        return jsonResponse({
+          success: true,
+          message: 'สร้างสำเร็จ ' + gen.created + ' รายการ (' + gen.rounds.map((r) => billingRoundLabel(r)).join(' · ') + ')',
+          created: gen.created, skipped: gen.skipped, matchedJobIds: gen.jobIds, roundNo: gen.rounds[0],
+        });
       }
 
       // ==================== เมนู "PM" — วางบิลงาน Preventive Maintenance (ดึงจากระบบ PM คนละโปรเจกต์ Supabase) ====================
@@ -6338,7 +6773,7 @@ Deno.serve(async (req: Request) => {
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ทำรายการนี้ได้' });
-        const { data: rows, error } = await selectAll(() => supabase.from('billing_documents').select('id,customer_case,seq,round_no,contractor').order('round_no', { ascending: true }).order('seq', { ascending: true }).order('created_at', { ascending: true }));
+        const { data: rows, error } = await selectAll(() => supabase.from(jobTables(toJobKind(args[2])).billing).select('id,customer_case,seq,round_no,contractor').order('round_no', { ascending: true }).order('seq', { ascending: true }).order('created_at', { ascending: true }));
         if (error) return jsonResponse({ success: false, message: 'ดึงข้อมูลล้มเหลว: ' + error.message });
         const seqMapPerGroup: Record<string, Record<string, number>> = {};
         const nextSeqPerGroup: Record<string, number> = {};
@@ -6359,7 +6794,7 @@ Deno.serve(async (req: Request) => {
           }
         });
         for (const key of Object.keys(updateBatches)) {
-          await supabase.from('billing_documents').update({ seq: updateBatches[key].seq }).in('id', updateBatches[key].ids);
+          await supabase.from(jobTables(toJobKind(args[2])).billing).update({ seq: updateBatches[key].seq }).in('id', updateBatches[key].ids);
         }
         const totalGroups = Object.keys(nextSeqPerGroup).length;
         const message = 'จัดลำดับใหม่เรียบร้อย: แก้ไข ' + changedCount + ' แถว จากทั้งหมด ' + (rows || []).length + ' แถว (แยกคำนวณตามรอบบิล+ผู้รับเหมา รวม ' + totalGroups + ' กลุ่ม)';
@@ -6371,7 +6806,11 @@ Deno.serve(async (req: Request) => {
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่ทำรายการนี้ได้' });
-        const { data: sourceData, error: sourceErr } = await supabase.from('billing_documents').select('*').eq('id', sourceId).limit(1);
+        // v1.2.0 — แถวนี้อยู่ตารางบิลของงาน CM หรือ RE ต้องถามก่อนถึงจะแก้ถูกตาราง
+        const __bk = await resolveBillingKind([sourceId]);
+        if (!__bk.kind) return jsonResponse({ success: false, error: __bk.message, message: __bk.message });
+        const __BT_billing = jobTables(__bk.kind).billing;
+        const { data: sourceData, error: sourceErr } = await supabase.from(__BT_billing).select('*').eq('id', sourceId).limit(1);
         if (sourceErr || !sourceData || sourceData.length === 0) return jsonResponse({ success: false, message: 'ไม่พบแถวต้นฉบับ' });
         const src = sourceData[0];
         // แถวเปล่า (ยังไม่มี part_code) ของเลขงานนี้ จะถูกนำมาใช้เป็นแถวแรกแทนการสร้างแถวใหม่ กันแถวว่างค้างในตาราง
@@ -6380,7 +6819,7 @@ Deno.serve(async (req: Request) => {
         // ระบบไปเจอแถวเปล่าของทรัพย์สินชิ้น A ก่อน แล้วเขียนทับ ทำให้อะไหล่ไปติดผิดเลขทรัพย์สิน
         // และแถวของชิ้น A ก็หายไปจากตารางด้วย
         const srcAssetId = (src.asset_id === null || src.asset_id === undefined) ? null : src.asset_id;
-        let emptyRowQuery = supabase.from('billing_documents').select('id').eq('customer_case', src.customer_case).is('part_code', null);
+        let emptyRowQuery = supabase.from(__BT_billing).select('id').eq('customer_case', src.customer_case).is('part_code', null);
         emptyRowQuery = (srcAssetId === null) ? emptyRowQuery.is('asset_id', null) : emptyRowQuery.eq('asset_id', srcAssetId);
         const { data: emptyRowData } = await emptyRowQuery.limit(1);
         let emptyRowId: string | null = (emptyRowData && emptyRowData.length > 0) ? emptyRowData[0].id : null;
@@ -6445,7 +6884,7 @@ Deno.serve(async (req: Request) => {
             };
           }
           if (emptyRowId) {
-            const { error: updErr } = await supabase.from('billing_documents').update(partFields).eq('id', emptyRowId);
+            const { error: updErr } = await supabase.from(__BT_billing).update(partFields).eq('id', emptyRowId);
             if (!updErr) created++; else errors.push(partCode + ': ' + updErr.message);
             emptyRowId = null;
           } else {
@@ -6454,7 +6893,7 @@ Deno.serve(async (req: Request) => {
               branch_code: src.branch_code, branch_name: src.branch_name, service_type: src.service_type, asset_id: src.asset_id,
               req_date: src.req_date, visit_date: src.visit_date, responsible: src.responsible, contractor: src.contractor, synced_to_sheet: false,
             }, partFields);
-            const { error: insErr } = await supabase.from('billing_documents').insert(row);
+            const { error: insErr } = await supabase.from(__BT_billing).insert(row);
             if (!insErr) created++; else errors.push(partCode + ': ' + insErr.message);
           }
         }
@@ -6468,7 +6907,7 @@ Deno.serve(async (req: Request) => {
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ error: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ error: 'เฉพาะแอดมินเท่านั้นที่ดูรายการนี้ได้' });
-        const { data, error } = await selectAll(() => supabase.from('billing_documents').select('round_no,round_period,contractor,total_price,total_price_contractor,completed_at,billing_type').not('completed_at', 'is', null).order('completed_at', { ascending: false }));
+        const { data, error } = await selectAll(() => supabase.from(jobTables(toJobKind(args[2])).billing).select('round_no,round_period,contractor,total_price,total_price_contractor,completed_at,billing_type').not('completed_at', 'is', null).order('completed_at', { ascending: false }));
         if (error) return jsonResponse({ error: error.message });
         const groups: Record<string, any> = {};
         (data || []).forEach((r: any) => {
@@ -6498,7 +6937,7 @@ Deno.serve(async (req: Request) => {
         if (!session.valid) return jsonResponse({ error: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ error: 'เฉพาะแอดมินเท่านั้นที่ดูรายการนี้ได้' });
         if (roundNo === undefined || roundNo === null || roundNo === '') return jsonResponse({ error: 'ไม่พบเลขรอบบิล' });
-        const { data, error } = await supabase.from('billing_documents').select('*').eq('round_no', roundNo).eq('contractor', contractor || '').not('completed_at', 'is', null).order('seq', { ascending: true }).order('customer_case', { ascending: true }).order('created_at', { ascending: true });
+        const { data, error } = await supabase.from(jobTables(toJobKind(args[4])).billing).select('*').eq('round_no', roundNo).eq('contractor', contractor || '').not('completed_at', 'is', null).order('seq', { ascending: true }).order('customer_case', { ascending: true }).order('created_at', { ascending: true });
         if (error) return jsonResponse({ error: error.message });
         const rows = data || [];
         const jobIds = Array.from(new Set(rows.map((r: any) => r.customer_case).filter(Boolean)));
@@ -6520,9 +6959,9 @@ Deno.serve(async (req: Request) => {
         const session = await verifySession(username, token);
         if (!session.valid || session.role !== 'admin') return jsonResponse({ pendingCount: 0, pausedCount: 0 });
         const [openRes, closeRes, pausedRes] = await Promise.all([
-          selectAll(() => supabase.from('open_issues').select('main_id')),
-          selectAll(() => supabase.from('close_issues').select('job_id')),
-          supabase.from('pause_records').select('id').eq('status', 'paused'),
+          selectAllBothKinds((t) => t.open, (table) => supabase.from(table).select('main_id')),
+          selectAllBothKinds((t) => t.close, (table) => supabase.from(table).select('job_id')),
+          selectAllBothKinds((t) => t.pause, (table) => supabase.from(table).select('id').eq('status', 'paused')),
         ]);
         let pendingCount = 0;
         if (!openRes.error && !closeRes.error) {
@@ -6547,7 +6986,7 @@ Deno.serve(async (req: Request) => {
         const openCheck = await checkOpenIssueExists(mainId);
         if (openCheck.error) return jsonResponse({ success: false, message: 'ตรวจสอบเลขงานล้มเหลว: ' + openCheck.error });
         if (!openCheck.exists) return jsonResponse({ success: false, message: 'ไม่พบการเปิดงานเลขที่ "' + mainId + '" ในระบบ กรุณาบันทึก "เปิดงาน" ก่อน' });
-        const { data: activeData } = await supabase.from('pause_records').select('id').eq('main_id', mainId).eq('status', 'paused').limit(1);
+        const { data: activeData } = await supabase.from(jobTablesOf(mainId).pause).select('id').eq('main_id', mainId).eq('status', 'paused').limit(1);
         if (activeData && activeData.length > 0) return jsonResponse({ success: false, message: 'เลขงาน "' + mainId + '" ถูกพักอยู่แล้ว ไม่สามารถพักซ้ำได้ กรุณากด "กลับมาทำงาน" ก่อน' });
         const row = {
           main_id: mainId, reason, note: (f.note || '').toString().trim() || null, branch: (f.branch || '').toString().trim() || null,
@@ -6555,7 +6994,7 @@ Deno.serve(async (req: Request) => {
           requested_item: (f.request || '').toString().trim() || null, paused_by: (f.pausedBy || '').toString().trim() || null,
           status: 'paused', synced_to_sheet: false,
         };
-        const { error } = await supabase.from('pause_records').insert(row);
+        const { error } = await supabase.from(jobTablesOf(mainId).pause).insert(row);
         if (error) return jsonResponse({ success: false, message: 'บันทึกล้มเหลว: ' + error.message });
         await invalidateAdminBadgeCountsCache();
         return jsonResponse({ success: true, message: 'บันทึกพักงานเรียบร้อย! (Sheet จะอัปเดตเป็นรอบ ๆ ภายในไม่กี่นาที)' });
@@ -6566,10 +7005,10 @@ Deno.serve(async (req: Request) => {
         const gate = await adminGate(username, token);
         if (!gate.ok) return jsonResponse({ success: false, message: gate.message });
         if (!mainId) return jsonResponse({ success: false, message: 'ต้องระบุเลขที่งาน' });
-        const { data: active, error: activeErr } = await supabase.from('pause_records').select('id').eq('main_id', mainId).eq('status', 'paused').order('paused_at', { ascending: false }).limit(1);
+        const { data: active, error: activeErr } = await supabase.from(jobTablesOf(mainId).pause).select('id').eq('main_id', mainId).eq('status', 'paused').order('paused_at', { ascending: false }).limit(1);
         if (activeErr) return jsonResponse({ success: false, message: activeErr.message });
         if (!active || active.length === 0) return jsonResponse({ success: false, message: 'ไม่พบรายการพักงานที่ยังเปิดอยู่สำหรับเลขงานนี้' });
-        const { error } = await supabase.from('pause_records').update({ status: 'resumed', resumed_at: new Date().toISOString(), resumed_by: resumedBy || null }).eq('id', active[0].id);
+        const { error } = await supabase.from(jobTablesOf(mainId).pause).update({ status: 'resumed', resumed_at: new Date().toISOString(), resumed_by: resumedBy || null }).eq('id', active[0].id);
         if (error) return jsonResponse({ success: false, message: error.message });
         await invalidateAdminBadgeCountsCache();
         return jsonResponse({ success: true, message: 'บันทึกกลับมาทำงานเรียบร้อย!' });
@@ -6579,7 +7018,8 @@ Deno.serve(async (req: Request) => {
         const [username, token] = args;
         const gate = await adminGate(username, token);
         if (!gate.ok) return jsonResponse({ error: gate.message });
-        const { data, error } = await supabase.from('pause_records').select('*').eq('status', 'paused').order('paused_at', { ascending: false }).limit(1000);
+        const { data, error } = await selectAllBothKinds((t) => t.pause,
+          (table) => supabase.from(table).select('*').eq('status', 'paused').order('paused_at', { ascending: false }));
         if (error) return jsonResponse({ error: error.message });
         return jsonResponse(data);
       }
@@ -6589,7 +7029,7 @@ Deno.serve(async (req: Request) => {
         const gate = await adminGate(username, token);
         if (!gate.ok) return jsonResponse({ error: gate.message });
         if (!mainId) return jsonResponse({ error: 'ต้องระบุเลขที่งาน' });
-        const { data, error } = await supabase.from('pause_records').select('*').eq('main_id', mainId).order('paused_at', { ascending: false }).limit(200);
+        const { data, error } = await supabase.from(jobTablesOf(mainId).pause).select('*').eq('main_id', mainId).order('paused_at', { ascending: false }).limit(200);
         if (error) return jsonResponse({ error: error.message });
         return jsonResponse(data);
       }
@@ -6607,13 +7047,13 @@ Deno.serve(async (req: Request) => {
           const pc = await checkIssuePausedStatus(id);
           if (pc.error) return { success: false, message: 'ตรวจสอบสถานะพักงานล้มเหลว: ' + pc.error };
           if (!pc.paused) return { success: false, message: 'แก้ไขข้อมูลเปิดงานได้เฉพาะตอนที่เลขงานนี้ "กำลังพักงานอยู่" เท่านั้น' };
-          const { data: existing, error: existErr } = await supabase.from('open_issues').select('id').eq('main_id', id).order('created_at', { ascending: false }).limit(1);
+          const { data: existing, error: existErr } = await supabase.from(jobTablesOf(id).open).select('id').eq('main_id', id).order('created_at', { ascending: false }).limit(1);
           if (existErr) return { success: false, message: existErr.message };
           if (!existing || existing.length === 0) return { success: false, message: 'ไม่พบข้อมูลเปิดงานของเลขที่ "' + id + '"' };
           const allowedKeys = ['service_type', 'contract_type', 'req_date', 'service_work', 'service_issue', 'branch', 'details', 'contractor'];
           const patch: any = {};
           allowedKeys.forEach((key) => { if (flds && Object.prototype.hasOwnProperty.call(flds, key)) patch[key] = flds[key]; });
-          const { error } = await supabase.from('open_issues').update(patch).eq('id', existing[0].id);
+          const { error } = await supabase.from(jobTablesOf(id).open).update(patch).eq('id', existing[0].id);
           if (error) return { success: false, message: 'แก้ไขล้มเหลว: ' + error.message };
           return { success: true, message: 'แก้ไขข้อมูลเปิดงานเรียบร้อย!' };
         }
@@ -6621,13 +7061,13 @@ Deno.serve(async (req: Request) => {
           const id = (pid || '').toString().trim();
           const jobId = (mid || '').toString().trim();
           if (!id || !jobId) return { success: false, message: 'ต้องระบุรายการพักงานและเลขที่งาน' };
-          const { data: active, error: activeErr } = await supabase.from('pause_records').select('id').eq('id', id).eq('main_id', jobId).eq('status', 'paused').limit(1);
+          const { data: active, error: activeErr } = await supabase.from(jobTablesOf(jobId).pause).select('id').eq('id', id).eq('main_id', jobId).eq('status', 'paused').limit(1);
           if (activeErr) return { success: false, message: activeErr.message };
           if (!active || active.length === 0) return { success: false, message: 'ไม่พบรายการพักงานนี้ หรือเลขงานนี้กลับมาทำงานไปแล้ว จึงแก้ไขไม่ได้' };
           const allowedKeys = ['reason', 'note', 'branch', 'service_type', 'cause', 'requested_item'];
           const patch: any = {};
           allowedKeys.forEach((key) => { if (flds && Object.prototype.hasOwnProperty.call(flds, key)) patch[key] = flds[key] || null; });
-          const { error } = await supabase.from('pause_records').update(patch).eq('id', id);
+          const { error } = await supabase.from(jobTablesOf(jobId).pause).update(patch).eq('id', id);
           if (error) return { success: false, message: 'แก้ไขล้มเหลว: ' + error.message };
           return { success: true, message: 'แก้ไขข้อมูลพักงานเรียบร้อย!' };
         }
@@ -6651,7 +7091,7 @@ Deno.serve(async (req: Request) => {
         if (!gate.ok) return jsonResponse({ error: gate.message });
         const id = (mainId || '').toString().trim();
         if (!id) return jsonResponse({ error: 'ต้องระบุเลขที่งาน' });
-        const { data, error } = await supabase.from('open_issues').select('*').eq('main_id', id).order('created_at', { ascending: false }).limit(1);
+        const { data, error } = await supabase.from(jobTablesOf(id).open).select('*').eq('main_id', id).order('created_at', { ascending: false }).limit(1);
         if (error) return jsonResponse({ error: error.message });
         return jsonResponse(data && data.length > 0 ? data[0] : null);
       }
@@ -6679,11 +7119,11 @@ Deno.serve(async (req: Request) => {
         const closeSelect = 'job_id,asset_id,branch,parts,parts_json,created_at';
         let closeRows: any[] = [];
         if (isAdminView) {
-          const res = await selectAll(() => supabase.from('close_issues').select(closeSelect).order('created_at', { ascending: false }));
+          const res = await selectAllBothKinds((t) => t.close, (table) => supabase.from(table).select(closeSelect).order('created_at', { ascending: false }));
           if (res.error) return jsonResponse({ error: res.error.message });
           closeRows = res.data;
         } else {
-          const { data: myOpen, error: myOpenErr } = await selectAll(() => supabase.from('open_issues')
+          const { data: myOpen, error: myOpenErr } = await selectAllBothKinds((t) => t.open, (table) => supabase.from(table)
             .select('main_id').eq('contractor', session.displayName));
           if (myOpenErr) return jsonResponse({ error: myOpenErr.message });
           const myJobIds = Array.from(new Set((myOpen || []).map((o: any) => o.main_id).filter(Boolean))) as string[];
@@ -6692,7 +7132,7 @@ Deno.serve(async (req: Request) => {
           // ผู้รับเหมาที่มีงานสะสมเกินราว 400 งาน URL จะยาวเกินจนคำขอพัง แล้วแท็บแบบฟอร์มรูปจะว่างทั้งแท็บ)
           for (let i = 0; i < myJobIds.length; i += 200) {
             const chunk = myJobIds.slice(i, i + 200);
-            const res = await selectAll(() => supabase.from('close_issues').select(closeSelect).in('job_id', chunk));
+            const res = await selectAllInBothKinds((t) => t.close, chunk, (table, c2) => supabase.from(table).select(closeSelect).in('job_id', c2));
             if (res.error) return jsonResponse({ error: res.error.message });
             res.data.forEach((r: any) => closeRows.push(r));
           }
@@ -6718,9 +7158,12 @@ Deno.serve(async (req: Request) => {
 
         // เติมชื่อผู้รับเหมา/งานบริการจาก open_issues และชื่อสาขาจากตาราง branches
         const openInfo: Record<string, any> = {};
-        for (let i = 0; i < jobIdsForForm.length; i += 200) {
-          const { data: oi } = await supabase.from('open_issues')
-            .select('main_id,contractor,branch,service_work,service_type').in('main_id', jobIdsForForm.slice(i, i + 200));
+        {
+          // v1.2.0 — แยกเลขงานตามชนิดก่อน แล้วอ่านจากตารางเปิดงานของชนิดนั้น ๆ
+          // (ห้ามเดาชนิดจากเลขตัวแรกของก้อน เพราะก้อนเดียวมีทั้ง CM และ RE ปนกันได้)
+          const { data: oi } = await selectAllInBothKinds((t) => t.open, jobIdsForForm,
+            (table, chunk) => supabase.from(table)
+              .select('main_id,contractor,branch,service_work,service_type').in('main_id', chunk));
           (oi || []).forEach((o: any) => { openInfo[o.main_id] = o; });
         }
         const { data: branchRows } = await selectAll(() => supabase.from('branches').select('branch_code,branch_name'));
@@ -6898,7 +7341,7 @@ Deno.serve(async (req: Request) => {
         // แล้วงานจะถูกปิดว่าเสร็จสิ้นทั้งที่รูปยังไม่ผ่าน
         if (decision === 'rejected') {
           // งานที่ตัดบิลไปแล้วดึงกลับมาไม่ได้ เพราะเงินถูกตัดไปแล้ว
-          const { count: doneCount } = await supabase.from('billing_documents')
+          const { count: doneCount } = await supabase.from(jobTablesOf(jobId).billing)
             .select('id', { count: 'exact', head: true })
             .eq('customer_case', jobId).not('completed_at', 'is', null);
           if ((doneCount || 0) > 0) {
@@ -6947,18 +7390,38 @@ Deno.serve(async (req: Request) => {
         }
         if (appErr) return jsonResponse({ success: false, message: 'ยืนยันรูปไม่สำเร็จ: ' + appErr.message });
 
+        // ==================== v1.3.0 — ยืนยันรูปแล้วส่งบิลให้เลย ====================
+        // เดิมยืนยันรูปเสร็จ แอดมินต้องไปกดปุ่ม "ส่งบิล" อีกรอบ ซึ่งเป็นขั้นที่ไม่ได้ตัดสินใจอะไรเพิ่ม
+        // (ด่าน "ต้องยืนยันรูปก่อนส่งบิล" เพิ่งผ่านไปเมื่อกี้) ตอนนี้ส่งของเลขงานนั้นให้อัตโนมัติ
+        //
+        // ⚠ ส่งไม่สำเร็จ "ห้ามทำให้การยืนยันรูปล้มเหลว" — รูปยืนยันไปแล้วจริง
+        //   ถ้าโยน error กลับไป ผู้ใช้จะกดยืนยันซ้ำแล้วติดว่า "ยืนยันไปแล้ว" ทั้งที่สำเร็จ
+        //   บิลที่ยังไม่ถูกส่งยังกดปุ่ม "ส่งบิล" เองได้เสมอ จึงแค่บอกให้รู้ก็พอ
+        let autoSent = 0;
+        let autoSendNote = '';
+        if (jobId) {
+          try {
+            const r = await autoSendBillsForJob(jobId);
+            autoSent = r.sent;
+            if (r.error) autoSendNote = ' (ส่งบิลอัตโนมัติไม่สำเร็จ: ' + r.error + ' — กดปุ่ม "ส่งบิล" เองได้)';
+            else if (r.incomplete > 0) autoSendNote = ' — ยังมี ' + r.incomplete + ' แถวที่กรอก Part Code/จำนวนไม่ครบ จึงยังไม่ได้ส่ง';
+          } catch (e) {
+            autoSendNote = ' (ส่งบิลอัตโนมัติไม่สำเร็จ — กดปุ่ม "ส่งบิล" เองได้)';
+          }
+        }
+
         // ---- ปิดบิลของงานเก่าที่ยังเดินตามลำดับเดิม ----
         // แถวที่ส่งบิลไปก่อนมีระบบตรวจรับของผู้รับเหมา (contractor_review_status เป็น null)
         // ไม่มีใครมากดยืนยันฝั่งผู้รับเหมาให้ ถ้าไม่ปิดตรงนี้จะค้างถาวร
         // ส่วนแถวที่อยู่ในระบบใหม่ ปล่อยให้ completeBillingJobIfReady เป็นคนตัดสิน
         let legacyClosed = 0;
         if (jobId) {
-          let res = await supabase.from('billing_documents')
+          let res = await supabase.from(jobTablesOf(jobId).billing)
             .update({ completed_at: nowIso })
             .eq('customer_case', jobId).eq('sent_to_contractor', true)
             .is('completed_at', null).is('contractor_review_status', null).select('id');
           if (res.error && /column|schema cache/i.test(res.error.message || '')) {
-            res = await supabase.from('billing_documents')
+            res = await supabase.from(jobTablesOf(jobId).billing)
               .update({ completed_at: nowIso })
               .eq('customer_case', jobId).eq('sent_to_contractor', true)
               .is('completed_at', null).select('id');
@@ -6971,11 +7434,11 @@ Deno.serve(async (req: Request) => {
         let newFlowClosed = 0;
         let waitingContractor = 0;
         if (jobId) {
-          const { data: roundRows } = await supabase.from('billing_documents')
+          const { data: roundRows } = await supabase.from(jobTablesOf(jobId).billing)
             .select('round_no').eq('customer_case', jobId).is('completed_at', null);
           const rounds = Array.from(new Set((roundRows || []).map((r: any) => r.round_no)));
           for (const rn of rounds) newFlowClosed += await completeBillingJobIfReady(jobId, rn);
-          const { count: pendingCount } = await supabase.from('billing_documents')
+          const { count: pendingCount } = await supabase.from(jobTablesOf(jobId).billing)
             .select('id', { count: 'exact', head: true })
             .eq('customer_case', jobId).is('completed_at', null)
             .in('contractor_review_status', ['pending', 'rejected']);
@@ -6987,6 +7450,9 @@ Deno.serve(async (req: Request) => {
         if (closedTotal > 0) message += ' — ครบเงื่อนไขเสร็จสิ้น ตัดบิล ' + closedTotal + ' แถวของเลขงานนี้แล้ว';
         else if (waitingContractor > 0) message += ' — ยังไม่เสร็จสิ้น เพราะบิล ' + waitingContractor + ' แถวรอผู้รับเหมายืนยันอยู่ (เสร็จสิ้น = ยืนยันรูป + ผู้รับเหมายืนยันรอบบิล)';
         else message += ' — ยังไม่ได้ส่งบิลให้ผู้รับเหมา งานจะเสร็จสิ้นเมื่อส่งบิลแล้วผู้รับเหมายืนยันครบ';
+        // v1.3.0 — บอกผลการส่งบิลอัตโนมัติต่อท้ายเสมอ ผู้ใช้จะได้รู้ว่าต้องไปกดส่งเองไหม
+        if (autoSent > 0) message += ' · ส่งบิลให้ผู้รับเหมาแล้ว ' + autoSent + ' แถว';
+        if (autoSendNote) message += autoSendNote;
         if (historyColumnsMissing) message += ' · ⚠ ยังไม่ได้บันทึกประวัติผู้กด เพราะฐานข้อมูลยังไม่มีคอลัมน์ checker_* (ให้รัน SQL v1.0.62)';
         return jsonResponse({ success: true, message });
       }
@@ -7001,13 +7467,13 @@ Deno.serve(async (req: Request) => {
           // เงื่อนไขเดิม sent_to_contractor = true ใช้ไม่ได้อีกต่อไป เพราะตอนส่งรูปยังไม่มีบิลด้วยซ้ำ
           // เจ้าของงานดูจาก open_issues.contractor (close_issues ไม่เก็บชื่อผู้รับเหมา)
           const { data: closeRowsUp, error: closeUpErr } = await supabase
-            .from('close_issues').select('job_id,branch').eq('job_id', jobId).limit(1);
+            .from(jobTablesOf(jobId).close).select('job_id,branch').eq('job_id', jobId).limit(1);
           if (closeUpErr) return jsonResponse({ success: false, message: closeUpErr.message });
           if (!closeRowsUp || closeRowsUp.length === 0) {
             return jsonResponse({ success: false, message: 'เลขงาน "' + jobId + '" ยังไม่ได้ปิดงาน จึงยังส่งฟอร์มแนบรูปไม่ได้' });
           }
           const { data: openRowsUp } = await supabase
-            .from('open_issues').select('main_id,contractor,branch').eq('main_id', jobId).limit(1);
+            .from(jobTablesOf(jobId).open).select('main_id,contractor,branch').eq('main_id', jobId).limit(1);
           const openUp = (openRowsUp && openRowsUp.length > 0) ? openRowsUp[0] : {};
           const jobRecord: any = {
             customer_case: jobId,
@@ -7161,7 +7627,7 @@ Deno.serve(async (req: Request) => {
           return jsonResponse({ success: false, message: 'ไม่มีสิทธิ์ดูข้อมูลรอบบิลของผู้รับเหมาอื่น' });
         }
         if (roundNo === undefined || roundNo === null || roundNo === '') return jsonResponse({ success: false, message: 'ไม่พบเลขรอบบิล' });
-        let q = supabase.from('billing_documents').select('*').eq('round_no', roundNo).eq('contractor', contractorName).order('seq', { ascending: true }).order('created_at', { ascending: true });
+        let q = supabase.from(jobTables(toJobKind(args[4])).billing).select('*').eq('round_no', roundNo).eq('contractor', contractorName).order('seq', { ascending: true }).order('created_at', { ascending: true });
         // PDF ของแอดมิน = ใบวางบิลฝั่ง CJ จึงต้องตัดทั้งเคลมประกัน 3 เดือน (ไม่เก็บทั้ง 2 ฝั่ง) และเคลมอะไหล่ (เก็บเฉพาะฝั่งผู้รับเหมา) ออก
         // PDF ของผู้รับเหมา = ตัดเฉพาะเคลมประกัน 3 เดือน (เดิมตรงนี้ไม่ได้กรองเลย ทำให้ผู้รับเหมาโหลด PDF ย้อนหลังแล้วเจอรายการเคลมโผล่มา)
         if (session.role === 'admin') q = excludeBillingTypes(q.or('sent_to_contractor.eq.true,completed_at.not.is.null'), BILLING_TYPES_EXCLUDED_FROM_CJ);
@@ -7175,7 +7641,7 @@ Deno.serve(async (req: Request) => {
         const pdfResult = await generateBillingPdfBase64(renumberBillingRowsForDocument(data), isAdmin);
         if (pdfResult.success) {
           const safeContractor = contractorName ? contractorName.replace(/[\\/:*?"<>|]/g, '_') : 'ไม่มีผู้รับเหมา';
-          pdfResult.filename = 'ตารางวางบิล_รอบ' + roundNo + '_' + safeContractor + '.pdf';
+          pdfResult.filename = 'ตารางวางบิล_' + billingRoundLabel(roundNo).replace(/\s/g, '') + '_' + safeContractor + '.pdf';
         }
         return jsonResponse(pdfResult);
       }
@@ -7186,7 +7652,7 @@ Deno.serve(async (req: Request) => {
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         const cleanJobId = (jobId || '').toString().trim();
         if (!cleanJobId) return jsonResponse({ success: false, message: 'ไม่พบเลขที่ใบแจ้งซ่อมบำรุง' });
-        let q = supabase.from('billing_documents').select('*').eq('customer_case', cleanJobId).order('seq', { ascending: true }).order('created_at', { ascending: true });
+        let q = supabase.from(jobTablesOf(cleanJobId).billing).select('*').eq('customer_case', cleanJobId).order('seq', { ascending: true }).order('created_at', { ascending: true });
         // ใบเขียวฝั่ง CJ (แอดมิน) ตัดเคลมประกัน 3 เดือน + เคลมอะไหล่ ออก / ใบเขียวผู้รับเหมาตัดเฉพาะเคลมประกัน 3 เดือน
         if (session.role === 'admin') q = excludeBillingTypes(q.or('sent_to_contractor.eq.true,completed_at.not.is.null'), BILLING_TYPES_EXCLUDED_FROM_CJ);
         else q = excludeBillingTypes(q.eq('contractor', session.displayName).eq('sent_to_contractor', true), BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
@@ -7215,15 +7681,17 @@ Deno.serve(async (req: Request) => {
         // เหตุผล: ฟอร์มต้องพร้อมให้กรอกตั้งแต่ "ปิดงาน" ซึ่งเป็นตอนที่ยังไม่มีแถวในตารางวางบิลเลยสักแถว
         // ถ้ายังอ่านจาก billing_documents เหมือนเดิม ผู้รับเหมาจะกดขอไฟล์ไม่ได้จนกว่าแอดมินจะดึงเข้ารอบบิล
         // ซึ่งขัดกับลำดับใหม่ทั้งหมด (รูปต้องมาก่อนบิล)
-        const { data: closeForForm, error: closeFormErr } = await selectAllIn(jobIds, (chunk) => supabase
-          .from('close_issues').select('job_id,asset_id,branch,parts,parts_json')
-          .in('job_id', chunk).order('created_at', { ascending: true }));
+        const { data: closeForForm, error: closeFormErr } = await selectAllInBothKinds((t) => t.close, jobIds,
+          (table, chunk) => supabase.from(table).select('job_id,asset_id,branch,parts,parts_json')
+            .in('job_id', chunk).order('created_at', { ascending: true }));
         if (closeFormErr) return jsonResponse({ success: false, message: 'ดึงข้อมูลล้มเหลว: ' + closeFormErr.message });
         // ผู้รับเหมาเจ้าของงานและชื่องานบริการอยู่ที่ open_issues
         const openForForm: Record<string, any> = {};
-        for (let i = 0; i < jobIds.length; i += 200) {
-          const { data: oi } = await supabase.from('open_issues')
-            .select('main_id,contractor,branch,service_work,service_type').in('main_id', jobIds.slice(i, i + 200));
+        {
+          // v1.2.0 — แยกเลขงานตามชนิดก่อน (ก้อนเดียวมีทั้ง CM และ RE ปนกันได้)
+          const { data: oi } = await selectAllInBothKinds((t) => t.open, jobIds,
+            (table, chunk) => supabase.from(table)
+              .select('main_id,contractor,branch,service_work,service_type').in('main_id', chunk));
           (oi || []).forEach((o: any) => { openForForm[o.main_id] = o; });
         }
         const { data: branchRowsForm } = await selectAll(() => supabase.from('branches').select('branch_code,branch_name'));
@@ -7319,7 +7787,10 @@ Deno.serve(async (req: Request) => {
         // เช็คด้วย Array.isArray ไม่ใช่ความยาว เพราะ "ติ๊กเฉพาะแท็บรายงานสถานะอย่างเดียว" จะส่ง [] มาอย่างถูกต้อง
         // ถ้าเผลอตีความ [] ว่า "ไม่ได้ระบุ" จะกลายเป็นซิงค์ทุกตารางสวนทางกับที่ผู้ใช้เลือก
         const wanted: string[] | null = Array.isArray(wantedTables) ? wantedTables.map((s: any) => String(s)) : null;
-        const tablesToSync = wanted ? SYNC_TABLE_REGISTRY.filter((t) => wanted.indexOf(t.table) !== -1) : SYNC_TABLE_REGISTRY;
+        // ติ๊ก "เปิดงาน" (ชื่อตาราง CM เดิม) 1 ช่องในแอป = ซิงค์ทั้งแท็บ CM และแท็บ RE คู่กัน
+        // ไม่ต้องเพิ่มช่องติ๊กแยกในแอป - ฝั่งเซิร์ฟเวอร์จับคู่เองผ่าน baseTable
+        const tablesToSync = wanted ? SYNC_TABLE_REGISTRY.filter((t) =>
+          wanted.indexOf(t.table) !== -1 || (!!t.baseTable && wanted.indexOf(t.baseTable) !== -1)) : SYNC_TABLE_REGISTRY;
         const syncStatusReport = (includeStatusReport === undefined || includeStatusReport === null) ? true : !!includeStatusReport;
         if (tablesToSync.length === 0 && !syncStatusReport) {
           return jsonResponse({ success: false, message: 'ยังไม่ได้เลือกตารางที่จะซิงค์ กรุณาเลือกอย่างน้อย 1 รายการ' });
@@ -7349,7 +7820,7 @@ Deno.serve(async (req: Request) => {
 
         // เลขงาน (main_id) ที่ปิดงานไปแล้ว (มีแถวใน close_issues อย่างน้อย 1 แถว) - ใช้ไฮไลท์สีเหลืองในแท็บ "เปิดงาน"
         // ให้เห็นชัดว่าเลขงานไหนปิดไปแล้วบ้าง โดยไม่ต้องสลับไปดูแท็บ "ปิดงาน" เอง
-        const { data: closedJobRows } = await selectAll(() => supabase.from('close_issues').select('job_id'));
+        const { data: closedJobRows } = await selectAllBothKinds((t) => t.close, (table) => supabase.from(table).select('job_id'));
         const closedJobIdSet = new Set<string>((closedJobRows || []).map((r: any) => r.job_id));
 
         // ซิงค์แบบ "กระทบยอด" (ดู incrementalSyncToSheetTab ด้านบน) - อ่านคอลัมน์รหัสอ้างอิงในชีตสด ๆ ทุกครั้งก่อนเขียน
@@ -7363,9 +7834,16 @@ Deno.serve(async (req: Request) => {
         for (const t of tablesToSync) {
           try {
             const { data: rows, error } = await selectAll(() => supabase.from(t.table).select('*').order('created_at', { ascending: true }));
-            if (error) { results.push(t.table + ': ดึงข้อมูลล้มเหลว (' + error.message + ')'); continue; }
-            // แท็บ "เปิดงาน" เท่านั้นที่ต้องไฮไลท์สีเหลืองตามสถานะปิดงาน
-            const shouldHighlight = t.table === 'open_issues' ? (r: any) => closedJobIdSet.has(r.main_id) : undefined;
+            if (error) {
+              // แท็บฝั่ง RE เป็น "ทางเลือก" - ถ้ายังไม่ได้รัน SQL แยกตาราง RE ตารางนี้จะไม่มีอยู่จริง
+              // ถือว่ายังไม่มีงาน RE ให้ซิงค์ ข้ามแท็บนี้ไปเฉย ๆ ไม่ใช่ความล้มเหลวของการซิงค์
+              if (t.optional && isMissingTableError(error)) continue;
+              results.push(t.table + ': ดึงข้อมูลล้มเหลว (' + error.message + ')'); continue;
+            }
+            // แท็บฝั่ง RE ที่ยังไม่มีข้อมูลสักแถว และยังไม่เคยสร้างแท็บไว้ก่อน -> ไม่ต้องสร้างแท็บเปล่าทิ้งไว้ในชีต
+            if (t.optional && (rows || []).length === 0 && existingNames.indexOf(t.sheetName) === -1) continue;
+            // แท็บ "เปิดงาน"/"เปิดงาน RE" เท่านั้นที่ต้องไฮไลท์สีเหลืองตามสถานะปิดงาน
+            const shouldHighlight = (t.table === 'open_issues' || t.table === 're_open_issues') ? (r: any) => closedJobIdSet.has(r.main_id) : undefined;
             const msg = await incrementalSyncToSheetTab(spreadsheetId, accessToken, existingNames, sheetIdByName, t.sheetName, t.color, t.headers, rows || [], t.keyOf, t.mapRow, shouldHighlight);
             totalSynced += (rows || []).length;
             results.push(msg);
@@ -7378,13 +7856,29 @@ Deno.serve(async (req: Request) => {
         // (แท็บนี้ช้าที่สุดเพราะต้องรวมข้อมูล 4 ตาราง จึงให้ติ๊กข้ามได้ถ้าต้องการซิงค์เฉพาะตารางอื่นเร็ว ๆ)
         if (syncStatusReport) try {
           const reportRows = await computeJobStatusReportRows(null, null);
+          // v1.3.6 — แยกแท็บรายงานสถานะของงาน CM กับงาน RE ออกจากกัน (เหมือนแท็บอื่น ๆ ทั้งหมด)
+          // ทุกแถวมี job_kind ติดมาอยู่แล้วจาก computeJobStatusReportRows (อ่านจากเลขงานเสมอ)
+          const cmReportRows = reportRows.filter((r: any) => r.job_kind !== 'RE');
+          const reReportRows = reportRows.filter((r: any) => r.job_kind === 'RE');
           const msg = await incrementalSyncToSheetTab(
             spreadsheetId, accessToken, existingNames, sheetIdByName,
             STATUS_REPORT_SHEET.sheetName, STATUS_REPORT_SHEET.color, STATUS_REPORT_SHEET.headers,
-            reportRows, STATUS_REPORT_SHEET.keyOf, STATUS_REPORT_SHEET.mapRow
+            cmReportRows, STATUS_REPORT_SHEET.keyOf, STATUS_REPORT_SHEET.mapRow
           );
-          totalSynced += reportRows.length;
+          totalSynced += cmReportRows.length;
           results.push(msg);
+
+          // ยังไม่มีงาน RE เลยและยังไม่เคยสร้างแท็บนี้มาก่อน -> ไม่ต้องสร้างแท็บเปล่าทิ้งไว้
+          const reStatusSheetName = STATUS_REPORT_SHEET.sheetName + ' RE';
+          if (reReportRows.length > 0 || existingNames.indexOf(reStatusSheetName) !== -1) {
+            const reMsg = await incrementalSyncToSheetTab(
+              spreadsheetId, accessToken, existingNames, sheetIdByName,
+              reStatusSheetName, STATUS_REPORT_SHEET.color, STATUS_REPORT_SHEET.headers,
+              reReportRows, STATUS_REPORT_SHEET.keyOf, STATUS_REPORT_SHEET.mapRow
+            );
+            totalSynced += reReportRows.length;
+            results.push(reMsg);
+          }
         } catch (e) {
           results.push(STATUS_REPORT_SHEET.sheetName + ': ล้มเหลว (' + String(e) + ')');
         }

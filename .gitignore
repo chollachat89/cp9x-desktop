@@ -6,3 +6,7 @@ out/
 Thumbs.db
 .env
 .env.local
+
+# โฟลเดอร์ชั่วคราวสำหรับ deploy Edge Function ด้วย Supabase CLI
+# (สำเนาของ supabase-edge-function/index.ts — ก๊อปใหม่ทุกครั้งที่ deploy อย่าเก็บเข้า repo ให้ไฟล์ซ้ำกันสองที่)
+supabase/
