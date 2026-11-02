@@ -2699,19 +2699,19 @@
 
             if (currentSession.role !== 'admin') {
                 switchMode('billing');
-                // TUCK CR (ไม่ใช่ role admin) ก็ต้องเห็นเลขแจ้งเตือนไฟล์ที่รอยืนยันรูปด้วย
-                if (currentSession.isFinalApprover) pollSubmissionsBadge();
-                else pollJobFormsBadge(); // ผู้รับเหมา: เช็คเลขแจ้งเตือนงานที่ต้องดำเนินการ (รวมงานที่ถูกตีกลับ) ทันทีตอนเข้าระบบ
+                // ผู้รับเหมา: เช็คเลขแจ้งเตือนงานที่ต้องดำเนินการ (รวมงานที่ถูกตีกลับ) ทันทีตอนเข้าระบบ
+                // TUCK CR ไม่ต้องเรียก เพราะป้ายของเขาคือป้ายไฟล์รอยืนยันรูป ซึ่ง pollAllBadges จัดการให้แล้ว
+                if (!currentSession.isFinalApprover) pollJobFormsBadge();
             } else {
-                pollSubmissionsBadge(); // แอดมิน: เช็คเลขแจ้งเตือนไฟล์ที่ผู้รับเหมาส่งกลับทันทีตอนเข้าระบบ
-                pollAdminBadgeCounts(); // แอดมิน: เช็คเลขแจ้งเตือนรอดำเนินการ + พักงาน ทันทีตอนเข้าระบบ
                 // v1.0.94 — ถ้าระบบยังล็อกอยู่ ให้ขึ้นแถบเตือนทันทีที่เข้าแอป กันลืมปลดล็อก
                 runServerCall('getMaintenanceLock', [currentSession.username, currentSession.token], function (res) {
                     if (res && res.success) renderMaintenanceBanner_(res.on === true);
                 }, function () {});
             }
-            // v1.0.69 — ป้ายขั้นตรวจรับบิล มีทั้งสองฝั่ง จึงเรียกนอก if/else ของบทบาท
-            pollBillingReviewBadge();
+            // v1.3.9 — ป้ายทุกตัวในคำขอเดียว
+            // เดิมตอนแอดมินเข้าแอปยิง 5 คำขอพร้อมกัน (ผู้รับเหมา + ไฟล์รออ่าน + งานรอดำเนินการ
+            // + บิลรอตรวจ + สถานะล็อกระบบ) ซึ่งบนแพ็กเกจ Free จะเข้าคิวกันเองจนเข้าแอปช้า เหลือ 3
+            pollAllBadges();
         }
         // ซ่อน/แสดงแท็บและปุ่มต่าง ๆ ตามสิทธิ์ - ผู้รับเหมาเห็นแค่ตารางวางบิล (ดูอย่างเดียว)
         function applyRoleBasedUI() {
@@ -3553,10 +3553,20 @@
         // อัปเดตทุกแท็บที่เป็นการ "ดูข้อมูล" (ตรวจสอบเปิดงาน/ปิดงาน, รายงานสถานะ, แดชบอร์ด, ฟอร์มวางบิล, ไฟล์ผู้รับเหมาส่งกลับ)
         // ไม่แตะแท็บ "ตารางวางบิล" เพราะอาจมีคนกำลังพิมพ์แก้ไขอยู่ กลัวข้อมูลที่พิมพ์ค้างหาย
         // ถ้าไม่ได้อยู่ในแท็บที่มีรายการหลัก จะเช็คแค่ตัวเลขแจ้งเตือนแทน (เบากว่าโหลดข้อมูลเต็ม)
-        const AUTO_REFRESH_INTERVAL_MS = 30000; // ทุก 30 วินาที ปรับได้ตามต้องการ
+        // v1.3.9 — ขยายจาก 30 เป็น 60 วินาที
+        // เหตุผล: ทุกรอบรีเฟรชคือการวิ่งข้ามเน็ตไปเซิร์ฟเวอร์ (วัดได้ 0.7-1.15 วินาทีต่อคำขอ)
+        // ตัวเลขบนป้ายกับรายการในแท็บไม่ได้เปลี่ยนถี่ถึงขนาดต้องเช็คทุกครึ่งนาที
+        // และยังกดปุ่ม "โหลด/รีเฟรชข้อมูล" เองได้ทุกเมื่อถ้าอยากเห็นของสด ๆ ทันที
+        const AUTO_REFRESH_INTERVAL_MS = 60000;
+        let jobFormsBadgeTick_ = 0;   // v1.3.9 — ตัวนับรอบของป้ายฝั่งผู้รับเหมา (ดูเหตุผลด้านล่าง)
         setInterval(function () {
             if (document.hidden) return; // แท็บเบราว์เซอร์ไม่ได้เปิดอยู่ตรงหน้า ไม่ต้องเปลืองโหลดข้อมูล
             if (!currentSession) return;
+            // v1.3.9 — ผู้ใช้สลับไปทำงานในโปรแกรมอื่นอยู่ (Excel / LINE / เบราว์เซอร์)
+            // ไม่ต้องรีเฟรชพื้นหลังให้แย่ง RAM กับ CPU ของเครื่องเขา
+            // พอกลับมาที่หน้าต่างนี้ รอบถัดไปก็ทำงานต่อเอง และปุ่มรีเฟรชเองยังกดได้ตามปกติ
+            // (document.hidden ไม่ครอบกรณีนี้ เพราะหน้าต่างแอปยังถือว่า "แสดงอยู่" แม้จะอยู่ข้างหลัง)
+            if (typeof document.hasFocus === 'function' && !document.hasFocus()) return;
 
             // v1.0.77 — มีหน้าต่างย่อย (โมดัล) เปิดอยู่ = หยุดรีเฟรชพื้นหลังทั้งหมด
             // กันการวาด DOM ระหว่างที่ผู้ใช้กำลังพิมพ์ โดยเฉพาะภาษาไทยที่พิมพ์แบบต่อเนื่อง
@@ -3572,10 +3582,16 @@
             else if (currentMode === 'statusreport') loadStatusReport();
             else if (currentMode === 'jobforms' && !isTypingOrPicking) loadJobFormsTab();
             else if (currentMode === 'submissions' && !isTypingOrPicking) loadJobFormSubmissions();
-            else if (currentSession.role === 'admin') { pollSubmissionsBadge(); pollAdminBadgeCounts(); }
-            else if (currentSession.isFinalApprover) pollSubmissionsBadge();
-            else pollJobFormsBadge();
-            pollBillingReviewBadge();   // v1.0.69 — นับแถวบิลที่รอการตรวจ/ถูกตีกลับ ทุกรอบรีเฟรช
+            else if (currentSession.role !== 'admin' && currentSession.isFinalApprover !== true) {
+                // v1.3.9 — ป้าย "งานที่ต้องดำเนินการ" ของผู้รับเหมา ต้องดึง "รายการงานทั้งก้อน"
+                // (เลขงาน + อะไหล่ของทุกงานที่ปิดแล้ว) มานับที่หน้าแอป = ก้อนข้อมูลใหญ่สุดในรอบรีเฟรช
+                // เลขนี้เปลี่ยนตอนแอดมินส่งบิล/ตีกลับ ซึ่งไม่ได้เกิดทุกนาที จึงเช็คทุก 3 รอบ (ราว 3 นาที)
+                // เข้าแท็บ "ฟอร์มวางบิล" ยังได้ของสดทุกรอบเหมือนเดิม เพราะโหลดทั้งแท็บอยู่แล้ว
+                jobFormsBadgeTick_ = (jobFormsBadgeTick_ + 1) % 3;
+                if (jobFormsBadgeTick_ === 0) pollJobFormsBadge();
+            }
+            // v1.3.9 — ป้ายทุกตัวในคำขอเดียว (เดิมแอดมินยิง 3 คำขอต่อรอบ)
+            pollAllBadges();
         }, AUTO_REFRESH_INTERVAL_MS);
 
         // ==================== ตัวช่วยกลาง: เรียกฟังก์ชันฝั่งเซิร์ฟเวอร์แบบมี timeout ในตัว ====================
@@ -7384,6 +7400,49 @@
                     statusEl.className = 'text-sm text-red-500 mb-3';
                 }
             }, 30000);
+        }
+
+        // ==================== v1.3.9 — ป้ายแจ้งเตือนทุกตัวในคำขอเดียว ====================
+        // เดิมทุกรอบรีเฟรช ฝั่งแอดมินยิง 3 คำขอแยกกัน (ไฟล์ที่รออ่าน + งานรอดำเนินการ/พักงาน + บิลรอตรวจ)
+        // วัดจากเครื่องผู้ใช้จริงแล้ว 1 คำขอที่แตะฐานข้อมูล = 0.7-1.15 วินาที
+        // ทั้งที่ข้อมูลที่ได้กลับมารวมกันไม่ถึง 100 ตัวอักษร = เสียเวลาไปกับการ "วิ่งไปกลับ" ล้วน ๆ
+        //
+        // รวมเป็นคำขอเดียว (getBadgeCounts) แล้วให้เซิร์ฟเวอร์ที่อยู่ติดฐานข้อมูลถามเองพร้อมกัน
+        //
+        // ถ้าแอปอัปเดตมาก่อนที่ Edge Function จะถูก deploy เซิร์ฟเวอร์จะยังไม่รู้จักคำสั่งนี้
+        // จึงถอยไปใช้ 3 คำขอเดิมให้อัตโนมัติ แล้วจำไว้ว่าไม่ต้องลองใหม่ทุกรอบ (ป้ายยังทำงานครบเหมือนเดิม)
+        let badgeCountsSupported_ = null;   // null = ยังไม่รู้ · true = ใช้ได้ · false = เซิร์ฟเวอร์รุ่นเก่า
+        function pollAllBadges() {
+            if (!currentSession) return;
+            if (badgeCountsSupported_ === false) { pollBadgesLegacy_(); return; }
+            runServerCall('getBadgeCounts', [currentSession.username, currentSession.token], function (res) {
+                if (!res || res.success !== true) {
+                    badgeCountsSupported_ = false;
+                    pollBadgesLegacy_();
+                    return;
+                }
+                badgeCountsSupported_ = true;
+                const isAdmin = currentSession.role === 'admin';
+                const reviewCount = isAdmin ? (res.rejected || 0) : (res.waiting || 0);
+                updateBillingReviewBadge(reviewCount);
+                updateBillingRejectAlert(reviewCount);
+                // 2 ป้ายนี้อยู่บนแท็บของแอดมินเท่านั้น (ผู้รับเหมาไม่มีแท็บพวกนี้ให้เห็น)
+                if (isAdmin) {
+                    updatePendingBadge(res.pendingCount || 0);
+                    updatePauseBadge(res.pausedCount || 0);
+                }
+                // ป้ายไฟล์ที่รอยืนยันรูป — TUCK CR กับผู้ตรวจสอบเห็นแท็บนี้ด้วย จึงต้องเห็นเลขด้วย
+                // (เดิม pollSubmissionsBadge ตัดทุกคนที่ไม่ใช่ role admin ออกตั้งแต่บรรทัดแรก
+                //  ทั้งที่จุดที่เรียกเขียนคอมเมนต์ไว้ว่า TUCK CR ต้องเห็น = ป้ายของเขาไม่เคยขึ้นเลย
+                //  ฝั่งเซิร์ฟเวอร์กั้นไว้แล้วว่าใครมีสิทธิ์เห็นเลขนี้ คนอื่นได้ 0 กลับไป)
+                if (isAdmin || currentSession.isFinalApprover || currentSession.isChecker) {
+                    updateSubmissionsBadge(res.unreadSubmissions || 0);
+                }
+            }, function () { /* เช็คพลาดรอบนี้ไม่เป็นไร รอบหน้าลองใหม่ */ });
+        }
+        function pollBadgesLegacy_() {
+            if (currentSession.role === 'admin') { pollSubmissionsBadge(); pollAdminBadgeCounts(); }
+            pollBillingReviewBadge();
         }
 
         function pollBillingReviewBadge() {

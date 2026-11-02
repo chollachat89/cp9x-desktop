@@ -2919,6 +2919,68 @@ Deno.serve(async (req: Request) => {
     return { data: out, error: null };
   }
 
+  // ==================== v1.3.9 — นับเลขป้ายแจ้งเตือนให้เสร็จในฐานข้อมูล ====================
+  // เดิมป้ายนี้ดึง "ทั้งตาราง" open_issues + close_issues + pause_records ของทั้งงาน CM และ RE
+  // (ราว 2,200 แถว) ข้ามเน็ตมานับที่เซิร์ฟเวอร์ ทุก 30 วินาที เพื่อเอาเลขแค่ 2 ตัว
+  // วัดจริงแล้ว: 1 คำขอที่ข้ามเน็ตไปฐานข้อมูล = 0.7-1.15 วินาที ส่วน SQL เองใช้ไม่ถึง 30 มิลลิวินาที
+  // = เวลาเกือบทั้งหมดหมดไปกับการวิ่งไปกลับ ไม่ใช่การคิดคำนวณ
+  //
+  // ย้ายไปนับด้วยฟังก์ชัน cp9x_badge_counts() ในฐานข้อมูลแทน (ดู v1.3.9-เร่งความเร็ว.sql)
+  // 6 คำขอ + 2,200 แถว -> 1 คำขอ + 1 แถว
+  //
+  // ⚠ ยังไม่ได้รัน SQL = ฟังก์ชันในฐานข้อมูลยังไม่มี ให้ถอยไปนับวิธีเดิมเงียบ ๆ
+  //   ไม่ใช่ error ที่ผู้ใช้ต้องเห็น เพราะเลขที่ได้เหมือนกันทุกกรณี ต่างแค่ความเร็ว
+  //   (เขียนเผื่อไว้เพื่อให้ deploy Edge Function ก่อนหรือหลังรัน SQL ก็ได้ ไม่มีช่วงที่ระบบพัง)
+  async function badgeCounts(): Promise<{ pendingCount: number; pausedCount: number }> {
+    const rpc = await supabase.rpc('cp9x_badge_counts');
+    if (!rpc.error && Array.isArray(rpc.data) && rpc.data.length > 0) {
+      const r: any = rpc.data[0];
+      return {
+        pendingCount: parseInt(r.pending_count, 10) || 0,
+        pausedCount: parseInt(r.paused_count, 10) || 0,
+      };
+    }
+    // ---- วิธีเดิม: ดึงเลขงานมานับที่นี่ ----
+    const [openRes, closeRes, pausedRes] = await Promise.all([
+      selectAllBothKinds((t) => t.open, (table) => supabase.from(table).select('main_id')),
+      selectAllBothKinds((t) => t.close, (table) => supabase.from(table).select('job_id')),
+      selectAllBothKinds((t) => t.pause, (table) => supabase.from(table).select('id').eq('status', 'paused')),
+    ]);
+    let pendingCount = 0;
+    if (!openRes.error && !closeRes.error) {
+      const closedSet = new Set((closeRes.data || []).map((r: any) => r.job_id).filter(Boolean));
+      const seenOpen = new Set();
+      (openRes.data || []).forEach((r: any) => {
+        if (r.main_id && !closedSet.has(r.main_id) && !seenOpen.has(r.main_id)) { seenOpen.add(r.main_id); pendingCount++; }
+      });
+    }
+    const pausedCount = (!pausedRes.error && pausedRes.data) ? pausedRes.data.length : 0;
+    return { pendingCount, pausedCount };
+  }
+
+  // นับแถวบิลที่ "ฝั่งเราต้องลงมือ" — เงื่อนไขต้องตรงกับ getBillingRowsNeedingAction ทุกข้อ
+  // ไม่งั้นป้ายจะขึ้นเลขแต่กดดูแล้วไม่เจอแถวไหน แล้วเลขจะค้างอยู่อย่างนั้นตลอดไป
+  // v1.3.9 — แยกออกมาเป็นฟังก์ชัน เพราะตอนนี้ถูกเรียกจาก 2 ที่
+  // (getBillingReviewCounts ของแอปรุ่นเก่า และ getBadgeCounts ที่รวมทุกป้ายไว้ในคำขอเดียว)
+  async function billingReviewCount(session: any): Promise<number> {
+    const wanted = (session.role === 'admin') ? 'rejected' : 'pending';
+    const buildReviewCountQuery = (table: string) => {
+      let q = supabase.from(table)
+        .select('id', { count: 'exact', head: true })
+        .eq('contractor_review_status', wanted).is('completed_at', null);
+      q = excludeBillingTypes(q, BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
+      if (session.role !== 'admin') q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true);
+      return q;
+    };
+    const r1 = await buildReviewCountQuery(jobTables('CM').billing);
+    if (r1.error) return 0;
+    let n = r1.count || 0;
+    // นับฝั่ง RE เพิ่ม ด้วยเงื่อนไขเดียวกันเป๊ะ (ยังไม่มีตาราง = ถือว่าไม่มีงาน)
+    const r2 = await buildReviewCountQuery(jobTables('RE').billing);
+    if (!r2.error) n += (r2.count || 0);
+    return n;
+  }
+
   // หาว่า "แถวบิล" ที่เลือกมา อยู่ตารางของงานชนิดไหน (v1.2.0)
   // รหัสแถวเป็น uuid จึงไม่มีทางชนกันข้ามตาราง — ถามทีละฝั่งแล้วดูว่าเจอที่ไหน
   //
@@ -6220,29 +6282,47 @@ Deno.serve(async (req: Request) => {
         const [username, token] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ waiting: 0, rejected: 0 });
-        const wanted = (session.role === 'admin') ? 'rejected' : 'pending';
         // v1.2.0 — ป้ายต้องนับงานทั้งสองชนิดรวมกัน ไม่งั้นงาน RE ที่ถูกตีกลับจะไม่มีใครเห็น
-        const buildReviewCountQuery = (table: string) => supabase.from(table)
-          .select('id', { count: 'exact', head: true })
-          .eq('contractor_review_status', wanted).is('completed_at', null);
-        let q = buildReviewCountQuery(jobTables('CM').billing);
         // v1.0.74 — ตัดประเภทที่ผู้รับเหมามองไม่เห็นออก (เคลมประกัน / ใบเสนอราคา)
-        // ไม่งั้นป้ายจะขึ้นว่า "มีบิลรอคุณตรวจ N รายการ" แต่พอเปิดตารางมาแล้วไม่มีแถวไหนให้กดเลย
-        // = เลขค้างอยู่อย่างนั้นตลอดไป ไม่มีทางทำให้เป็นศูนย์ได้
-        q = excludeBillingTypes(q, BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
-        if (session.role !== 'admin') q = q.eq('contractor', session.displayName).eq('sent_to_contractor', true);
-        const { count, error } = await q;
-        if (error) return jsonResponse({ waiting: 0, rejected: 0 });
-        let n = count || 0;
-        {
-          // นับฝั่ง RE เพิ่ม ด้วยเงื่อนไขเดียวกันเป๊ะ (ยังไม่มีตาราง = ถือว่าไม่มีงาน)
-          let q2 = buildReviewCountQuery(jobTables('RE').billing);
-          q2 = excludeBillingTypes(q2, BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
-          if (session.role !== 'admin') q2 = q2.eq('contractor', session.displayName).eq('sent_to_contractor', true);
-          const r2 = await q2;
-          if (!r2.error) n += (r2.count || 0);
-        }
+        //   ไม่งั้นป้ายจะขึ้นว่า "มีบิลรอคุณตรวจ N รายการ" แต่พอเปิดตารางมาแล้วไม่มีแถวไหนให้กดเลย
+        // v1.3.9 — ย้ายเงื่อนไขทั้งหมดไปอยู่ใน billingReviewCount() เพราะ getBadgeCounts ใช้ร่วมกัน
+        const n = await billingReviewCount(session);
         return jsonResponse({ waiting: session.role === 'admin' ? 0 : n, rejected: session.role === 'admin' ? n : 0 });
+      }
+
+      // ==================== v1.3.9 — ป้ายแจ้งเตือนทุกตัวในคำขอเดียว ====================
+      // เดิมหน้าแอปยิง 3 คำขอแยกกันทุกรอบรีเฟรช (getUnreadJobFormSubmissionCount +
+      // getAdminBadgeCounts + getBillingReviewCounts) ทุกคำขอต้องวิ่งข้ามเน็ตไปกลับเอง
+      // = 3 x (0.7-1.15 วินาที) ทั้งที่ข้อมูลที่ได้กลับมารวมกันไม่ถึง 100 ตัวอักษร
+      //
+      // รวมเป็นคำขอเดียว ตรวจ session ครั้งเดียว แล้วยิงคำถามที่เหลือพร้อมกันในเซิร์ฟเวอร์
+      // (ซึ่งอยู่ติดกับฐานข้อมูล จึงเสียเวลาวิ่งไปกลับน้อยกว่าฝั่งแอปมาก)
+      //
+      // แอปรุ่นเก่ายังเรียก 3 ตัวเดิมได้เหมือนเดิมทุกตัว ไม่มีอะไรถูกถอดออก
+      case 'getBadgeCounts': {
+        const [username, token] = args;
+        const session = await verifySession(username, token);
+        if (!session.valid) return jsonResponse({ error: 'กรุณาเข้าสู่ระบบใหม่' });
+        const isAdmin = session.role === 'admin';
+        const canSeeSubmissions = isAdmin || session.isFinalApprover === true || session.isChecker === true;
+
+        const [review, counts, unread] = await Promise.all([
+          billingReviewCount(session),
+          isAdmin ? badgeCounts() : Promise.resolve({ pendingCount: 0, pausedCount: 0 }),
+          canSeeSubmissions
+            ? supabase.from('job_form_submissions').select('id', { count: 'exact', head: true }).eq('is_read', false)
+            : Promise.resolve({ count: 0, error: null } as any),
+        ]);
+
+        return jsonResponse({
+          success: true,
+          // ชื่อช่องตรงกับที่ 3 คำขอเดิมส่งกลับ เพื่อให้ฝั่งแอปใช้ตัวอัปเดตป้ายตัวเดิมได้ทั้งหมด
+          rejected: isAdmin ? review : 0,
+          waiting: isAdmin ? 0 : review,
+          pendingCount: counts.pendingCount,
+          pausedCount: counts.pausedCount,
+          unreadSubmissions: (unread && !unread.error) ? (unread.count || 0) : 0,
+        });
       }
 
       // v1.0.84 — ดึง "แถวที่ฝั่งเราต้องลงมือ" ตรง ๆ ให้ปุ่มกดดูที่ป้ายแจ้งเตือน
@@ -6286,8 +6366,26 @@ Deno.serve(async (req: Request) => {
         const [username, token] = args;
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ error: 'กรุณาเข้าสู่ระบบใหม่' });
+        const kindForRounds = toJobKind(args[2]);
+        // ==================== v1.3.9 — ให้ฐานข้อมูลสรุปรอบบิลมาให้ ====================
+        // เดิมดึงคอลัมน์ round_no ของ "ทุกแถว" ในตารางบิล (1,406 แถว) ข้ามเน็ตมานับเองที่นี่
+        // เพื่อได้คำตอบแค่ 3 รอบ — และยิ่งมีบิลสะสมมากขึ้น ก็ยิ่งช้าลงเรื่อย ๆ ทุกเดือน
+        // ตอนนี้ให้ฐานข้อมูล group by มาให้แล้ว (ดู cp9x_billing_round_options)
+        //
+        // เฉพาะฝั่งแอดมินที่ใช้ทางนี้ได้ เพราะฝั่งผู้รับเหมาต้องกรองตามชื่อตัวเอง
+        // + สถานะการส่งบิล + ตัดประเภทที่มองไม่เห็น ซึ่งแถวของแต่ละเจ้ามีไม่มาก วิธีเดิมเร็วพออยู่แล้ว
+        if (session.role === 'admin') {
+          const rpc = await supabase.rpc('cp9x_billing_round_options', { p_kind: kindForRounds });
+          if (!rpc.error && Array.isArray(rpc.data)) {
+            return jsonResponse((rpc.data as any[]).map((r: any) => ({
+              round_no: parseInt(r.round_no, 10),
+              round_period: r.round_period || '',
+            })));
+          }
+          // ยังไม่ได้รัน SQL ของ v1.3.9 = ตกลงมาใช้วิธีเดิมด้านล่าง (ผลลัพธ์เหมือนกัน ต่างแค่ความเร็ว)
+        }
         const { data, error } = await selectAll(() => {
-          const kind = toJobKind(args[2]);
+          const kind = kindForRounds;
         let q = supabase.from(jobTables(kind).billing).select('round_no,round_period').not('round_no', 'is', null);
           if (session.role !== 'admin') q = excludeBillingTypes(q.eq('contractor', session.displayName).eq('sent_to_contractor', true), BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR);
           return q;
@@ -6958,19 +7056,9 @@ Deno.serve(async (req: Request) => {
         const [username, token] = args;
         const session = await verifySession(username, token);
         if (!session.valid || session.role !== 'admin') return jsonResponse({ pendingCount: 0, pausedCount: 0 });
-        const [openRes, closeRes, pausedRes] = await Promise.all([
-          selectAllBothKinds((t) => t.open, (table) => supabase.from(table).select('main_id')),
-          selectAllBothKinds((t) => t.close, (table) => supabase.from(table).select('job_id')),
-          selectAllBothKinds((t) => t.pause, (table) => supabase.from(table).select('id').eq('status', 'paused')),
-        ]);
-        let pendingCount = 0;
-        if (!openRes.error && !closeRes.error) {
-          const closedSet = new Set((closeRes.data || []).map((r: any) => r.job_id).filter(Boolean));
-          const seenOpen = new Set();
-          (openRes.data || []).forEach((r: any) => { if (r.main_id && !closedSet.has(r.main_id) && !seenOpen.has(r.main_id)) { seenOpen.add(r.main_id); pendingCount++; } });
-        }
-        const pausedCount = (!pausedRes.error && pausedRes.data) ? pausedRes.data.length : 0;
-        return jsonResponse({ pendingCount, pausedCount });
+        // v1.3.9 — ย้ายการนับไปทำในฐานข้อมูล (ดู badgeCounts) แอปรุ่นเก่าที่ยังเรียกตัวนี้ก็เร็วขึ้นด้วย
+        const counts = await badgeCounts();
+        return jsonResponse(counts);
       }
 
       // ==================== พักงาน ====================
