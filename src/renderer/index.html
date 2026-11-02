@@ -849,7 +849,7 @@
                 <!-- ตัวกรองผู้รับเหมา (แอดมินเท่านั้น) - เลือก "ทุกผู้รับเหมา" เพื่อดูบิลรวม หรือเลือกทีละคนเพื่อกระจายแยกเลขงาน -->
                 <div id="billingContractorFilterBox" class="mb-4">
                     <label class="block text-slate-700 text-xs font-semibold mb-1">กรองตามผู้รับเหมา</label>
-                    <select id="billingContractorFilter" onchange="loadBillingDocuments()" class="px-4 py-2 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm bg-white min-w-[240px]">
+                    <select id="billingContractorFilter" onchange="loadBillingDocuments()" onmousedown="refillContractorDropdownsIfEmpty()" onfocus="refillContractorDropdownsIfEmpty()" class="px-4 py-2 rounded-lg border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none text-sm bg-white min-w-[240px]">
                         <option value="">ทุกผู้รับเหมา (บิลรวม)</option>
                     </select>
                 </div>
@@ -1146,7 +1146,7 @@
                             </div>
                             <div>
                                 <label class="block text-[11px] font-bold text-teal-800 mb-1">ผู้รับเหมา</label>
-                                <select id="contractorRangeContractor" class="px-3 py-2 rounded-lg border border-teal-300 text-xs bg-white outline-none focus:border-teal-500 min-w-[180px]">
+                                <select id="contractorRangeContractor" onmousedown="refillContractorDropdownsIfEmpty()" onfocus="refillContractorDropdownsIfEmpty()" class="px-3 py-2 rounded-lg border border-teal-300 text-xs bg-white outline-none focus:border-teal-500 min-w-[180px]">
                                     <option value="">ทุกผู้รับเหมา (รวมในใบเดียว)</option>
                                 </select>
                             </div>
@@ -3182,11 +3182,33 @@
             }, 320000); // ฝั่งเซิร์ฟเวอร์วนซิงค์ได้นานสุด ~4.5 นาที เผื่อเวลารอฝั่ง client ไว้ 320 วินาที
         }
 
+        // v1.3.8 — เติมรายชื่อผู้รับเหมาใหม่ ถ้าตอนนี้ยังว่างอยู่
+        //
+        // เดิมรายชื่อถูกโหลด "ครั้งเดียวตอนเข้าแอป" เท่านั้น ถ้าตอนนั้นโหลดไม่สำเร็จ (เน็ตสะดุด/เซิร์ฟเวอร์ตื่นช้า)
+        // ช่องจะว่างค้างแบบนั้นไปตลอดจนกว่าจะออกจากระบบแล้วเข้าใหม่ และไม่มีข้อความบอกสักตัว
+        // ผู้ใช้จึงเห็นเป็น "เลือกผู้รับเหมาไม่ได้" ทั้งที่ระบบมีรายชื่ออยู่ครบ
+        // ตอนนี้พอกดเปิด dropdown แล้วพบว่ายังว่าง จะไปดึงรายชื่อมาเติมให้เองทันที
+        let contractorDropdownLoading_ = false;
+        function refillContractorDropdownsIfEmpty() {
+            if (contractorDropdownLoading_ || !currentSession) return;
+            const ids = ['contractorRangeContractor', 'billingContractorFilter', 'op_contractor'];
+            // ว่าง = มีแต่ตัวเลือกค่าเริ่มต้นตัวเดียว (ยังไม่มีชื่อผู้รับเหมาสักคน)
+            const needsFill = ids.some(function (id) {
+                const el = document.getElementById(id);
+                return el && el.options.length <= 1;
+            });
+            if (!needsFill) return;
+            contractorDropdownLoading_ = true;
+            loadContractorsDropdowns(function () { contractorDropdownLoading_ = false; });
+        }
+
         // โหลดรายชื่อผู้รับเหมาลง dropdown ต่าง ๆ (ฟอร์มเปิดงาน + ตัวกรองของแอดมิน)
-        function loadContractorsDropdowns() {
+        function loadContractorsDropdowns(done) {
+            const finish = function () { if (typeof done === 'function') done(); };
             runServerCall('getContractorsList', [currentSession.username, currentSession.token], function (res) {
-                if (res && res.error) return;
+                if (res && res.error) { showAlert('error', 'โหลดรายชื่อผู้รับเหมาไม่สำเร็จ: ' + res.error + ' — กดที่ช่องผู้รับเหมาอีกครั้งเพื่อลองใหม่'); finish(); return; }
                 const list = res || [];
+                finish();
 
                 const openDropdown = document.getElementById('op_contractor');
                 if (openDropdown) {
@@ -3196,8 +3218,11 @@
 
                 const filterDropdown = document.getElementById('billingContractorFilter');
                 if (filterDropdown) {
+                    // เก็บค่าที่เลือกอยู่ไว้ก่อนวาดใหม่ ไม่งั้นตัวกรองที่ผู้ใช้เลือกไว้จะถูกรีเซ็ตเงียบ ๆ
+                    const keepFilter = filterDropdown.value;
                     filterDropdown.innerHTML = '<option value="">ทุกผู้รับเหมา (บิลรวม)</option>' +
                         list.map(name => `<option value="${name.replace(/"/g,'&quot;')}">${name}</option>`).join('');
+                    if (list.indexOf(keepFilter) !== -1) filterDropdown.value = keepFilter;
                 }
 
                 // dropdown ของเมนู "ใบเขียวผู้รับเหมา ตามช่วงวันที่" ใช้รายชื่อชุดเดียวกัน
@@ -3208,7 +3233,11 @@
                         list.map(name => `<option value="${name.replace(/"/g,'&quot;')}">${name}</option>`).join('');
                     if (list.indexOf(keep) !== -1) rangeDropdown.value = keep;
                 }
-            }, function () {});
+            }, function (err) {
+                // เดิมกลืนข้อผิดพลาดทิ้งเงียบ ๆ ผู้ใช้เลยเห็นแค่ช่องว่างโดยไม่รู้ว่าเกิดอะไรขึ้น
+                showAlert('error', 'โหลดรายชื่อผู้รับเหมาไม่สำเร็จ: ' + ((err && err.message) || 'เชื่อมต่อไม่ได้') + ' — กดที่ช่องผู้รับเหมาอีกครั้งเพื่อลองใหม่');
+                finish();
+            });
 
             refreshBillingRoundOptions();
         }
