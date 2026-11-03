@@ -532,12 +532,21 @@
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">ประเภทสัญญา</label>
-                                <select id="op_contractType" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                                <!-- v1.3.10 — ชื่อประเภทสัญญาใช้ชุดเดียวกับทะเบียนสาขา (ไฟล์ ฟอล์มส่งรูปวางบิล)
+                                     ของเดิมเขียน In Warranty / Service Turnkey / Service Contract ซึ่งไม่ตรงกับทะเบียน
+                                     ทำให้เทียบกันไม่ได้และเติมอัตโนมัติไม่ได้ — ข้อมูลงานเก่าแปลงชื่อให้แล้วใน SQL ของรอบนี้
+                                     กรอกรหัสสาขาแล้วช่องนี้จะถูกเติมให้เองจากทะเบียน
+                                     สาขาที่ทะเบียนไม่ได้ระบุไว้ (127 สาขา) เลือก "อื่น ๆ" แล้วพิมพ์เองได้ -->
+                                <select id="op_contractType" onchange="onContractTypeChange()" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
                                     <option value="">-- เลือกประเภทสัญญา --</option>
-                                    <option value="In Warranty">In Warranty</option>
-                                    <option value="Service Turnkey">Service Turnkey</option>
-                                    <option value="Service Contract">Service Contract</option>
+                                    <option value="Contract Service">Contract Service</option>
+                                    <option value="Turnkey Warranty">Turnkey Warranty</option>
+                                    <option value="Turnkey Service">Turnkey Service</option>
+                                    <option value="__other__">อื่น ๆ (พิมพ์เอง)</option>
                                 </select>
+                                <input type="text" id="op_contractTypeOther" placeholder="พิมพ์ประเภทสัญญาที่ต้องการ"
+                                    class="hidden mt-2 w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                                <p id="op_contractTypeStatus" class="text-xs mt-1 text-slate-400"></p>
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">วันที่ร้องขอ</label>
@@ -563,7 +572,23 @@
                         <div class="space-y-4">
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">งานบริการ</label>
-                                <input type="text" id="op_serviceWork" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                                <!-- v1.3.10 — ใส่รายการประเภทงาน 10 แบบจากไฟล์ ฟอล์มส่งรูปวางบิล (แท็บ Sheet2) เป็นตัวช่วยเลือก
+                                     ใช้ datalist ไม่ใช่ dropdown บังคับ เพราะงานเดิมในระบบใช้รหัสชุด F (F04_ตู้แช่หน้าเปิด ฯลฯ)
+                                     ถ้าบังคับเลือกจากรายการใหม่ รายงานสถานะจะแยกกลุ่มไม่ตรงกับงานเก่าทั้งหมด
+                                     แบบนี้พิมพ์รหัส F เดิมก็ได้ กดเลือกจากรายการใหม่ก็ได้ และข้อความที่วางมาก็ยังเติมได้เหมือนเดิม -->
+                                <input type="text" id="op_serviceWork" list="serviceWorkOptions" class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-blood-500 focus:ring-2 focus:ring-blood-100 outline-none bg-slate-50 focus:bg-white text-sm">
+                                <datalist id="serviceWorkOptions">
+                                    <option value="01.งานแจ้งซ่อมตู้แช่ข้าวกล่อง 1 ประตู (Frozen Food)"></option>
+                                    <option value="02.งานซ่อมตู้แช่หน้าปิด 2 ประตู/ 3 ประตู"></option>
+                                    <option value="03.งานแจ้งซ่อมตู้แช่หน้าปิดห้องเย็น (ColdRoom)"></option>
+                                    <option value="04.งานแจ้งซ่อมตู้แช่หน้าเปิด"></option>
+                                    <option value="05.งานแจ้งซ่อมตู้แช่น้ำแข็ง"></option>
+                                    <option value="05.1งานแจ้งซ่อมตู้ไอศกรีม คละแบรนด์"></option>
+                                    <option value="06.งานแจ้งซ่อมตู้แช่ร้านกาแฟ"></option>
+                                    <option value="07.งานแจ้งซ่อมตู้แช่สต๊อก"></option>
+                                    <option value="08.งานแจ้งซ่อมตู้แช่เค้ก"></option>
+                                    <option value="09.งานแจ้งซ่อมเครื่องปรับอากาศ (แอร์)"></option>
+                                </datalist>
                             </div>
                             <div>
                                 <label class="block text-slate-700 text-sm font-semibold mb-1">Service Issue</label>
@@ -4050,6 +4075,9 @@
                         nameEl.value = res.branchName || '';
                         statusEl.textContent = 'พบข้อมูลสาขา';
                         statusEl.className = 'text-xs mt-1 text-blood-600';
+                        // v1.3.10 — ฟอร์มเปิดงานเท่านั้นที่มีช่องประเภทสัญญา เติมให้จากทะเบียนสาขาทันที
+                        // (ฟอร์มปิดงานใช้ฟังก์ชันนี้ร่วมกัน แต่ไม่มีช่องนี้ จึงต้องเช็กว่าเป็นฟอร์มไหน)
+                        if (codeInputId === 'op_branchCode') applyBranchContractType(res.contractType);
                     } else {
                         nameEl.value = '';
                         statusEl.textContent = 'ไม่พบรหัสสาขานี้ในระบบ';
@@ -4586,6 +4614,83 @@
             else { other.classList.add('hidden'); other.value = ''; }
         }
 
+        // ==================== v1.3.10 — ประเภทสัญญา (เติมจากทะเบียนสาขาให้เอง) ====================
+        // ใช้กติกาเดียวกับ Service Type ทุกข้อ: อ่านค่าผ่าน getContractTypeValue() เท่านั้น
+        // ห้ามอ่าน .value ตรง ๆ ไม่งั้นจะได้คำว่า "__other__" ไปบันทึกลงฐานข้อมูลโดยไม่มีใครทันสังเกต
+        function getContractTypeValue() {
+            const sel = document.getElementById('op_contractType');
+            if (!sel) return '';
+            if (sel.value === '__other__') {
+                const other = document.getElementById('op_contractTypeOther');
+                return other ? (other.value || '').trim() : '';
+            }
+            return (sel.value || '').trim();
+        }
+
+        // ใส่ค่าลงช่อง — ถ้าค่านั้นยังไม่มีในรายการ ให้เพิ่มเข้าไปแล้วเลือกให้เลย
+        // (ทะเบียนสาขาอาจมีชื่อสัญญาแบบใหม่ที่ยังไม่เคยมีในแอป ถ้าไม่เพิ่มให้ ค่าจะหายเงียบ ๆ)
+        function setContractTypeValue(v) {
+            const sel = document.getElementById('op_contractType');
+            const other = document.getElementById('op_contractTypeOther');
+            if (!sel) return;
+            const val = (v === null || v === undefined) ? '' : String(v).trim();
+            if (other) { other.value = ''; other.classList.add('hidden'); }
+            if (!val) { sel.value = ''; return; }
+            let found = false;
+            for (let i = 0; i < sel.options.length; i++) {
+                if (sel.options[i].value === val) { found = true; break; }
+            }
+            if (!found) {
+                const op = document.createElement('option');
+                op.value = val; op.textContent = val;
+                // แทรกก่อนตัวเลือก "อื่น ๆ" เสมอ เพื่อให้ "อื่น ๆ" อยู่ล่างสุดตลอด
+                sel.insertBefore(op, sel.options[sel.options.length - 1]);
+            }
+            sel.value = val;
+        }
+
+        function onContractTypeChange() {
+            const sel = document.getElementById('op_contractType');
+            const other = document.getElementById('op_contractTypeOther');
+            const status = document.getElementById('op_contractTypeStatus');
+            if (!sel || !other) return;
+            if (sel.value === '__other__') {
+                other.classList.remove('hidden');
+                try { other.focus(); } catch (e) {}
+            } else {
+                other.classList.add('hidden'); other.value = '';
+            }
+            // ผู้ใช้แก้เองแล้ว = ข้อความ "เติมจากทะเบียนสาขา" ไม่จริงอีกต่อไป ลบทิ้ง
+            if (status) { status.textContent = ''; status.className = 'text-xs mt-1 text-slate-400'; }
+        }
+
+        // เรียกหลังค้นรหัสสาขาสำเร็จ เฉพาะฟอร์มเปิดงาน
+        // สาขาที่ทะเบียนระบุประเภทสัญญาไว้ -> เติมให้เลย ไม่ต้องเลือกเอง
+        // สาขาที่ทะเบียนไม่ได้ระบุ (ในไฟล์เป็น "0" หรือเว้นว่าง 127 สาขา) -> เปิดช่องให้พิมพ์เอง
+        //   ตั้งเป็น "อื่น ๆ" ไว้ให้เลย เพราะถ้าปล่อยว่างผู้ใช้จะไม่รู้ว่าต้องทำอะไรต่อ
+        //   แต่ถ้าผู้ใช้เลือก/พิมพ์ไว้แล้วก่อนกรอกรหัสสาขา จะไม่เขียนทับของเขา
+        function applyBranchContractType(contractType) {
+            const sel = document.getElementById('op_contractType');
+            const status = document.getElementById('op_contractTypeStatus');
+            if (!sel) return;
+            const fromRegistry = (contractType === null || contractType === undefined) ? '' : String(contractType).trim();
+            if (fromRegistry) {
+                setContractTypeValue(fromRegistry);
+                if (status) {
+                    status.textContent = '✓ เติมจากทะเบียนสาขาให้แล้ว (แก้ได้ถ้าสัญญาเปลี่ยน)';
+                    status.className = 'text-xs mt-1 text-blood-600';
+                }
+                return;
+            }
+            if (getContractTypeValue()) return;   // ผู้ใช้กรอกไว้แล้ว ไม่แตะ
+            sel.value = '__other__';
+            onContractTypeChange();
+            if (status) {
+                status.textContent = 'ทะเบียนสาขาไม่ได้ระบุประเภทสัญญาของสาขานี้ — กรุณาพิมพ์เอง';
+                status.className = 'text-xs mt-1 text-amber-600';
+            }
+        }
+
         function setBranchAndLookup(codeInputId, nameInputId, statusId, rawBranchText) {
             document.getElementById(codeInputId).value = rawBranchText || '';
             if (rawBranchText) doLookupBranchGeneric(codeInputId, nameInputId, statusId);
@@ -4627,8 +4732,10 @@
                     if (h.mainId) checkOpenJobNumberDuplicate(h.mainId.trim());
                     const todo = [];
                     if (!getServiceTypeValue()) todo.push('Service Type');
-                    const ctEl = document.getElementById('op_contractType');
-                    if (ctEl && !ctEl.value.trim()) todo.push('ประเภทสัญญา');
+                    // v1.3.10 — อ่านผ่านตัวช่วย เพราะค่าอาจมาจากช่องพิมพ์เอง (ตัวเลือกเป็น "__other__")
+                    // การค้นรหัสสาขาข้างบนจะเติมช่องนี้ให้เองอีกทีเมื่อเซิร์ฟเวอร์ตอบกลับ
+                    // ตอนนี้ยังไม่ตอบ จึงอาจขึ้นว่าต้องกรอกเอง แล้วหายไปเองในอีกครู่ (เหมือนช่องชื่อสาขา)
+                    if (!getContractTypeValue()) todo.push('ประเภทสัญญา');
                     const coEl = document.getElementById('op_contractor');
                     if (coEl && !coEl.value.trim()) todo.push('ผู้รับเหมา');
                     showAlert('success', 'แยกข้อมูลจากใบแจ้ง ' + (h.mainId || '(ไม่พบเลขใบแจ้ง)') + ' แล้ว'
@@ -10036,7 +10143,8 @@
                     { id: 'op_branchCode',  msg: 'กรุณากรอกรหัสสาขา' },
                     { id: 'op_branchName',  msg: 'ไม่พบชื่อสาขาจากรหัสที่กรอก กรุณาตรวจสอบรหัสสาขาอีกครั้ง' },
                     { id: 'op_details',     msg: 'กรุณากรอกรายละเอียดปัญหาที่พบ' },
-                    { id: 'op_contractType',msg: 'กรุณาเลือกประเภทสัญญา' },
+                    // v1.3.10 — เลือก "อื่น ๆ" แล้วไม่พิมพ์อะไรเลย ต้องไม่ผ่าน (ค่าช่องเลือกเป็น "__other__" ซึ่งไม่ว่าง)
+                    { id: 'op_contractType',msg: 'กรุณาเลือกหรือพิมพ์ประเภทสัญญา', test: function () { return getContractTypeValue() !== ''; } },
                     { id: 'op_contractor',  msg: 'กรุณาเลือกผู้รับเหมา' },
                     { id: 'op_openDate',    msg: 'กรุณาระบุวันที่เปิดงาน' },
                 ]);
@@ -10089,7 +10197,7 @@
                 formData = {
                     mainId: document.getElementById('op_mainId').value,
                     serviceType: getServiceTypeValue(),
-                    contractType: document.getElementById('op_contractType').value,
+                    contractType: getContractTypeValue(),   // v1.3.10 — รองรับทั้งเลือกจากรายการและพิมพ์เอง
                     reqDate: document.getElementById('op_reqDate').value,
                     serviceWork: document.getElementById('op_serviceWork').value,
                     serviceIssue: document.getElementById('op_serviceIssue').value,
@@ -10144,7 +10252,9 @@
                             if (res && res.success) {
                                 showAlert('success', res.message);
                                 form.reset();
-                                if (mode === 'open') { document.getElementById('rawTextOpen').value = ''; document.getElementById('op_branchStatus').textContent = ''; setDefaultOpenDateTime(); onServiceTypeChange(); }
+                                // v1.3.10 — ล้างช่องประเภทสัญญาด้วย: form.reset() ล้างค่าใน select แต่ช่องพิมพ์เอง
+                                // กับข้อความ "เติมจากทะเบียนสาขาแล้ว" ยังค้างอยู่ ถ้าไม่ล้าง งานถัดไปจะเห็นสถานะของงานเก่า
+                                if (mode === 'open') { document.getElementById('rawTextOpen').value = ''; document.getElementById('op_branchStatus').textContent = ''; setDefaultOpenDateTime(); onServiceTypeChange(); onContractTypeChange(); }
                                 if (mode === 'close') {
                                     document.getElementById('rawTextClose').value = '';
                                     // v1.0.68 — ล้างบล็อกเลขทรัพย์สินทั้งหมด เหลือบล็อกว่าง 1 บล็อกรองานถัดไป
