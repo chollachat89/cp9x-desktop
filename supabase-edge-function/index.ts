@@ -123,6 +123,10 @@ const LOGIN_LOCK_DEFAULT_MSG = 'ระบบปิดปรับปรุงช
 // (เครื่องเดียวกันรับคำขอต่อ ๆ กันได้หลายรอบ ตัวแปรนี้จึงอยู่ข้ามคำขอได้จริง)
 // 15 วินาทีคือเพดานความช้าที่ยอมได้ตอนกดล็อก/ปลดล็อก ซึ่งรับได้เพราะตอนล็อกเราตัด session ทิ้งทันทีอยู่แล้ว
 let loginLockCache: { on: boolean; note: string; at: number } | null = null;
+// v1.3.15 — ปิดการซิงค์ไป Google Sheet (เลิกใช้แล้ว) ดู case 'manualSyncToSheets'
+const SHEET_SYNC_ENABLED = false;
+// v1.3.14 — ค่า "วันเริ่มกฎรูป" (app_secrets: photo_form_gate_start_at) พักไว้ 60 วินาที ดู loadPhotoGateStartAt
+let photoGateCache: { raw: string; at: number } | null = null;
 function invalidateLoginLockCache(): void { loginLockCache = null; }
 
 // ==================== พักผลตรวจ session (v1.1.1) ====================
@@ -806,10 +810,17 @@ function pdfCenterText(page: any, font: any, text: string, centerX: number, y: n
   page.drawText(text, { x: centerX - w / 2, y, size, font, color });
 }
 
+// v1.3.15 — "วันนี้" ตามเวลาไทยเสมอ
+// เซิร์ฟเวอร์ (Edge Function) ใช้เวลา UTC ถ้าใช้ new Date().getDate() ตรง ๆ
+// เอกสารที่สร้างช่วง 00:00–06:59 น. เวลาไทย จะขึ้นวันที่เป็น "เมื่อวาน"
+// เลื่อนเวลาไป +7 ชม. แล้วอ่านด้วย getUTC* = ได้วัน/เดือน/ปีของประเทศไทยพอดี
+function bangkokNow(): Date { return new Date(Date.now() + 7 * 3600 * 1000); }
+function bangkokTodayIso(): string { return bangkokNow().toISOString().slice(0, 10); }
+
 function thaiDateString(): string {
   const thaiMonths = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
-  const today = new Date();
-  return today.getDate() + ' ' + thaiMonths[today.getMonth()] + ' ' + (today.getFullYear() + 543);
+  const today = bangkokNow();
+  return today.getUTCDate() + ' ' + thaiMonths[today.getUTCMonth()] + ' ' + (today.getUTCFullYear() + 543);
 }
 
 function pdfWrapText(font: any, text: string, size: number, maxWidth: number): string[] {
@@ -865,6 +876,9 @@ function pdfWrapText(font: any, text: string, size: number, maxWidth: number): s
 
 async function generateBillingPdfBase64(rows: any[], isAdmin: boolean): Promise<any> {
   if (!rows || rows.length === 0) return { success: false, message: 'ไม่มีข้อมูลสำหรับสร้าง PDF' };
+  // v1.3.15 — ชนิดงานบนหัวกระดาษ คิดจากเลขงานของแถวที่อยู่ในเอกสารจริง
+  const docKinds = new Set(rows.map((r) => jobKindOf(r && r.customer_case)));
+  const docKindLabel = docKinds.size > 1 ? 'CM/RE' : (docKinds.has('RE') ? 'RE' : 'CM');
 
   try {
     const [regularBytes, boldBytes] = await Promise.all([
@@ -981,7 +995,8 @@ async function generateBillingPdfBase64(rows: any[], isAdmin: boolean): Promise<
       page.drawImage(logoImage, { x: MARGIN, y: y - logoH, width: logoW, height: logoH });
 
       y -= 22;
-      pdfCenterText(page, boldFont, 'สรุปเอกสารวางบิล CM', PAGE_W / 2, y, 22, PDF_GREEN_DARK);
+      // v1.3.15 — ชื่อชนิดงานตามแถวที่อยู่ในเอกสารจริง (เดิมเขียน "CM" ตายตัว ใบของงาน RE ก็ขึ้น CM)
+      pdfCenterText(page, boldFont, 'สรุปเอกสารวางบิล ' + docKindLabel, PAGE_W / 2, y, 22, PDF_GREEN_DARK);
       y -= 18;
       pdfCenterText(page, font, 'บริษัท ซีอาร์ เอ็นเนอร์จี คอนซัลแตนท์ จำกัด', PAGE_W / 2, y, 14, PDF_GREEN);
       y -= 14;
@@ -1090,7 +1105,7 @@ async function generateBillingPdfBase64(rows: any[], isAdmin: boolean): Promise<
     let binary = '';
     for (let i = 0; i < pdfBytes.length; i++) binary += String.fromCharCode(pdfBytes[i]);
     const base64 = btoa(binary);
-    return { success: true, base64, filename: 'ตารางวางบิล_' + new Date().toISOString().slice(0, 10) + '.pdf' };
+    return { success: true, base64, filename: 'ตารางวางบิล_' + bangkokTodayIso() + '.pdf' };
   } catch (error) {
     return { success: false, message: 'สร้าง PDF ล้มเหลว: ' + String(error) };
   }
@@ -2837,11 +2852,28 @@ Deno.serve(async (req: Request) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
   );
 
-  function jsonResponse(body: unknown, status = 200) {
-    return new Response(JSON.stringify(body), {
-      status,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+  // ==================== บีบอัดผลลัพธ์ก่อนส่งกลับ (v1.3.14) ====================
+  // วัดจากระบบจริง 5–6 พ.ย. 2569: ส่งผลลัพธ์กลับแอปวันละราว 123 MB โดยไม่บีบอัดเลยสักคำขอ
+  // ทั้งที่แอปขอแบบบีบอัดมาทุกครั้ง (Accept-Encoding: gzip, br) — ก้อนนี้นับเป็น Egress เต็ม ๆ
+  // JSON ภาษาไทยที่มีชื่อคอลัมน์ซ้ำทุกแถวบีบได้ราว 80–90%
+  //
+  // บีบเฉพาะเมื่อผู้เรียกบอกว่ารับ gzip ได้ (แอป Electron/เบราว์เซอร์คลายให้เองอัตโนมัติ ไม่ต้องแก้แอป)
+  // ผู้เรียกที่ไม่ได้ขอ (เช่น ตัวตั้งเวลาที่ยิงแจ้งเตือน SLA) ยังได้ข้อความธรรมดาเหมือนเดิม
+  // ก้อนเล็กกว่า 1 KB ไม่บีบ เพราะได้ไม่คุ้มเวลา CPU
+  // บีบให้เสร็จทั้งก้อนก่อนส่ง (ไม่สตรีม) เพื่อให้มี Content-Length — ใช้วัดผลใน log ได้
+  const acceptsGzip = /\bgzip\b/i.test(req.headers.get('accept-encoding') || '');
+  async function jsonResponse(body: unknown, status = 200): Promise<Response> {
+    const text = JSON.stringify(body);
+    const headers: Record<string, string> = { ...corsHeaders, 'Content-Type': 'application/json', 'Vary': 'Accept-Encoding' };
+    if (acceptsGzip && text.length >= 1024) {
+      try {
+        const gz = await new Response(new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
+        return new Response(gz, { status, headers: { ...headers, 'Content-Encoding': 'gzip' } });
+      } catch (_e) {
+        // บีบไม่สำเร็จ = ส่งแบบไม่บีบไปเลย ดีกว่าให้คำขอพัง
+      }
+    }
+    return new Response(text, { status, headers });
   }
 
   // ==================== อ่านให้ครบทุกแถว (v1.0.97) ====================
@@ -3207,8 +3239,16 @@ Deno.serve(async (req: Request) => {
   }
 
   async function loadPhotoGateStartAt(): Promise<Date | null> {
-    const { data } = await supabase.from('app_secrets').select('value').eq('key', 'photo_form_gate_start_at').limit(1);
-    const raw = (data && data.length > 0) ? String(data[0].value || '').trim() : '';
+    // v1.3.14 — พักค่าไว้ 60 วินาที: ค่านี้ตั้งครั้งเดียวแทบไม่เคยเปลี่ยน แต่ถูกอ่านวันละราว 600 ครั้ง (ทุกรอบของรายงานสถานะ)
+    let raw: string;
+    if (photoGateCache && Date.now() - photoGateCache.at < 60000) {
+      raw = photoGateCache.raw;
+    } else {
+      const { data, error } = await supabase.from('app_secrets').select('value').eq('key', 'photo_form_gate_start_at').limit(1);
+      raw = (data && data.length > 0) ? String(data[0].value || '').trim() : '';
+      // อ่านไม่สำเร็จ = ไม่จำค่า (รอบหน้าอ่านใหม่) ไม่งั้นจะจำค่าว่างไว้ทั้งนาที
+      if (!error) photoGateCache = { raw, at: Date.now() };
+    }
     if (!raw || raw.toLowerCase() === 'off') return null;
     // ค่าที่ Postgres เก็บมาหน้าตาเป็น '2026-09-19 07:12:33.123456' (ไม่มีตัวบอกโซนเวลา)
     // ต้องเติม T กับ Z ให้ครบก่อน ไม่งั้น new Date() ในบางเบราว์เซอร์จะอ่านไม่ออกแล้วได้ NaN
@@ -3650,7 +3690,7 @@ Deno.serve(async (req: Request) => {
     }
     if (jobIds && jobIds.length > 0) {
       const wantedJobIds = Array.from(new Set(jobIds.map((j: string) => (j || '').toString().trim()).filter(Boolean))) as string[];
-      const roundPeriod = 'ระบุเลขงานเจาะจง (' + new Date().toISOString().slice(0, 10) + ')';
+      const roundPeriod = 'ระบุเลขงานเจาะจง (' + bangkokTodayIso() + ')';
       if (wantedJobIds.length === 0) return { candidatePairs: [], roundPeriod };
       // ระบุเลขงานเจาะจง - เอาทุกครั้งที่ปิดงานของเลขงานนั้น ๆ มาเป็นตัวเลือกทั้งหมด (ไม่กรองวันที่)
       const { data: closeData, error: closeErr } = await selectAllIn(wantedJobIds, (chunk) =>
@@ -3765,6 +3805,23 @@ Deno.serve(async (req: Request) => {
       const keys: string[] = (claimedRows || []).map((r: any) => r.customer_case);
       const got = keys.map((k) => grp.map[k]).filter(Boolean);
       if (got.length > 0) { claimedByRound[roundNo] = got; keys.forEach((k) => allClaimedKeys.push(k)); }
+    }
+    // v1.3.15 — ตาข่ายชั้นที่ 2: คู่ที่ "มีแถวบิลอยู่แล้ว" ห้ามสร้างซ้ำ แม้จะจองคีย์ได้ก็ตาม
+    // เดิมกันซ้ำด้วยคีย์จองอย่างเดียว พอคีย์หายไป (เช่น แถวถูกเพิ่มด้วยมือผ่านปุ่ม "เพิ่มเลขงานเข้ารอบบิล" ที่ไม่ได้จองคีย์)
+    // รอบถัดไปก็จองคีย์ได้แล้วสร้างแถวซ้ำทับของเดิม — เคสจริง CM20261001-0055 ถูกตัดบิลซ้ำ 2 รอบ (ต.ค. 2569)
+    // คีย์ที่เพิ่งจองได้ของคู่พวกนี้เก็บไว้ (ไม่คืน) เพราะคู่นั้นมีบิลอยู่จริง คีย์จึงตรงกับความจริงแล้ว
+    {
+      const claimedJobIds = Array.from(new Set(Object.values(claimedByRound).flat().map((p) => p.jobId)));
+      if (claimedJobIds.length > 0) {
+        const ex = await selectAllIn(claimedJobIds, (chunk) => supabase.from(T.billing).select('id,customer_case,asset_id').in('customer_case', chunk));
+        if (ex.error) return { created: 0, skipped: 0, jobIds: [], rounds: [], error: 'ตรวจบิลเดิมล้มเหลว: ' + ex.error.message };
+        const hasRows = new Set((ex.data || []).map((r: any) => jobAssetKey(r.customer_case, (r.asset_id || '-').toString().trim() || '-')));
+        for (const rk of Object.keys(claimedByRound)) {
+          const r = parseInt(rk, 10);
+          claimedByRound[r] = claimedByRound[r].filter((p) => !hasRows.has(jobAssetKey(p.jobId, p.assetId)));
+          if (claimedByRound[r].length === 0) delete claimedByRound[r];
+        }
+      }
     }
     const roundsUsed = Object.keys(claimedByRound).map((r) => parseInt(r, 10));
     if (roundsUsed.length === 0) return { created: 0, skipped: candidateCount, jobIds: [], rounds: [] };
@@ -3883,7 +3940,12 @@ Deno.serve(async (req: Request) => {
       selectAllBothKinds((t) => t.open, buildOpenQuery),
       // parts_json ใช้ตัดสินว่าการปิดงานครั้งนี้ "ต้องให้ผู้รับเหมาส่งรูป" หรือไม่ (v1.0.74)
       selectAllBothKinds((t) => t.close, (table) => supabase.from(table).select('job_id,asset_id,fix_date,created_at,action_taken,parts_json').order('created_at', { ascending: true })),
-      selectAllBothKinds((t) => t.billing, (table) => supabase.from(table).select('*')),
+      // v1.3.14 — ดึงเฉพาะ 6 คอลัมน์ที่รายงานใช้จริง (เดิม '*' = ทุกคอลัมน์ ราว 1 KB/แถว ทั้งที่ใช้แค่ราว 120 ไบต์)
+      // ตารางบิลคือก้อนใหญ่สุดของรายงาน และรายงานรีเฟรชเองทุก 60 วินาที จึงเป็นต้นเหตุหลักของ Egress ที่เต็ม
+      // คอลัมน์ที่ต้องมี: customer_case/asset_id (จับคู่งาน) · billing_type (กติกาเรื่องรูป) ·
+      //   sent_to_contractor/completed_at/contractor_review_status (สถานะ) — ถ้าเพิ่มกติกาที่ใช้คอลัมน์อื่น ต้องมาเพิ่มตรงนี้ด้วย
+      selectAllBothKinds((t) => t.billing, (table) => supabase.from(table)
+        .select('customer_case,asset_id,billing_type,sent_to_contractor,completed_at,contractor_review_status')),
       selectAllBothKinds((t) => t.pause, (table) => supabase.from(table).select('main_id,reason,note,status,paused_at,resumed_at,paused_by,resumed_by').order('paused_at', { ascending: true })),
       // v1.0.70 — สถานะฝั่งรูป ใช้แยก "ส่งแบบฟอร์มรูปแล้ว / รอตรวจสอบ / ยืนยันรูปแล้ว"
       // v1.0.71 — เพิ่ม reviewed_at เพราะใช้เป็นจุดเริ่มนับเวลาของช่วง "ตีกลับ → ส่งใหม่"
@@ -4411,7 +4473,7 @@ Deno.serve(async (req: Request) => {
           success: true,
           base64: result.base64,
           rowCount: rows.length,
-          filename: 'ตารางวางบิล_' + scopeLabel.replace(/\s/g, '') + '_' + typePart + '_' + new Date().toISOString().slice(0, 10) + '.xlsx',
+          filename: 'ตารางวางบิล_' + scopeLabel.replace(/\s/g, '') + '_' + typePart + '_' + bangkokTodayIso() + '.xlsx',
         });
       }
 
@@ -4498,12 +4560,58 @@ Deno.serve(async (req: Request) => {
         if (rowsToInsert.length === 0) {
           return jsonResponse({ success: false, message: 'เลขงาน "' + jobId + '" มีอยู่ในตารางวางบิลครบทุกเลขทรัพย์สินแล้ว (' + skipped + ' รายการ) จึงไม่มีอะไรให้เพิ่ม' });
         }
-        const { error: insErr } = await supabase.from(jobTablesOf(jobId).billing).insert(sameShapeRows(rowsToInsert));
-        if (insErr) return jsonResponse({ success: false, message: 'เพิ่มเข้ารอบบิลล้มเหลว: ' + insErr.message });
+
+        // ==================== v1.3.15 — จองคีย์ก่อนเพิ่มเสมอ (ต้นเหตุบิลซ้ำ) ====================
+        // เดิมปุ่มนี้ใส่แถวบิลโดยไม่จองคีย์ในทะเบียนกันซ้ำ (billing_job_registry)
+        // ตัวสร้างบิลอัตโนมัติรอบถัดไปจึงจองคีย์ได้ แล้วสร้างแถวชุดเดียวกันซ้ำอีกชุด
+        // เคสจริง: CM20261001-0055 ถูกตัดบิลซ้ำ 2 รอบ (P224 · P651 · P663)
+        //
+        // กติกาใหม่ ต่อเลขทรัพย์สินที่จะเพิ่ม:
+        //   จองคีย์ได้                         -> เพิ่มได้ (คีย์กันตัวอัตโนมัติไม่ให้สร้างซ้ำ)
+        //   คีย์มีอยู่แล้ว แต่ไม่มีแถวบิลเลย     -> เพิ่มได้ = กู้คู่ที่บิลหายไป (เช่น เผลอลบแถว แต่คีย์ยังค้าง)
+        //                                        ยกเว้นคีย์เพิ่งถูกจองไม่ถึง 2 นาที = ตัวอัตโนมัติอาจกำลังสร้างอยู่ ให้ข้ามไปก่อน
+        // แล้วเช็คแถวบิลซ้ำอีกรอบก่อนใส่จริง กันชนกับตัวอัตโนมัติที่ทำงานพร้อมกัน
+        const T_ = jobTablesOf(jobId);
+        const claimKeyOfAsset = (a: string) => (a && a !== '-') ? (jobId + '__asset__' + a) : jobId;
+        const assetsToAdd = Array.from(new Set(rowsToInsert.map((r: any) => (r.asset_id || '-').toString().trim() || '-')));
+        const keysToAdd = assetsToAdd.map(claimKeyOfAsset);
+        const { data: claimedRows, error: claimErr } = await supabase.rpc(T_.claimFn, { job_ids: keysToAdd, p_round_no: roundNo });
+        if (claimErr) return jsonResponse({ success: false, message: 'จองเลขงานล้มเหลว: ' + claimErr.message });
+        const newlyClaimed = new Set((claimedRows || []).map((r: any) => r.customer_case));
+        const blockedAssets = new Set<string>();
+        const heldKeys = keysToAdd.filter((k) => !newlyClaimed.has(k));
+        if (heldKeys.length > 0) {
+          const { data: regRows } = await supabase.from(T_.registry).select('customer_case,claimed_at').in('customer_case', heldKeys);
+          const recentCut = Date.now() - 2 * 60 * 1000;
+          (regRows || []).forEach((r: any) => {
+            const t = r.claimed_at ? new Date(r.claimed_at).getTime() : 0;
+            if (isFinite(t) && t > recentCut) assetsToAdd.forEach((a) => { if (claimKeyOfAsset(a) === r.customer_case) blockedAssets.add(a); });
+          });
+        }
+        // อ่านแถวบิลของเลขงานนี้ใหม่อีกครั้งก่อนใส่จริง
+        const { data: freshExisting, error: freshErr } = await supabase.from(T_.billing).select('asset_id').eq('customer_case', jobId);
+        if (freshErr) {
+          if (newlyClaimed.size > 0) await supabase.from(T_.registry).delete().in('customer_case', Array.from(newlyClaimed));
+          return jsonResponse({ success: false, message: 'ตรวจบิลเดิมล้มเหลว: ' + freshErr.message });
+        }
+        (freshExisting || []).forEach((r: any) => blockedAssets.add((r.asset_id || '-').toString().trim() || '-'));
+        const finalRows = rowsToInsert.filter((r: any) => !blockedAssets.has((r.asset_id || '-').toString().trim() || '-'));
+        const raceSkipped = assetsToAdd.filter((a) => blockedAssets.has(a)).length;
+        if (finalRows.length === 0) {
+          return jsonResponse({ success: false, message: 'เลขงาน "' + jobId + '" มีบิลอยู่แล้ว หรือระบบกำลังสร้างบิลให้อยู่ — กดโหลด/รีเฟรชตารางแล้วตรวจอีกครั้ง ไม่ได้เพิ่มอะไรเข้าไป' });
+        }
+
+        const { error: insErr } = await supabase.from(T_.billing).insert(sameShapeRows(finalRows));
+        if (insErr) {
+          // ใส่ไม่สำเร็จ = คืนเฉพาะคีย์ที่เพิ่งจองในคำขอนี้ (คีย์ที่มีอยู่ก่อนแล้วไม่แตะ)
+          if (newlyClaimed.size > 0) await supabase.from(T_.registry).delete().in('customer_case', Array.from(newlyClaimed));
+          return jsonResponse({ success: false, message: 'เพิ่มเข้ารอบบิลล้มเหลว: ' + insErr.message });
+        }
+        skipped += raceSkipped;
         return jsonResponse({
           success: true,
-          added: rowsToInsert.length,
-          message: 'เพิ่มเลขงาน "' + jobId + '" เข้ารอบบิลที่ ' + roundNo + ' แล้ว ' + rowsToInsert.length + ' รายการ'
+          added: finalRows.length,
+          message: 'เพิ่มเลขงาน "' + jobId + '" เข้ารอบบิลที่ ' + roundNo + ' แล้ว ' + finalRows.length + ' รายการ'
             + (skipped > 0 ? (' (ข้าม ' + skipped + ' รายการที่มีบิลอยู่แล้ว)') : '')
             + ' — ยังไม่มีอะไหล่ กรุณากดปุ่ม + ที่แถวนั้นเพื่อเพิ่มอะไหล่',
         });
@@ -6603,7 +6711,7 @@ Deno.serve(async (req: Request) => {
         const alreadyBilledCount = visits.length - candidates.length;
         if (candidates.length === 0) return jsonResponse({ success: true, roundPeriod: '', candidates: [], alreadyBilledCount });
         const dates = candidates.map((c: any) => c.visit_date).filter(Boolean).sort();
-        const roundPeriod = dates.length ? (dates[0] + ' ถึง ' + dates[dates.length - 1]) : ('PM รอบ ' + new Date().toISOString().slice(0, 10));
+        const roundPeriod = dates.length ? (dates[0] + ' ถึง ' + dates[dates.length - 1]) : ('PM รอบ ' + bangkokTodayIso());
         return jsonResponse({ success: true, roundPeriod, candidates, alreadyBilledCount });
       }
 
@@ -6628,7 +6736,7 @@ Deno.serve(async (req: Request) => {
           return jsonResponse({ success: true, message: 'ไม่มีงาน PM ใหม่ให้บันทึก (ทั้งหมดถูกบันทึกรอบบิลไปแล้ว/มีแอดมินคนอื่นเพิ่งบันทึกไปพร้อมกัน)', created: 0, skipped: visits.length });
         }
         const dates = newVisits.map((v: any) => v.visit_date).filter(Boolean).sort();
-        const roundPeriod = dates.length ? (dates[0] + ' ถึง ' + dates[dates.length - 1]) : ('PM รอบ ' + new Date().toISOString().slice(0, 10));
+        const roundPeriod = dates.length ? (dates[0] + ' ถึง ' + dates[dates.length - 1]) : ('PM รอบ ' + bangkokTodayIso());
         const { data: roundNoData, error: roundNoErr } = await supabase.rpc('next_pm_billing_round_no');
         if (roundNoErr) return jsonResponse({ success: false, message: 'ขอเลขรอบบิล PM ล้มเหลว: ' + roundNoErr.message + ' (ตรวจสอบว่ารัน add-pm-billing-table.sql แล้วหรือยัง)' });
         const roundNo = roundNoData as number;
@@ -7720,13 +7828,52 @@ Deno.serve(async (req: Request) => {
         }
         // ผู้รับเหมาได้ใบฝั่งตัวเองเสมอ ไม่ว่าจะส่ง isAdmin มาเป็นอะไร
         const wantCjSide = (session.role === 'admin') && !!isAdminArg;
-        // แถวส่งมาจากหน้าแอปโดยตรง จึงกรองประเภทการเก็บเงินซ้ำอีกชั้นที่นี่ กันกรณีหน้าแอปเวอร์ชันเก่ายังไม่กรอง
-        const sideRows = filterRowsForSide(rowsArg, wantCjSide ? 'cj' : 'contractor');
+        // v1.3.12 — ผู้รับเหมา: ไม่ใช้แถวที่หน้าแอปส่งมาเป็นเนื้อหาเอกสารอีกต่อไป
+        // เดิมปุ่ม Save PDF ส่ง "แถวบนหน้าจอ" มาสร้างเอกสาร ซึ่งโหลดครั้งเดียวตอนเปิดแท็บ ไม่รีเฟรชเอง
+        // แอดมินแก้อะไหล่/ราคา/คืนงานไปแล้ว ไฟล์ของผู้รับเหมาก็ยังเป็นค่าเก่า และตัวกรองบนจอก็ตัดแถวหายไปได้
+        // = ใบเดียวกันแต่ไม่ตรงกับ "ใบเขียวผู้รับเหมา" ของแอดมิน
+        // ตอนนี้ใช้แถวจากหน้าแอปแค่บอกว่า "รอบไหน ชนิดงานอะไร" แล้วอ่านสดจากฐานข้อมูลด้วยเงื่อนไขเดียวกับใบเขียว
+        // และล็อกเป็นชื่อผู้รับเหมาจาก session เสมอ จึงปลอมแถว/ดูของคนอื่นไม่ได้
+        // (แก้ฝั่งเซิร์ฟเวอร์ที่เดียว แอปรุ่นเก่าที่ผู้รับเหมาใช้อยู่ได้ผลทันทีโดยไม่ต้องอัปเดต)
+        //
+        // v1.3.13 — เอกสาร 1 ใบ = 1 รอบบิล (เดือน) เหมือนใบเขียวที่แอดมินออกเป็นรายเดือน
+        // หน้าจอ "ทุกเดือน" ของผู้รับเหมาแสดงทุกรอบที่ยังไม่จบ ถ้าเอาทุกรอบมารวม
+        // งานค้างเดือนก่อนจะปนเข้ามา ยอดและเลขลำดับจึงไม่ตรงกับใบของแอดมิน
+        // (เคสจริง ทีมพี่โอม ต.ค. 2569: แอดมิน 72 แถว 96,721 · ผู้รับเหมา 76 แถว 101,062.75 เพราะมีงาน ก.ย. ติดมา 4 แถว)
+        // จึงออกรอบล่าสุดบนจอ อยากได้เดือนอื่นให้เลือกเดือนนั้นในช่อง "กรองตามเดือน" ก่อน แล้วชื่อไฟล์จะบอกเดือนให้
+        let sideRows: any[];
+        let contractorDocFilename = '';
+        if (session.role === 'admin') {
+          // แถวส่งมาจากหน้าแอปโดยตรง จึงกรองประเภทการเก็บเงินซ้ำอีกชั้นที่นี่ กันกรณีหน้าแอปเวอร์ชันเก่ายังไม่กรอง
+          sideRows = filterRowsForSide(rowsArg, wantCjSide ? 'cj' : 'contractor');
+        } else {
+          const screenRows: any[] = Array.isArray(rowsArg) ? rowsArg : [];
+          const rounds = Array.from(new Set(
+            screenRows.map((r: any) => Number(r && r.round_no)).filter((n: number) => Number.isInteger(n) && n > 0),
+          ));
+          if (rounds.length === 0) {
+            return jsonResponse({ success: false, message: 'ไม่พบรอบบิลของรายการบนหน้าจอ กรุณากดโหลด/รีเฟรชแล้วลองใหม่' });
+          }
+          // ตารางหนึ่งหน้าจอมีชนิดงานเดียว (CM หรือ RE) และเลขรอบของสองชนิดซ้ำกันได้ จึงต้องแยกตารางให้ถูก
+          const kind = jobKindOf(screenRows[0] && screenRows[0].customer_case);
+          const docRound = Math.max(...rounds);
+          const { data: freshRows, error: freshErr } = await selectAll(() => excludeBillingTypes(
+            supabase.from(jobTables(kind).billing).select('*')
+              .eq('contractor', session.displayName).eq('sent_to_contractor', true).eq('round_no', docRound),
+            BILLING_TYPES_EXCLUDED_FROM_CONTRACTOR,
+          ));
+          if (freshErr) return jsonResponse({ success: false, message: 'ดึงข้อมูลล้มเหลว: ' + freshErr.message });
+          sideRows = freshRows;
+          contractorDocFilename = 'ใบเขียวผู้รับเหมา_' + (kind === 'RE' ? 'RE_' : '')
+            + String(session.displayName || '').replace(/[\\/:*?"<>|]/g, '_') + '_'
+            + billingRoundLabel(docRound).replace(/\s/g, '') + '.pdf';
+        }
         if (!sideRows || sideRows.length === 0) {
           return jsonResponse({ success: false, message: 'ไม่มีรายการที่ต้องเก็บเงินในฝั่งนี้ (รายการเคลมประกัน 3 เดือน / เคลมอะไหล่ ถูกตัดออกแล้ว)' });
         }
         // หน้าแอปนับเลขลำดับมาให้แล้ว แต่นับซ้ำอีกชั้นเพื่อกันกรณีหน้าแอปเวอร์ชันเก่าส่งลำดับดิบมา
         const result = await generateBillingPdfBase64(renumberBillingRowsForDocument(sideRows), wantCjSide);
+        if (result.success && contractorDocFilename) result.filename = contractorDocFilename;
         return jsonResponse(result);
       }
 
@@ -7926,6 +8073,10 @@ Deno.serve(async (req: Request) => {
         const session = await verifySession(username, token);
         if (!session.valid) return jsonResponse({ success: false, message: 'กรุณาเข้าสู่ระบบใหม่' });
         if (session.role !== 'admin') return jsonResponse({ success: false, message: 'เฉพาะแอดมินเท่านั้นที่สั่งซิงค์ข้อมูลได้' });
+        // v1.3.15 — เลิกใช้ Google Sheet แล้ว (เจ้าของระบบสั่งปิด 9 พ.ย. 2569) ซ่อนปุ่มในแอปรุ่นใหม่แล้ว
+        // แอปรุ่นเก่าที่ยังเห็นปุ่มอยู่ กดแล้วจะได้ข้อความนี้แทน ไม่ซิงค์อะไรทั้งสิ้น
+        // โค้ดซิงค์ด้านล่างเก็บไว้ก่อน ถ้าวันหนึ่งต้องกลับมาใช้ ให้ลบ 2 บรรทัดนี้ออก
+        if (!SHEET_SYNC_ENABLED) return jsonResponse({ success: false, message: 'ปิดการซิงค์ไป Google Sheet แล้ว (เลิกใช้งาน) — ข้อมูลทั้งหมดอยู่ในระบบตามปกติ ดูได้ในแอป และดาวน์โหลด Excel ได้จากเมนูตารางวางบิล' });
 
         // ไคลเอนต์รุ่นเก่า (ก่อนเวอร์ชันนี้) ไม่ได้ส่ง 2 ค่านี้มา = ให้ซิงค์ทุกอย่างเหมือนพฤติกรรมเดิมเป๊ะ ๆ
         // เช็คด้วย Array.isArray ไม่ใช่ความยาว เพราะ "ติ๊กเฉพาะแท็บรายงานสถานะอย่างเดียว" จะส่ง [] มาอย่างถูกต้อง

@@ -2797,8 +2797,9 @@
             });
 
             // ปุ่ม "ซิงค์ข้อมูลไป Sheet" ที่หัวเว็บ - แอดมินเท่านั้น
+            // v1.3.15 — เลิกใช้ Google Sheet แล้ว ซ่อนปุ่มนี้ถาวรทุกบทบาท (เซิร์ฟเวอร์ก็ปิดรับคำสั่งนี้แล้วเช่นกัน)
             const syncBtn = document.getElementById('btnManualSync');
-            if (syncBtn) syncBtn.classList.toggle('hidden', !isAdmin);
+            if (syncBtn) syncBtn.classList.add('hidden');
 
             // ซ่อนหัวหมวดที่ไม่เหลือเมนูให้กดเลย (เช่น ผู้รับเหมาไม่เห็นหมวด PM และหมวดตรวจสอบ/รายงาน)
             // ถ้าไม่ทำ จะเหลือหัวหมวดลอย ๆ ที่กดแล้วไม่มีอะไรอยู่ข้างใน ดูเหมือนระบบพัง
@@ -3584,6 +3585,8 @@
         // และยังกดปุ่ม "โหลด/รีเฟรชข้อมูล" เองได้ทุกเมื่อถ้าอยากเห็นของสด ๆ ทันที
         const AUTO_REFRESH_INTERVAL_MS = 60000;
         let jobFormsBadgeTick_ = 0;   // v1.3.9 — ตัวนับรอบของป้ายฝั่งผู้รับเหมา (ดูเหตุผลด้านล่าง)
+        const HEAVY_LIST_REFRESH_EVERY = 5;   // v1.3.14 — หน้าที่โหลดทั้งตาราง รีเฟรชเองทุก 5 รอบ (= 5 นาที)
+        let heavyListTick_ = 0;
         setInterval(function () {
             if (document.hidden) return; // แท็บเบราว์เซอร์ไม่ได้เปิดอยู่ตรงหน้า ไม่ต้องเปลืองโหลดข้อมูล
             if (!currentSession) return;
@@ -3602,9 +3605,15 @@
             const active = document.activeElement;
             const isTypingOrPicking = active && ['TEXTAREA', 'INPUT', 'SELECT'].indexOf(active.tagName) !== -1;
 
-            if (currentMode === 'openlist') loadOpenIssuesList();
-            else if (currentMode === 'closelist') loadCloseIssuesList();
-            else if (currentMode === 'statusreport') loadStatusReport();
+            // v1.3.14 — 3 หน้านี้โหลด "ทั้งตาราง" ทุกครั้ง (รายงานสถานะอ่าน 8 ตารางต่อรอบ)
+            // เดิมโหลดใหม่ทุก 60 วินาทีตลอดเวลาที่เปิดหน้าไว้ = วันละหลายร้อยรอบ เป็นต้นเหตุหลักของภาระเซิร์ฟเวอร์และ Egress
+            // ตอนนี้โหลดใหม่ทุก 5 นาที (ระยะเวลาดำเนินการของงานยังเดินเองบนจอทุก 30 วินาทีเหมือนเดิม ไม่ต้องถามเซิร์ฟเวอร์)
+            // อยากเห็นของสดทันที กดปุ่ม "โหลด/รีเฟรช" ได้ตลอด
+            heavyListTick_ = (heavyListTick_ + 1) % HEAVY_LIST_REFRESH_EVERY;
+            const heavyDue = heavyListTick_ === 0;
+            if (currentMode === 'openlist') { if (heavyDue) loadOpenIssuesList(); }
+            else if (currentMode === 'closelist') { if (heavyDue) loadCloseIssuesList(); }
+            else if (currentMode === 'statusreport') { if (heavyDue) loadStatusReport(); }
             else if (currentMode === 'jobforms' && !isTypingOrPicking) loadJobFormsTab();
             else if (currentMode === 'submissions' && !isTypingOrPicking) loadJobFormSubmissions();
             else if (currentSession.role !== 'admin' && currentSession.isFinalApprover !== true) {
